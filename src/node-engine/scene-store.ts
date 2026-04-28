@@ -88,7 +88,7 @@ export class SceneStore {
             timestamp: Date.now(),
         } as SceneSnapshot)
 
-        this.cursor = id
+        this.cursor = id!
         this.count = await db.snapshots.count()
 
         if (this.count > MAX_SNAPSHOTS) {
@@ -98,7 +98,7 @@ export class SceneStore {
             this.count = await db.snapshots.count()
         }
 
-        return id
+        return id! as number
     }
 
     async undo(): Promise<SceneSnapshot | null> {

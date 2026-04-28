@@ -59,7 +59,7 @@ const LABEL_W = 130
 export const Field = memo(function Field({ label, children, column }: FieldProps) {
     if (column) {
         return (
-            <Stack direction="column" gap={0.5} sx={{ minHeight: 'auto' }}>
+            <Stack direction="column" sx={{ minHeight: 'auto' }}>
                 <Typography
                     component="span"
                     noWrap
@@ -213,7 +213,6 @@ export function SelectField<T extends string>({
                            menu surface to match the light card palette. */
                         MenuProps: {
                             classes: { paper: 'pn-menu-paper' },
-                            MenuListProps: { className: 'pn-menu-list' },
                         },
                     },
                 }}
@@ -276,7 +275,7 @@ export const SliderField = memo(function SliderField({
         : value.toFixed(fixed)
     return (
         <Field label={label}>
-            <Stack direction="row" alignItems="center" gap={1} sx={{ width: '100%' }}>
+            <Stack direction="row" sx={{ width: '100%' }}>
                 <Slider
                     value={Number.isFinite(value) ? value : min}
                     min={min}
@@ -321,7 +320,7 @@ interface ColorFieldProps {
 export const ColorField = memo(function ColorField({ label, value, onChange, extra }: ColorFieldProps) {
     return (
         <Field label={label}>
-            <Stack direction="row" alignItems="center" gap={1} sx={{ width: '100%' }}>
+            <Stack direction="row" sx={{ width: '100%' }}>
                 <Box
                     component="input"
                     type="color"

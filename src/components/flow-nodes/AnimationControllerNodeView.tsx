@@ -29,7 +29,6 @@ function ControllerView({ id, data, def, title, channels }: NodeProps & { data: 
                 return (
                     <Stack
                         key={c.id}
-                        gap={2}
                         /* Top margin on every section but the first creates
                          * vertical rhythm without resorting to a divider
                          * line — the SectionTitle's spacing handles its own

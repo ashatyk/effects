@@ -31,7 +31,6 @@ export class SegmentationProcessor extends BaseProcessor {
 
     private engineRef: IDataflowEngine | null = null
     private lastImageSrc: any = null
-    private encodingUrl: string | null = null
 
     private initSam(): void {
         if (this.worker) return
@@ -85,7 +84,6 @@ export class SegmentationProcessor extends BaseProcessor {
 
     private startEncode(dataUrl: string): void {
         if (!this.worker || this.status === 'loading-model') return
-        this.encodingUrl = dataUrl
         this.status = 'encoding'
         this.statusText = 'Computing embeddings...'
         this.embeddingsReady = false

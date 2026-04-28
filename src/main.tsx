@@ -1,8 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { ThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
-import '@fontsource-variable/inter'
-import '@fontsource-variable/jetbrains-mono'
 import { theme } from './theme'
 import './index.css'
 import App from './App'

@@ -250,13 +250,11 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
             </ToggleButtonGroup>
 
             {points.length > 0 && (
-                <Stack gap={0.25}>
+                <Stack>
                     {points.map((pt, i) => (
                         <Stack
                             key={i}
                             direction="row"
-                            alignItems="center"
-                            gap={0.5}
                             onMouseEnter={() => setHoveredIdx(i)}
                             onMouseLeave={() => setHoveredIdx(null)}
                             sx={{

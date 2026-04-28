@@ -58,7 +58,7 @@ export class PreviewProcessor extends BaseProcessor {
                 const ctx = this.imgCanvas.getContext('2d')!
                 const pixels = new Uint8ClampedArray(data.buffer)
                 for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255
-                ctx.putImageData(new ImageData(pixels, w, h), 0, 0)
+                ctx.putImageData(new ImageData(pixels as unknown as ImageDataArray, w, h), 0, 0)
                 engine.markDirty(this.nodeId)
             })
             .catch(() => {})

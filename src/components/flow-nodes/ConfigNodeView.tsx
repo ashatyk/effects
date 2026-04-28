@@ -61,7 +61,7 @@ function VecField({ field, params, onScalar, onColor }: {
 
     if (field.color) {
         return (
-            <Stack gap={0.5}>
+            <Stack>
                 <ColorField
                     label={field.label}
                     value={vec3ToHex(arr)}
@@ -82,7 +82,7 @@ function VecField({ field, params, onScalar, onColor }: {
 
     return (
         <Field label={field.label} column>
-            <Stack gap={0.5}>
+            <Stack>
                 {arr.map((v, i) => (
                     <SliderField
                         key={i}

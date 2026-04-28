@@ -100,7 +100,7 @@ export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: Pi
             {mode === 'mix' && (
                 <NumberField label="mix (a→b)" value={mixFactor} step={0.05} min={0} max={1} onChange={v => set('mixFactor', v)} />
             )}
-            <Stack direction="row" justifyContent="space-between" sx={{ fontSize: 10, opacity: 0.7, py: 0.25 }}>
+            <Stack direction="row" sx={{ fontSize: 10, opacity: 0.7, py: 0.25 }}>
                 <Typography variant="caption" sx={{ color: '#5b9dff' }}>■ a</Typography>
                 <Typography variant="caption" sx={{ color: '#ff8a5b' }}>■ b</Typography>
                 <Typography variant="caption" sx={{ color: '#ffdc50' }}>■ out</Typography>
