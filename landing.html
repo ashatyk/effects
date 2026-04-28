@@ -1,0 +1,1215 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Фото — это место для рекламы · SDF Orbit</title>
+<meta name="description" content="Прототип, превращающий главное фото на странице товара в кликабельную таргетируемую поверхность." />
+<style>
+  :root{
+    --bg:#05060a;
+    --bg2:#0a0d18;
+    --panel:#0d1120;
+    --line:#1b2238;
+    --ink:#e9ecf7;
+    --ink-dim:#8a93b3;
+    --ink-mute:#5a6285;
+    --neon:#7af0ff;       /* cyan */
+    --neon-2:#b070ff;     /* purple */
+    --neon-3:#ff7ad9;     /* magenta */
+    --warn:#ffb86b;
+    --ok:#7cffb2;
+    --maxw: 1180px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  body{
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(122,240,255,.07), transparent 60%),
+      radial-gradient(900px 600px at -10% 30%, rgba(176,112,255,.07), transparent 60%),
+      radial-gradient(800px 500px at 50% 110%, rgba(255,122,217,.05), transparent 60%),
+      var(--bg);
+    overflow-x:hidden;
+  }
+  a{color:var(--neon);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .uppercase{text-transform:uppercase;letter-spacing:.14em;font-size:11px}
+  .dim{color:var(--ink-dim)}
+  .mute{color:var(--ink-mute)}
+  hr.sep{border:0;border-top:1px solid var(--line);margin:0}
+
+  /* ---------- top nav ---------- */
+  header.nav{position:sticky;top:0;z-index:50;backdrop-filter:saturate(140%) blur(10px);background:rgba(5,6,10,.6);border-bottom:1px solid var(--line)}
+  .nav-row{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:var(--maxw);margin:0 auto}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}
+  .logo .dot{width:10px;height:10px;border-radius:50%;background:var(--neon);box-shadow:0 0 14px var(--neon)}
+  .nav-links{display:flex;gap:26px}
+  .nav-links a{color:var(--ink-dim);font-size:13px}
+  .nav-links a:hover{color:var(--ink);text-decoration:none}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:linear-gradient(180deg,#121730,#0c1124);color:var(--ink);font-size:13px;cursor:pointer;transition:.15s ease}
+  .btn:hover{border-color:#2c3658}
+  .btn.primary{
+    color:#001018;
+    background:linear-gradient(180deg,#9bf6ff,#5fd6ee);
+    border:1px solid #5fd6ee;
+    box-shadow:0 0 0 1px rgba(122,240,255,.25),0 10px 40px -10px rgba(122,240,255,.55);
+    font-weight:600;
+  }
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn .arrow{transition:transform .15s ease}
+  .btn:hover .arrow{transform:translateX(2px)}
+
+  /* ---------- hero ---------- */
+  section.hero{position:relative;padding:88px 0 56px;overflow:hidden}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:60px;align-items:center}
+  @media (max-width:980px){.hero-grid{grid-template-columns:1fr;gap:40px}}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim);background:rgba(13,17,32,.7)}
+  .eyebrow .pulse{width:6px;height:6px;border-radius:50%;background:var(--neon);box-shadow:0 0 10px var(--neon);animation:pulse 1.6s infinite ease-in-out}
+  @keyframes pulse{0%,100%{opacity:.4;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}
+  h1.headline{
+    font-size:clamp(36px,5.4vw,64px);
+    line-height:1.04;
+    letter-spacing:-.02em;
+    margin:18px 0 18px;
+    font-weight:600;
+  }
+  .headline .grad{
+    background:linear-gradient(90deg,#7af0ff 0%,#b070ff 55%,#ff7ad9 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{font-size:18px;line-height:1.55;color:var(--ink-dim);max-width:560px}
+  .hero-cta{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
+  .hero-meta{display:flex;gap:24px;margin-top:30px;color:var(--ink-mute);font-size:12px}
+  .hero-meta b{color:var(--ink);font-weight:500}
+
+  /* canvas card */
+  .device{
+    position:relative;border-radius:28px;background:linear-gradient(180deg,#0e1326,#070a16);
+    border:1px solid var(--line);padding:14px;
+    box-shadow:0 60px 120px -40px rgba(0,0,0,.7),0 0 0 1px rgba(122,240,255,.04) inset;
+    aspect-ratio: 9/14; max-width:380px;margin-left:auto;
+  }
+  @media (max-width:980px){.device{margin:0 auto}}
+  .device .screen{position:relative;height:100%;border-radius:20px;overflow:hidden;background:#070a14}
+  .device canvas{display:block;width:100%;height:100%}
+  .device .topbar{position:absolute;top:10px;left:0;right:0;display:flex;justify-content:space-between;padding:0 18px;font-size:10px;color:var(--ink-mute);letter-spacing:.08em}
+  .device .price{position:absolute;left:14px;bottom:14px;background:rgba(8,11,22,.78);backdrop-filter:blur(6px);border:1px solid rgba(122,240,255,.25);padding:8px 10px;border-radius:10px;color:var(--ink);font-size:12px;display:flex;flex-direction:column;gap:2px;opacity:0;transform:translateY(6px);transition:.5s ease}
+  .device .price.show{opacity:1;transform:translateY(0)}
+  .device .price small{color:var(--ink-mute);font-size:10px;letter-spacing:.04em}
+  .device .price.alt{left:auto;right:14px;bottom:80px;border-color:rgba(255,122,217,.3)}
+  .ribbon{position:absolute;top:14px;right:14px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-mute);background:rgba(13,17,32,.6);border:1px solid var(--line);padding:5px 8px;border-radius:999px}
+
+  /* hero corner glow */
+  .hero::before{content:"";position:absolute;left:50%;top:30%;width:1100px;height:600px;transform:translateX(-50%);background:radial-gradient(closest-side,rgba(176,112,255,.18),transparent 70%);filter:blur(40px);pointer-events:none}
+
+  /* ---------- generic section ---------- */
+  section.s{padding:96px 0;position:relative}
+  .kicker{display:flex;align-items:baseline;gap:14px;color:var(--ink-mute);font-size:11px;letter-spacing:.18em;text-transform:uppercase}
+  .kicker .num{color:var(--neon);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px}
+  .kicker .bar{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+  h2.title{font-size:clamp(28px,3.6vw,44px);line-height:1.1;letter-spacing:-.01em;margin:18px 0 10px;font-weight:600}
+  .sub{color:var(--ink-dim);max-width:760px;font-size:17px}
+
+  /* ---------- problem grid (PDP elements) ---------- */
+  .pdp-mock{
+    margin-top:40px;display:grid;grid-template-columns:1.1fr .9fr;gap:30px;align-items:stretch;
+  }
+  @media (max-width:880px){.pdp-mock{grid-template-columns:1fr}}
+  .pdp-frame{
+    position:relative;border:1px solid var(--line);border-radius:20px;background:linear-gradient(180deg,#0c1020,#08091a);
+    padding:18px;min-height:520px;
+    background-image:
+      linear-gradient(rgba(122,240,255,.04) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(122,240,255,.04) 1px,transparent 1px);
+    background-size:32px 32px;
+  }
+  .pdp-frame .photo-rect{position:absolute;left:18px;right:18px;top:54px;height:300px;border:1px dashed rgba(122,240,255,.45);border-radius:14px;background:repeating-linear-gradient(45deg,rgba(122,240,255,.04) 0 6px,transparent 6px 14px);display:flex;align-items:center;justify-content:center;color:var(--ink-mute);font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+  .pdp-frame .label{position:absolute;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:rgba(11,15,28,.85);border:1px solid var(--line);padding:4px 8px;border-radius:6px}
+  .pdp-frame .photo-rect .label-overlay{padding:8px 12px;background:rgba(255,184,107,.12);border:1px solid rgba(255,184,107,.45);color:var(--warn);border-radius:8px;font-size:11px;letter-spacing:.16em;text-transform:uppercase}
+  .pdp-frame .header-rect{position:absolute;left:18px;top:18px;height:24px;width:48%;background:linear-gradient(90deg,#1a2240,#0e1428);border-radius:6px}
+  .pdp-frame .header-rect+.label{left:18px;top:14px;background:rgba(124,255,178,.1);border-color:rgba(124,255,178,.3);color:var(--ok)}
+  .pdp-frame .price-rect{position:absolute;left:18px;top:368px;height:36px;width:120px;background:linear-gradient(90deg,#1a2240,#0e1428);border-radius:6px}
+  .pdp-frame .cta-rect{position:absolute;right:18px;top:368px;height:36px;width:120px;background:linear-gradient(90deg,var(--neon),#3fb6c8);border-radius:6px}
+  .pdp-frame .row-rect{position:absolute;left:18px;right:18px;height:50px;border-radius:8px;background:#0e1428;border:1px solid var(--line)}
+  .pdp-frame .row-rect.r1{top:430px}
+  .pdp-frame .row-rect.r2{top:486px;height:30px}
+  .legend{display:flex;flex-direction:column;gap:14px;justify-content:center;font-size:14px}
+  .legend .row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(13,17,32,.5)}
+  .legend .row .swatch{width:10px;height:10px;border-radius:3px}
+  .legend .row.ok .swatch{background:var(--ok)}
+  .legend .row.warn .swatch{background:var(--warn)}
+  .legend .row b{color:var(--ink)}
+  .legend .row .name{flex:1}
+  .legend .row .who{color:var(--ink-mute);font-size:12px}
+
+  /* ---------- idea: hero photo + zones ---------- */
+  .zones-stage{
+    margin-top:36px;display:grid;grid-template-columns:1.1fr .9fr;gap:30px;align-items:start;
+  }
+  @media (max-width:880px){.zones-stage{grid-template-columns:1fr}}
+  .stage-card{position:relative;border-radius:20px;border:1px solid var(--line);background:linear-gradient(180deg,#0c1124,#070a17);padding:14px;overflow:hidden}
+  .stage-card canvas{display:block;width:100%;border-radius:12px;background:#06070f}
+  .zone-list{display:flex;flex-direction:column;gap:10px}
+  .zone{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:rgba(13,17,32,.55);cursor:pointer;transition:.15s ease}
+  .zone:hover{border-color:rgba(122,240,255,.45);background:rgba(15,21,42,.7)}
+  .zone.active{border-color:var(--neon);background:linear-gradient(180deg,rgba(122,240,255,.12),rgba(122,240,255,.04))}
+  .zone .swatch{width:14px;height:14px;border-radius:4px;flex-shrink:0;box-shadow:0 0 12px currentColor}
+  .zone .name{flex:1;font-weight:500}
+  .zone .url{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-mute)}
+
+  /* ---------- existing solutions vs orbit ---------- */
+  .vs-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:36px}
+  @media (max-width:780px){.vs-grid{grid-template-columns:1fr}}
+  .vs-card{position:relative;border:1px solid var(--line);border-radius:18px;padding:20px;background:linear-gradient(180deg,#0b1020,#070a17);min-height:340px;display:flex;flex-direction:column}
+  .vs-card .vs-tag{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-mute);margin-bottom:6px}
+  .vs-card h3{margin:0 0 10px;font-size:18px;font-weight:600}
+  .vs-card .vs-desc{color:var(--ink-dim);font-size:13px;line-height:1.5;margin-bottom:16px}
+  .vs-card .vs-canvas-wrap{flex:1;border-radius:12px;background:#06070f;border:1px solid #0f152a;overflow:hidden;position:relative;min-height:210px}
+  .vs-card canvas{display:block;width:100%;height:100%}
+  .vs-card.bad .vs-tag{color:var(--warn)}
+  .vs-card.good .vs-tag{color:var(--neon)}
+
+  /* ---------- SDF explainer ---------- */
+  .sdf-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:36px}
+  @media (max-width:880px){.sdf-grid{grid-template-columns:1fr}}
+  .sdf-step{position:relative;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#0b1020,#070a17);padding:18px;min-height:280px;display:flex;flex-direction:column;gap:12px}
+  .sdf-step .stepnum{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--neon)}
+  .sdf-step h4{margin:0;font-size:16px;font-weight:600}
+  .sdf-step p{margin:0;color:var(--ink-dim);font-size:13px;line-height:1.55}
+  .sdf-step .preview{margin-top:auto;border-radius:10px;background:#06070f;border:1px solid #0f152a;height:120px;overflow:hidden;position:relative}
+  .sdf-step canvas{display:block;width:100%;height:100%}
+
+  /* code block */
+  .codeblock{margin-top:30px;border:1px solid var(--line);border-radius:14px;background:#06070f;overflow:hidden}
+  .codeblock .filebar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-mute);letter-spacing:.04em}
+  .codeblock .filebar .dots{display:flex;gap:6px}
+  .codeblock .filebar .dots span{width:9px;height:9px;border-radius:50%;background:#1d2440}
+  .codeblock pre{margin:0;padding:18px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12.5px;line-height:1.6;color:#cdd2e8;overflow-x:auto}
+  .tk-k{color:#b070ff} .tk-t{color:#7af0ff} .tk-s{color:#ff7ad9} .tk-n{color:#ffb86b} .tk-c{color:#5a6285;font-style:italic}
+
+  /* ---------- effects gallery ---------- */
+  .effects-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:36px}
+  @media (max-width:980px){.effects-grid{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:620px){.effects-grid{grid-template-columns:1fr}}
+  .fx{position:relative;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#0c1124,#070a17);overflow:hidden;cursor:pointer;transition:.2s ease}
+  .fx:hover{border-color:rgba(122,240,255,.45);transform:translateY(-2px)}
+  .fx .fx-canvas{height:200px;background:#06070f;border-bottom:1px solid #0f152a;position:relative}
+  .fx .fx-canvas canvas{display:block;width:100%;height:100%}
+  .fx .fx-meta{padding:14px 16px}
+  .fx .fx-meta .num{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--neon-2)}
+  .fx .fx-meta h4{margin:4px 0 4px;font-size:16px;font-weight:600}
+  .fx .fx-meta p{margin:0;color:var(--ink-dim);font-size:12.5px;line-height:1.5}
+
+  /* ---------- pipeline ---------- */
+  .pipe{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:36px}
+  @media (max-width:880px){.pipe{grid-template-columns:repeat(2,1fr)}}
+  .pipe .step{border:1px solid var(--line);border-radius:12px;padding:14px;background:linear-gradient(180deg,#0c1124,#070a17);position:relative}
+  .pipe .step .n{font-family:"JetBrains Mono",ui-monospace,monospace;color:var(--neon);font-size:11px}
+  .pipe .step h5{margin:6px 0 6px;font-size:14px;font-weight:600}
+  .pipe .step p{margin:0;color:var(--ink-dim);font-size:12px;line-height:1.5}
+  .pipe .step::after{content:"→";position:absolute;right:-14px;top:50%;transform:translateY(-50%);color:var(--ink-mute);font-size:18px}
+  .pipe .step:last-child::after{display:none}
+  @media (max-width:880px){.pipe .step::after{display:none}}
+
+  /* ---------- CTA ---------- */
+  section.cta{padding:90px 0 110px;position:relative}
+  .cta-card{
+    position:relative;border:1px solid var(--line);border-radius:24px;
+    background:
+      radial-gradient(800px 300px at 20% 0%,rgba(122,240,255,.12),transparent 60%),
+      radial-gradient(700px 300px at 90% 100%,rgba(255,122,217,.10),transparent 60%),
+      linear-gradient(180deg,#0d1226,#080b18);
+    padding:56px;overflow:hidden;
+  }
+  @media (max-width:780px){.cta-card{padding:36px 24px}}
+  .cta-card h2{font-size:clamp(28px,3.4vw,40px);margin:0 0 14px;line-height:1.1;font-weight:600;letter-spacing:-.01em}
+  .cta-card p{color:var(--ink-dim);max-width:600px;margin:0 0 26px;font-size:16px}
+  .cta-row{display:flex;flex-wrap:wrap;gap:12px}
+  .cta-meta{margin-top:28px;display:flex;gap:30px;flex-wrap:wrap;color:var(--ink-mute);font-size:12px}
+  .cta-meta b{color:var(--ink);font-weight:500}
+
+  /* footer */
+  footer{padding:30px 0 50px;color:var(--ink-mute);font-size:12px;border-top:1px solid var(--line);margin-top:0}
+  footer .row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px}
+
+  /* small utility chips for tech stack */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+  .chip{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-dim);padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(13,17,32,.5)}
+  .chip b{color:var(--ink);font-weight:500}
+
+  /* numerals */
+  .num-row{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:36px}
+  @media (max-width:780px){.num-row{grid-template-columns:1fr}}
+  .num-card{border:1px solid var(--line);border-radius:16px;padding:22px;background:linear-gradient(180deg,#0b1020,#070a17)}
+  .num-card .big{font-size:42px;font-weight:600;letter-spacing:-.02em;line-height:1;background:linear-gradient(90deg,#7af0ff,#b070ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .num-card .lab{margin-top:8px;color:var(--ink-dim);font-size:13px;line-height:1.45}
+
+  /* fade in */
+  .fadein{opacity:0;transform:translateY(8px);transition:opacity .8s ease,transform .8s ease}
+  .fadein.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-row">
+    <div class="logo"><span class="dot"></span> SDF&nbsp;Orbit <span class="mute mono" style="margin-left:8px;font-size:11px">v0.1 · prototype</span></div>
+    <nav class="nav-links">
+      <a href="#problem">Проблема</a>
+      <a href="#idea">Идея</a>
+      <a href="#sdf">Технология</a>
+      <a href="#effects">Эффекты</a>
+      <a href="#cta">Пилот</a>
+    </nav>
+    <a class="btn primary" href="#cta">Предложить пилот <span class="arrow">→</span></a>
+  </div>
+</header>
+
+<!-- ============== HERO ============== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow"><span class="pulse"></span> Working prototype · 2026</span>
+      <h1 class="headline">
+        Фото&nbsp;— это&nbsp;<span class="grad">место&nbsp;для&nbsp;рекламы</span>.
+      </h1>
+      <p class="lede">
+        Самый крупный элемент на странице товара ничего не делает. Мы превращаем главное фото в кликабельную таргетируемую поверхность —
+        с сегментацией, SDF-орбитой вдоль контура и собственной воронкой на каждую зону.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#cta">Запустить пилот <span class="arrow">→</span></a>
+        <a class="btn" href="#effects">Посмотреть эффекты</a>
+      </div>
+      <div class="hero-meta mono">
+        <div><b>5</b> визуальных стилей</div>
+        <div><b>1</b> анимационный корень</div>
+        <div><b>0</b> новых скроллов в макете</div>
+      </div>
+    </div>
+
+    <div class="device" id="heroDevice">
+      <div class="screen">
+        <canvas id="heroCanvas"></canvas>
+        <div class="topbar mono"><span>MARKETPLACE</span><span>9:41</span></div>
+        <span class="ribbon mono">PDP · main photo</span>
+        <div class="price" id="priceA"><small>Лампа Aurora</small><b>4 290 ₽</b></div>
+        <div class="price alt" id="priceB"><small>Колонка Echo Mini</small><b>6 990 ₽</b></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== PROBLEM ============== -->
+<section class="s" id="problem">
+  <div class="wrap">
+    <div class="kicker"><span class="num">01</span><span>Экономика внимания</span><span class="bar"></span></div>
+    <h2 class="title">Каждый прямоугольник на этой странице&nbsp;— чья-то зона ответственности. Кроме одного.</h2>
+    <p class="sub">
+      Заголовок, цена, кнопка, характеристики, отзывы, рекомендации — каждый элемент оптимизируют отдельные команды,
+      потому что конверсия PDP напрямую зависит от того, как используется каждый участок экрана. Главное фото из этой
+      системы выпадает: занимает наибольшую площадь, но не конкурирует за внимание как навигационный или рекламный элемент.
+    </p>
+
+    <div class="pdp-mock">
+      <div class="pdp-frame">
+        <div class="header-rect"></div>
+        <div class="label" style="top:14px;left:18px;color:var(--ok);background:rgba(124,255,178,.1);border-color:rgba(124,255,178,.3)">оптимизируется</div>
+
+        <div class="photo-rect">
+          <span class="label-overlay">не используется</span>
+        </div>
+
+        <div class="price-rect"></div>
+        <div class="label" style="top:362px;left:18px;color:var(--ok);background:rgba(124,255,178,.1);border-color:rgba(124,255,178,.3)">оптимизируется</div>
+
+        <div class="cta-rect"></div>
+        <div class="label" style="top:362px;right:18px;color:var(--ok);background:rgba(124,255,178,.1);border-color:rgba(124,255,178,.3)">оптимизируется</div>
+
+        <div class="row-rect r1"></div>
+        <div class="row-rect r2"></div>
+      </div>
+
+      <div class="legend">
+        <div class="row ok"><span class="swatch"></span><span class="name"><b>Заголовок · цена · кнопка</b><br/><span class="who">отдельные продуктовые команды</span></span></div>
+        <div class="row ok"><span class="swatch"></span><span class="name"><b>Характеристики · отзывы</b><br/><span class="who">контент-команда + ML-ранжирование</span></span></div>
+        <div class="row ok"><span class="swatch"></span><span class="name"><b>«С этим покупают»</b><br/><span class="who">рекомендательная система</span></span></div>
+        <div class="row warn"><span class="swatch"></span><span class="name"><b>Главное фото</b><br/><span class="who">учтено в макете, не учтено в метриках</span></span></div>
+      </div>
+    </div>
+
+    <div class="num-row">
+      <div class="num-card"><div class="big">~55%</div><div class="lab">площади мобильного PDP занимает фотогалерея товара</div></div>
+      <div class="num-card"><div class="big">2</div><div class="lab">действия пользователю доступны на ней сегодня — свайп и зум</div></div>
+      <div class="num-card"><div class="big">×1</div><div class="lab">намерение покупателя на PDP — самая горячая точка воронки</div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== IDEA ============== -->
+<section class="s" id="idea">
+  <div class="wrap">
+    <div class="kicker"><span class="num">02</span><span>Кликабельные сегменты</span><span class="bar"></span></div>
+    <h2 class="title">Одна фотография&nbsp;— <span class="grad" style="background:linear-gradient(90deg,#7af0ff,#b070ff);-webkit-background-clip:text;background-clip:text;color:transparent">N независимых рекламных мест</span>.</h2>
+    <p class="sub">
+      При публикации карточки фото прогоняется через сегментацию. Каждый объект в кадре получает собственный контур, собственный URL и собственную строчку в отчёте.
+      Один и тот же кадр одновременно работает как кросс-сейл, апсейл, лукбук и партнёрская интеграция — без новых скроллов и модалок.
+    </p>
+
+    <div class="zones-stage">
+      <div class="stage-card">
+        <canvas id="zonesCanvas" width="900" height="700" style="aspect-ratio:9/7"></canvas>
+      </div>
+      <div class="zone-list" id="zoneList">
+        <div class="zone active" data-i="0" style="color:#7af0ff"><span class="swatch"></span><span class="name">Лампа Aurora</span><span class="url mono">/p/aurora</span></div>
+        <div class="zone" data-i="1" style="color:#b070ff"><span class="swatch"></span><span class="name">Колонка Echo Mini</span><span class="url mono">/p/echo-mini</span></div>
+        <div class="zone" data-i="2" style="color:#ff7ad9"><span class="swatch"></span><span class="name">Плед Wool 140</span><span class="url mono">/p/wool-140</span></div>
+        <div class="zone" data-i="3" style="color:#7cffb2"><span class="swatch"></span><span class="name">Книга «Орбита»</span><span class="url mono">/p/orbita</span></div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <span class="chip"><b>cross-sell</b> · сопутствующий товар</span>
+      <span class="chip"><b>up-sell</b> · другая конфигурация</span>
+      <span class="chip"><b>look-book</b> · вещь из того же образа</span>
+      <span class="chip"><b>partner</b> · бренд-интеграция</span>
+      <span class="chip"><b>collection</b> · подборка</span>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== EXISTING vs ORBIT ============== -->
+<section class="s">
+  <div class="wrap">
+    <div class="kicker"><span class="num">03</span><span>Существующее vs предлагаемое</span><span class="bar"></span></div>
+    <h2 class="title">Точка и прямоугольник&nbsp;— весь словарь shoppable-фото на сегодня.</h2>
+    <p class="sub">
+      Текущие решения (dot-маркер, AABB-тег) статичны, геометрически грубы и визуально нейтральны. Они не возобновляются при
+      смене кадра и проигрывают в борьбе за внимание любому анимированному соседу. Орбита привязана к контуру объекта,
+      перезапускается при свайпе и сама конкурирует за взгляд.
+    </p>
+
+    <div class="vs-grid">
+      <div class="vs-card bad">
+        <div class="vs-tag">Сегодня · static marker</div>
+        <h3>Точка / AABB-тег</h3>
+        <div class="vs-desc">Статичная иконка поверх изображения. Контур игнорируется, реакции на смену кадра нет, в эстетике витрины не участвует.</div>
+        <div class="vs-canvas-wrap"><canvas id="vsStatic"></canvas></div>
+      </div>
+      <div class="vs-card good">
+        <div class="vs-tag">SDF Orbit · proposed</div>
+        <h3>Орбита вдоль контура</h3>
+        <div class="vs-desc">Анимация совпадает с формой объекта, перезапускается при каждом свайпе галереи, настраивается под визуальный язык категории.</div>
+        <div class="vs-canvas-wrap"><canvas id="vsOrbit"></canvas></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== SDF EXPLAINER ============== -->
+<section class="s" id="sdf">
+  <div class="wrap">
+    <div class="kicker"><span class="num">04</span><span>Технология</span><span class="bar"></span></div>
+    <h2 class="title">SDF — поле расстояний, повторяющее форму.</h2>
+    <p class="sub">
+      Контур сегмента хранится не как полигон и не как маска, а как <b style="color:var(--ink)">Signed Distance Field</b>:
+      каждому пикселю — расстояние до границы со знаком. Эффект на GPU читает это поле одним сэмплированием и рисует
+      полосу-орбиту, движущуюся вдоль изолинии в режиме ping-pong.
+    </p>
+
+    <div class="sdf-grid">
+      <div class="sdf-step">
+        <div class="stepnum">01 · INPUT</div>
+        <h4>Сегментация → маска</h4>
+        <p>Модель сегментации возвращает бинарную маску каждого объекта в кадре: «внутри / снаружи».</p>
+        <div class="preview"><canvas id="sdfMask"></canvas></div>
+      </div>
+      <div class="sdf-step">
+        <div class="stepnum">02 · TRANSFORM</div>
+        <h4>SDF + размытие</h4>
+        <p>Маска превращается в поле расстояний и сглаживается одним проходом, чтобы убрать зубцы и микроартефакты.</p>
+        <div class="preview"><canvas id="sdfField"></canvas></div>
+      </div>
+      <div class="sdf-step">
+        <div class="stepnum">03 · RENDER</div>
+        <h4>Орбита на изолинии</h4>
+        <p>Полоса = пиксели, у которых SDF = d₀(t). d₀ ходит вперёд-назад через кубический Безье — это и есть «ping-pong».</p>
+        <div class="preview"><canvas id="sdfOrbit"></canvas></div>
+      </div>
+    </div>
+
+    <div class="codeblock">
+      <div class="filebar"><span>shaders/wave.glsl</span><span class="dots"><span></span><span></span><span></span></span></div>
+<pre><span class="tk-c">// волна = пиксели, где |SDF − centerOffset(t)| &lt; halfW</span>
+<span class="tk-t">float</span> <span class="tk-n">waveBand</span>(<span class="tk-t">float</span> d, <span class="tk-t">float</span> centerOffsetPx, <span class="tk-t">float</span> halfW){
+    <span class="tk-t">float</span> aa = <span class="tk-n">max</span>(<span class="tk-n">fwidth</span>(d), <span class="tk-s">0.75</span>);
+    <span class="tk-t">float</span> m1 = <span class="tk-n">smoothstep</span>(centerOffsetPx - halfW - aa,
+                          centerOffsetPx - halfW + aa, d);
+    <span class="tk-t">float</span> m2 = <span class="tk-s">1.0</span> - <span class="tk-n">smoothstep</span>(centerOffsetPx + halfW - aa,
+                                centerOffsetPx + halfW + aa, d);
+    <span class="tk-k">return</span> m1 * m2;
+}
+
+<span class="tk-c">// центр полосы движется вперёд-назад через кубический Безье</span>
+<span class="tk-t">float</span> s          = <span class="tk-n">fract</span>(uTime * uWaveSpeed);
+<span class="tk-t">float</span> halfInter  = (s &lt; <span class="tk-s">0.5</span>) ? <span class="tk-n">cubicBezierEase</span>(s*<span class="tk-s">2.0</span>, c1, c2)
+                            : <span class="tk-n">cubicBezierEase</span>(<span class="tk-s">2.0</span> - s*<span class="tk-s">2.0</span>, c1, c2);
+<span class="tk-t">float</span> centerOffset = uWaveBasePx + uWaveAmpPx * (<span class="tk-s">2.0</span>*halfInter - <span class="tk-s">1.0</span>);</pre>
+    </div>
+
+    <div class="chips">
+      <span class="chip"><b>WebGL2</b> · фрагментные шейдеры</span>
+      <span class="chip"><b>SDF</b> · 24-bit packed RGB + sign</span>
+      <span class="chip"><b>blur</b> · separable, sdf-aware</span>
+      <span class="chip"><b>cubic Bézier</b> · easing</span>
+      <span class="chip"><b>node graph</b> · сегментация → SDF → effect</span>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== FIVE EFFECTS ============== -->
+<section class="s" id="effects">
+  <div class="wrap">
+    <div class="kicker"><span class="num">05</span><span>Пять эффектов · один корень</span><span class="bar"></span></div>
+    <h2 class="title">Пять визуальных стилей, наследующих один анимационный движок.</h2>
+    <p class="sub">
+      Все эффекты строятся поверх double ping-pong: меняется только последний шаг — то, что именно рисуется
+      в полосе-орбите. Это позволяет добавлять новые стили без переработки геометрической или анимационной логики.
+    </p>
+
+    <div class="effects-grid" id="effectsGrid">
+      <div class="fx"><div class="fx-canvas"><canvas data-fx="dot"></canvas></div><div class="fx-meta"><span class="num mono">EFFECT 01</span><h4>Dot Grid</h4><p>Сетка точек, плотность и яркость которых зависят от близости к орбите.</p></div></div>
+      <div class="fx"><div class="fx-canvas"><canvas data-fx="drop"></canvas></div><div class="fx-meta"><span class="num mono">EFFECT 02</span><h4>Drop Grid</h4><p>Преломляющие капли вдоль контура — мягкое, «жидкое» прочтение орбиты.</p></div></div>
+      <div class="fx"><div class="fx-canvas"><canvas data-fx="neon"></canvas></div><div class="fx-meta"><span class="num mono">EFFECT 03</span><h4>Neon Ring</h4><p>Светящееся кольцо вдоль контура с соседними связями — самый «гэмблинговый» стиль.</p></div></div>
+      <div class="fx"><div class="fx-canvas"><canvas data-fx="dither"></canvas></div><div class="fx-meta"><span class="num mono">EFFECT 04</span><h4>Dither Grid</h4><p>Дизерная решётка, чья плотность нарастает по мере приближения к изолинии.</p></div></div>
+      <div class="fx"><div class="fx-canvas"><canvas data-fx="text"></canvas></div><div class="fx-meta"><span class="num mono">EFFECT 05</span><h4>Text Grid</h4><p>Глифы из SDF-атласа — катакана, латиница, кастом — выкладываются по орбите.</p></div></div>
+      <div class="fx" style="display:flex;align-items:center;justify-content:center;text-align:center;padding:24px"><div><div class="mono dim" style="font-size:11px;letter-spacing:.18em;text-transform:uppercase">+ ваш стиль</div><h4 style="margin:8px 0 6px">Custom shader</h4><p class="dim" style="font-size:13px;line-height:1.5;margin:0">Любой эффект становится наследником — переписывается только финальный fragment.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep" />
+
+<!-- ============== PIPELINE ============== -->
+<section class="s">
+  <div class="wrap">
+    <div class="kicker"><span class="num">06</span><span>Пайплайн</span><span class="bar"></span></div>
+    <h2 class="title">От загрузки фото до строки в отчёте по выручке.</h2>
+    <p class="sub">
+      Визуал — только верхний слой. За ним стоит обычная воронка атрибуции: каждое касание зоны рождает событие
+      <span class="mono" style="color:var(--ink)">click(segment_id, product_id, position, t)</span>,
+      которое попадает в аналитическую шину и собирается в отчёт «выручка на сегмент / на фото / на товар».
+    </p>
+
+    <div class="pipe">
+      <div class="step"><div class="n">01</div><h5>Upload</h5><p>Продавец загружает главное фото карточки.</p></div>
+      <div class="step"><div class="n">02</div><h5>Segment</h5><p>Модель находит объекты и возвращает маски.</p></div>
+      <div class="step"><div class="n">03</div><h5>SDF + blur</h5><p>Маска превращается в сглаженное поле расстояний.</p></div>
+      <div class="step"><div class="n">04</div><h5>Render</h5><p>Шейдер рисует орбиту на нужной зоне на устройстве.</p></div>
+      <div class="step"><div class="n">05</div><h5>Attribute</h5><p>Тап → событие → отчёт. Своя воронка на каждую зону.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== CTA ============== -->
+<section class="s cta" id="cta">
+  <div class="wrap">
+    <div class="cta-card">
+      <div class="kicker"><span class="num mono">07</span><span>Pilot</span><span class="bar"></span></div>
+      <h2>Подключите SDF Orbit к одной категории. Соберите первые числа за две недели.</h2>
+      <p>
+        Мы ищем 1–2 маркетплейса или бренда для пилотного запуска: одна категория, одна полка, одно фото с орбитой.
+        Сравним метрики кликов и выручки против контрольной группы. Если работает — масштабируем; если нет — заметка в блоге об интересном эксперименте.
+      </p>
+      <div class="cta-row">
+        <a class="btn primary" href="mailto:kivadial@gmail.com?subject=SDF%20Orbit%20%E2%80%94%20%D0%BF%D0%B8%D0%BB%D0%BE%D1%82&body=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%2C%20%D1%80%D0%B0%D1%81%D1%81%D0%BC%D0%B0%D1%82%D1%80%D0%B8%D0%B2%D0%B0%D1%8E%20%D0%BF%D0%B8%D0%BB%D0%BE%D1%82%20%D0%BD%D0%B0%20%D1%81%D0%B2%D0%BE%D0%B5%D0%B9%20%D0%BF%D0%BB%D0%BE%D1%89%D0%B0%D0%B4%D0%BA%D0%B5...">Написать о пилоте <span class="arrow">→</span></a>
+        <a class="btn" href="#effects">Ещё раз посмотреть эффекты</a>
+      </div>
+      <div class="cta-meta mono">
+        <div><b>2&nbsp;недели</b> на встройку в одну категорию</div>
+        <div><b>A/B</b> против контрольной группы</div>
+        <div><b>Open metrics</b> — все цифры открыты заказчику</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <div class="mono">© 2026 · SDF Orbit prototype · written by Ruslan</div>
+    <div class="mono dim">Built on top of double ping-pong morphing · WebGL2 · SDF</div>
+  </div>
+</footer>
+
+<!-- =================================================================
+     SCRIPTS
+     ================================================================= -->
+<script>
+/* ---------- helpers ---------- */
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+function fitCanvas(c){
+  const r = c.getBoundingClientRect();
+  c.width = Math.max(1, Math.floor(r.width * DPR));
+  c.height = Math.max(1, Math.floor(r.height * DPR));
+  const ctx = c.getContext('2d');
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  return ctx;
+}
+
+/* ---------- shape definitions (parametric "contours") ---------- */
+// generic blob via lobed circle
+function blob(t, lobes=5, amp=.18){
+  const r = 1 + Math.sin(t*lobes)*amp + Math.sin(t*(lobes+2))*amp*.5;
+  return r;
+}
+// "lamp" silhouette (vertical-ish): broader top, thin neck, base
+function lampR(t){
+  // t in [0, 2pi)
+  const c = Math.cos(t), s = Math.sin(t);
+  // ellipse base + dome modulator
+  const r = .9 + .3*Math.sin(t*2 - .3) + .12*Math.cos(t*4) + .08*Math.sin(t*6);
+  return r;
+}
+// "speaker" silhouette (rounded square)
+function squircleR(t, exp=4){
+  const c = Math.cos(t), s = Math.sin(t);
+  return Math.pow(Math.pow(Math.abs(c),exp) + Math.pow(Math.abs(s),exp), -1/exp);
+}
+// "book" rectangle with rounded corners (param via L-infty-ish)
+function bookR(t){
+  return squircleR(t, 8) * (1 + .04*Math.sin(t*8));
+}
+// "blanket" wavy
+function blanketR(t){
+  return .85 + .12*Math.sin(t*3) + .06*Math.sin(t*7);
+}
+
+/* draw a closed contour given a polar function */
+function strokeContour(ctx, cx, cy, scale, fn, color, width=1.5){
+  ctx.beginPath();
+  const N = 220;
+  for (let i=0;i<=N;i++){
+    const t = (i/N)*Math.PI*2;
+    const r = fn(t)*scale;
+    const x = cx + Math.cos(t)*r;
+    const y = cy + Math.sin(t)*r;
+    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.lineWidth = width;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+}
+
+/* ping-pong easing (cubic-ish) */
+function pingpong(t, period){
+  const s = (t % period) / period;
+  const tri = s < .5 ? s*2 : (1-s)*2;
+  // ease: smoothstep
+  return tri*tri*(3-2*tri);
+}
+
+/* draw orbit band along contour at offset px, with halfW px */
+function drawOrbit(ctx, cx, cy, scale, fn, offsetPx, halfW, color1, color2, glow=true, density=180){
+  const N = density;
+  for (let i=0;i<N;i++){
+    const t = (i/N)*Math.PI*2;
+    const r = fn(t)*scale;
+    // outward normal approx
+    const nx = Math.cos(t), ny = Math.sin(t);
+    const x = cx + nx*(r + offsetPx);
+    const y = cy + ny*(r + offsetPx);
+    // gradient color along path
+    const mix = (Math.sin(t*2 + offsetPx*0.04)+1)/2;
+    const col = mixColor(color1, color2, mix);
+    ctx.fillStyle = col;
+    if (glow){ ctx.shadowColor = col; ctx.shadowBlur = halfW*2.4; }
+    ctx.beginPath();
+    ctx.arc(x, y, halfW*.6, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function mixColor(a,b,m){
+  // a,b: [r,g,b], m in [0,1]
+  return `rgba(${Math.round(a[0]*(1-m)+b[0]*m)},${Math.round(a[1]*(1-m)+b[1]*m)},${Math.round(a[2]*(1-m)+b[2]*m)},.95)`;
+}
+const C_CYAN  = [122,240,255];
+const C_PURP  = [176,112,255];
+const C_PINK  = [255,122,217];
+const C_GREEN = [124,255,178];
+const C_WARN  = [255,184,107];
+
+/* ---------- HERO canvas: phone-style PDP with lamp+speaker ---------- */
+(function heroAnim(){
+  const c = document.getElementById('heroCanvas');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  let t0 = performance.now();
+  const priceA = document.getElementById('priceA');
+  const priceB = document.getElementById('priceB');
+  let phase = 0; // 0 idle -> 1 orbit -> 2 reveal prices
+  function resize(){ ctx = fitCanvas(c); }
+  window.addEventListener('resize', resize);
+
+  function frame(now){
+    const t = (now - t0)/1000;
+    const W = c.clientWidth, H = c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+
+    // bg vignette + faint scene
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#0a1024');
+    g.addColorStop(1,'#05060f');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+
+    // floor line
+    ctx.strokeStyle = 'rgba(122,240,255,.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0,H*.78); ctx.lineTo(W,H*.78); ctx.stroke();
+
+    // main object: lamp on left
+    const lampCx = W*.45, lampCy = H*.5, lampScale = Math.min(W,H)*.22;
+    // soft fill for shape
+    ctx.beginPath();
+    const N = 200;
+    for (let i=0;i<=N;i++){
+      const tt=(i/N)*Math.PI*2; const r=lampR(tt)*lampScale;
+      const x=lampCx+Math.cos(tt)*r, y=lampCy+Math.sin(tt)*r;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    const lg = ctx.createRadialGradient(lampCx, lampCy, lampScale*.1, lampCx, lampCy, lampScale*1.2);
+    lg.addColorStop(0,'rgba(40,55,90,.85)');
+    lg.addColorStop(1,'rgba(8,12,24,.6)');
+    ctx.fillStyle = lg; ctx.fill();
+    // outline
+    strokeContour(ctx, lampCx, lampCy, lampScale, lampR, 'rgba(122,240,255,.18)', 1);
+
+    // speaker on right
+    const spkCx = W*.78, spkCy = H*.65, spkScale = Math.min(W,H)*.11;
+    ctx.beginPath();
+    for (let i=0;i<=N;i++){
+      const tt=(i/N)*Math.PI*2; const r=squircleR(tt,5)*spkScale;
+      const x=spkCx+Math.cos(tt)*r, y=spkCy+Math.sin(tt)*r;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    const sg = ctx.createRadialGradient(spkCx, spkCy, spkScale*.05, spkCx, spkCy, spkScale*1.2);
+    sg.addColorStop(0,'rgba(60,40,90,.85)');
+    sg.addColorStop(1,'rgba(8,12,24,.5)');
+    ctx.fillStyle = sg; ctx.fill();
+    strokeContour(ctx, spkCx, spkCy, spkScale, (tt)=>squircleR(tt,5), 'rgba(176,112,255,.18)', 1);
+
+    // After 1.6s — orbit appears on lamp
+    const orbitStart = 1.4;
+    const tt = Math.max(0, t - orbitStart);
+    if (tt > 0){
+      // ping-pong offset
+      const period = 2.2;
+      const interp = pingpong(tt, period); // 0..1
+      const baseOff = 8;
+      const ampOff = 14;
+      const off = baseOff + ampOff*(interp);
+      const halfW = 2.4;
+      // inner soft band
+      drawOrbit(ctx, lampCx, lampCy, lampScale, lampR, off, halfW, C_CYAN, C_PURP, true, 220);
+      // secondary band shifted
+      drawOrbit(ctx, lampCx, lampCy, lampScale, lampR, off+5, halfW*.8, C_PURP, C_PINK, true, 160);
+
+      // after another beat — show price A
+      if (tt > 1.6) priceA.classList.add('show');
+    }
+
+    // After 4.5s — orbit on speaker, price B
+    const orbit2Start = 4.0;
+    const tt2 = Math.max(0, t - orbit2Start);
+    if (tt2 > 0){
+      const period = 2.2;
+      const interp = pingpong(tt2, period);
+      const off = 6 + 10*interp;
+      drawOrbit(ctx, spkCx, spkCy, spkScale, (tt)=>squircleR(tt,5), off, 2.0, C_PURP, C_PINK, true, 160);
+      if (tt2 > 1.2) priceB.classList.add('show');
+    }
+
+    // Loop reset
+    if (t > 8){
+      t0 = now;
+      priceA.classList.remove('show');
+      priceB.classList.remove('show');
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- ZONES interactive ---------- */
+(function zonesScene(){
+  const c = document.getElementById('zonesCanvas');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  function resize(){ ctx = fitCanvas(c); }
+  window.addEventListener('resize', resize);
+
+  const zones = [
+    { name:'lamp',   cx:.32, cy:.44, scale:.18, fn:lampR,                 color:C_CYAN,  colorB:C_PURP },
+    { name:'spk',    cx:.62, cy:.62, scale:.10, fn:(t)=>squircleR(t,5),   color:C_PURP,  colorB:C_PINK },
+    { name:'blanket',cx:.18, cy:.78, scale:.10, fn:blanketR,              color:C_PINK,  colorB:C_PURP },
+    { name:'book',   cx:.83, cy:.42, scale:.07, fn:(t)=>bookR(t),         color:C_GREEN, colorB:C_CYAN },
+  ];
+
+  let active = 0;
+  document.querySelectorAll('#zoneList .zone').forEach(el=>{
+    el.addEventListener('mouseenter', ()=>{ active = +el.dataset.i; setActive(); });
+    el.addEventListener('click',      ()=>{ active = +el.dataset.i; setActive(); });
+  });
+  function setActive(){
+    document.querySelectorAll('#zoneList .zone').forEach((el,i)=>el.classList.toggle('active', i===active));
+  }
+
+  let t0 = performance.now();
+  function frame(now){
+    const t = (now - t0)/1000;
+    const W = c.clientWidth, H = c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+
+    // scene bg
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#0a1126'); g.addColorStop(1,'#05060f');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+    // grid
+    ctx.strokeStyle = 'rgba(122,240,255,.05)'; ctx.lineWidth = 1;
+    for (let x=0;x<W;x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (let y=0;y<H;y+=40){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    // each zone — soft shape + outline
+    zones.forEach((z,i)=>{
+      const cx = z.cx*W, cy = z.cy*H, sc = z.scale*Math.min(W,H);
+      // fill
+      ctx.beginPath();
+      const N = 220;
+      for (let k=0;k<=N;k++){
+        const tt=(k/N)*Math.PI*2; const r=z.fn(tt)*sc;
+        const x=cx+Math.cos(tt)*r, y=cy+Math.sin(tt)*r;
+        if (k===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath();
+      const isActive = i===active;
+      const grad = ctx.createRadialGradient(cx,cy,sc*.1,cx,cy,sc*1.2);
+      const [r,g2,b] = z.color;
+      grad.addColorStop(0, isActive ? `rgba(${r},${g2},${b},.22)` : 'rgba(30,40,70,.55)');
+      grad.addColorStop(1, 'rgba(8,12,24,.4)');
+      ctx.fillStyle = grad; ctx.fill();
+
+      // outline
+      strokeContour(ctx, cx, cy, sc, z.fn, isActive ? `rgba(${r},${g2},${b},.7)` : 'rgba(122,140,200,.18)', isActive?1.5:1);
+
+      // orbit only on active
+      if (isActive){
+        const period = 2.0;
+        const interp = pingpong(t, period);
+        const off = 6 + 16*interp;
+        drawOrbit(ctx, cx, cy, sc, z.fn, off, 2.6, z.color, z.colorB, true, 220);
+        drawOrbit(ctx, cx, cy, sc, z.fn, off+5, 1.6, z.colorB, z.color, true, 160);
+      }
+    });
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- VS: static marker ---------- */
+(function vsStatic(){
+  const c = document.getElementById('vsStatic');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  window.addEventListener('resize', ()=>{ ctx = fitCanvas(c); });
+  function frame(){
+    const W = c.clientWidth, H = c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#06070f'; ctx.fillRect(0,0,W,H);
+    // shape (lamp-ish) center
+    const cx=W*.5, cy=H*.55, sc=Math.min(W,H)*.28;
+    ctx.beginPath();
+    const N=200;
+    for (let i=0;i<=N;i++){
+      const t=(i/N)*Math.PI*2; const r=lampR(t)*sc;
+      const x=cx+Math.cos(t)*r, y=cy+Math.sin(t)*r;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(cx,cy,sc*.1,cx,cy,sc*1.1);
+    g.addColorStop(0,'rgba(45,55,80,.7)'); g.addColorStop(1,'rgba(10,12,22,.6)');
+    ctx.fillStyle=g; ctx.fill();
+    ctx.strokeStyle='rgba(150,160,200,.3)'; ctx.lineWidth=1; ctx.stroke();
+
+    // AABB rectangle
+    const minX=cx-sc*.95, maxX=cx+sc*.95, minY=cy-sc*1.2, maxY=cy+sc*1.2;
+    ctx.setLineDash([4,4]);
+    ctx.strokeStyle='rgba(255,184,107,.7)';
+    ctx.strokeRect(minX,minY,maxX-minX,maxY-minY);
+    ctx.setLineDash([]);
+    // dot
+    ctx.fillStyle='rgba(255,184,107,.95)';
+    ctx.beginPath(); ctx.arc(cx, cy-sc*.2, 5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(255,184,107,.4)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(cx, cy-sc*.2, 9, 0, Math.PI*2); ctx.stroke();
+
+    // label
+    ctx.fillStyle='rgba(255,184,107,.9)';
+    ctx.font='10px JetBrains Mono, monospace';
+    ctx.fillText('AABB · static', minX, minY-6);
+  }
+  frame();
+  // redraw on resize only, no anim — static marker is the point
+  let raf;
+  const loop = ()=>{ frame(); raf = requestAnimationFrame(loop); };
+  raf = requestAnimationFrame(loop);
+})();
+
+/* ---------- VS: orbit ---------- */
+(function vsOrbit(){
+  const c = document.getElementById('vsOrbit');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  window.addEventListener('resize', ()=>{ ctx = fitCanvas(c); });
+  let t0 = performance.now();
+  function frame(now){
+    const t=(now-t0)/1000;
+    const W=c.clientWidth, H=c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#06070f'; ctx.fillRect(0,0,W,H);
+    const cx=W*.5, cy=H*.55, sc=Math.min(W,H)*.28;
+    // shape fill
+    ctx.beginPath();
+    const N=220;
+    for (let i=0;i<=N;i++){
+      const tt=(i/N)*Math.PI*2; const r=lampR(tt)*sc;
+      const x=cx+Math.cos(tt)*r, y=cy+Math.sin(tt)*r;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(cx,cy,sc*.1,cx,cy,sc*1.1);
+    g.addColorStop(0,'rgba(35,45,80,.85)'); g.addColorStop(1,'rgba(8,12,22,.6)');
+    ctx.fillStyle=g; ctx.fill();
+
+    // orbit
+    const period=2.2, interp=pingpong(t,period);
+    const off=6+18*interp;
+    drawOrbit(ctx, cx, cy, sc, lampR, off, 2.6, C_CYAN, C_PURP, true, 220);
+    drawOrbit(ctx, cx, cy, sc, lampR, off+5, 1.6, C_PURP, C_PINK, true, 160);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- SDF explainer mini canvases ---------- */
+(function sdfMask(){
+  const c = document.getElementById('sdfMask');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  window.addEventListener('resize', ()=>{ ctx = fitCanvas(c); draw(); });
+  function draw(){
+    const W=c.clientWidth, H=c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#06070f'; ctx.fillRect(0,0,W,H);
+    const cx=W*.5, cy=H*.5, sc=Math.min(W,H)*.32;
+    ctx.beginPath();
+    const N=180;
+    for (let i=0;i<=N;i++){
+      const t=(i/N)*Math.PI*2; const r=lampR(t)*sc;
+      const x=cx+Math.cos(t)*r, y=cy+Math.sin(t)*r;
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.fillStyle='#e9ecf7'; ctx.fill();
+  }
+  draw();
+})();
+
+(function sdfField(){
+  const c = document.getElementById('sdfField');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  window.addEventListener('resize', ()=>{ ctx = fitCanvas(c); draw(); });
+  function draw(){
+    const W=c.clientWidth, H=c.clientHeight;
+    const img = ctx.createImageData(W,H);
+    const cx=W*.5, cy=H*.5, sc=Math.min(W,H)*.32;
+    // sample shape via inside test using lamp polar; build distance via brute parametric
+    // approximate with N samples
+    const N = 240;
+    const pts = new Float32Array(N*2);
+    for (let i=0;i<N;i++){
+      const t=(i/N)*Math.PI*2; const r=lampR(t)*sc;
+      pts[i*2] = cx+Math.cos(t)*r;
+      pts[i*2+1] = cy+Math.sin(t)*r;
+    }
+    // ray cast for inside test along x
+    function inside(px,py){
+      let count=0;
+      for (let i=0;i<N;i++){
+        const j=(i+1)%N;
+        const ax=pts[i*2], ay=pts[i*2+1];
+        const bx=pts[j*2], by=pts[j*2+1];
+        if (((ay<=py)&&(by>py))||((by<=py)&&(ay>py))){
+          const xInt = ax + (py-ay)*(bx-ax)/(by-ay);
+          if (px<xInt) count++;
+        }
+      }
+      return (count%2)===1;
+    }
+    // For perf, downsample
+    const step = 2;
+    for (let y=0;y<H;y+=step){
+      for (let x=0;x<W;x+=step){
+        // distance to nearest edge
+        let bestD=1e9;
+        for (let i=0;i<N;i++){
+          const j=(i+1)%N;
+          const ax=pts[i*2], ay=pts[i*2+1];
+          const bx=pts[j*2], by=pts[j*2+1];
+          const ex=bx-ax, ey=by-ay;
+          const px=x-ax, py=y-ay;
+          const d = Math.max(0,Math.min(1,(px*ex+py*ey)/(ex*ex+ey*ey)));
+          const cxp=ax+ex*d, cyp=ay+ey*d;
+          const dx=x-cxp, dy=y-cyp;
+          const d2 = dx*dx+dy*dy;
+          if (d2<bestD) bestD=d2;
+        }
+        const dist = Math.sqrt(bestD);
+        const ins = inside(x,y);
+        const sd = ins ? -dist : dist;
+        // colour: ramp from purple (inside) → cyan (edge) → dark (outside)
+        const v = Math.max(-60, Math.min(60, sd))/60;
+        let r,g,b;
+        if (v<0){
+          // inside: purple → cyan as |v|→0
+          const m = 1-(-v);
+          r = 50 + (122-50)*m;
+          g = 30 + (240-30)*m;
+          b = 90 + (255-90)*m;
+        } else {
+          const m = 1-v;
+          r = 10 + (122-10)*m*.5;
+          g = 12 + (240-12)*m*.5;
+          b = 30 + (255-30)*m*.5;
+        }
+        for (let dy2=0;dy2<step;dy2++){
+          for (let dx2=0;dx2<step;dx2++){
+            const idx = ((y+dy2)*W+(x+dx2))*4;
+            img.data[idx]=r; img.data[idx+1]=g; img.data[idx+2]=b; img.data[idx+3]=255;
+          }
+        }
+      }
+    }
+    ctx.putImageData(img,0,0);
+  }
+  // computing once is heavy; do it after fonts/layout
+  setTimeout(draw, 100);
+})();
+
+(function sdfOrbitMini(){
+  const c = document.getElementById('sdfOrbit');
+  if (!c) return;
+  let ctx = fitCanvas(c);
+  window.addEventListener('resize', ()=>{ ctx = fitCanvas(c); });
+  let t0 = performance.now();
+  function frame(now){
+    const t=(now-t0)/1000;
+    const W=c.clientWidth, H=c.clientHeight;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#06070f'; ctx.fillRect(0,0,W,H);
+    const cx=W*.5, cy=H*.5, sc=Math.min(W,H)*.28;
+    // outline
+    strokeContour(ctx, cx, cy, sc, lampR, 'rgba(176,112,255,.25)', 1);
+    // orbit
+    const period=2.0, interp=pingpong(t,period);
+    const off=4+14*interp;
+    drawOrbit(ctx, cx, cy, sc, lampR, off, 2.0, C_CYAN, C_PURP, true, 200);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- FX gallery ---------- */
+(function fxGallery(){
+  const cards = document.querySelectorAll('#effectsGrid canvas[data-fx]');
+  if (!cards.length) return;
+
+  cards.forEach(canvas=>{
+    let ctx = fitCanvas(canvas);
+    window.addEventListener('resize', ()=>{ ctx = fitCanvas(canvas); });
+    const kind = canvas.dataset.fx;
+    let t0 = performance.now();
+    function frame(now){
+      const t = (now-t0)/1000;
+      const W=canvas.clientWidth, H=canvas.clientHeight;
+      ctx.clearRect(0,0,W,H);
+      ctx.fillStyle='#06070f'; ctx.fillRect(0,0,W,H);
+      const cx=W*.5, cy=H*.55, sc=Math.min(W,H)*.30;
+      const fn = lampR;
+
+      // base shape
+      ctx.beginPath();
+      const N=200;
+      for (let i=0;i<=N;i++){
+        const tt=(i/N)*Math.PI*2; const r=fn(tt)*sc;
+        const x=cx+Math.cos(tt)*r, y=cy+Math.sin(tt)*r;
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath();
+      const g = ctx.createRadialGradient(cx,cy,sc*.1,cx,cy,sc*1.1);
+      g.addColorStop(0,'rgba(35,45,80,.7)'); g.addColorStop(1,'rgba(8,12,22,.5)');
+      ctx.fillStyle=g; ctx.fill();
+
+      const period = 2.2;
+      const interp = pingpong(t, period);
+      const off = 4 + 16*interp;
+      const halfW = 5;
+
+      if (kind==='dot'){
+        // dot grid: cells, dot if |sdf - off| < halfW (here approx by distance to contour ring)
+        const step=8;
+        for (let y=0;y<H;y+=step){
+          for (let x=0;x<W;x+=step){
+            const dx=x-cx, dy=y-cy;
+            const ang=Math.atan2(dy,dx);
+            const r=fn(ang)*sc;
+            const dist=Math.sqrt(dx*dx+dy*dy)-r;
+            const distAbs=Math.abs(dist - off);
+            if (distAbs<halfW){
+              const m = 1-distAbs/halfW;
+              const col = mixColor(C_CYAN, C_PURP, .5+.5*Math.sin(ang*3));
+              ctx.fillStyle = col;
+              ctx.shadowColor = col; ctx.shadowBlur = 6*m;
+              ctx.beginPath(); ctx.arc(x+step/2,y+step/2,2.4*m,0,Math.PI*2); ctx.fill();
+            }
+          }
+        }
+        ctx.shadowBlur=0;
+      }
+      else if (kind==='drop'){
+        // drop grid: blobs along orbit, larger near band
+        const N2 = 90;
+        for (let i=0;i<N2;i++){
+          const tt = (i/N2)*Math.PI*2;
+          const r = fn(tt)*sc;
+          const x = cx + Math.cos(tt)*(r+off);
+          const y = cy + Math.sin(tt)*(r+off);
+          const m = 1; // already on orbit
+          const col = mixColor(C_PINK, C_PURP, (Math.sin(tt*3 + t*1.6)+1)/2);
+          ctx.shadowColor = col; ctx.shadowBlur = 14;
+          ctx.fillStyle = col;
+          ctx.beginPath(); ctx.arc(x,y, 4 + 2*Math.sin(tt*5+t*3), 0, Math.PI*2); ctx.fill();
+        }
+        ctx.shadowBlur=0;
+      }
+      else if (kind==='neon'){
+        // neon ring: continuous stroke with high glow
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = `rgba(122,240,255,.95)`;
+        ctx.shadowColor = 'rgba(122,240,255,.9)';
+        ctx.shadowBlur = 22;
+        ctx.beginPath();
+        for (let i=0;i<=N;i++){
+          const tt=(i/N)*Math.PI*2; const r=fn(tt)*sc;
+          const x=cx+Math.cos(tt)*(r+off), y=cy+Math.sin(tt)*(r+off);
+          if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        // soft second pass purple
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(176,112,255,.6)';
+        ctx.shadowColor = 'rgba(176,112,255,.7)';
+        ctx.shadowBlur = 14;
+        ctx.beginPath();
+        for (let i=0;i<=N;i++){
+          const tt=(i/N)*Math.PI*2; const r=fn(tt)*sc;
+          const x=cx+Math.cos(tt)*(r+off+5), y=cy+Math.sin(tt)*(r+off+5);
+          if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.shadowBlur=0;
+      }
+      else if (kind==='dither'){
+        // dithered grid: density rises near orbit
+        const step=4;
+        for (let y=0;y<H;y+=step){
+          for (let x=0;x<W;x+=step){
+            const dx=x-cx, dy=y-cy;
+            const ang=Math.atan2(dy,dx);
+            const r=fn(ang)*sc;
+            const dist=Math.sqrt(dx*dx+dy*dy)-r;
+            const distAbs=Math.abs(dist - off);
+            const intensity = Math.max(0, 1 - distAbs/(halfW*3));
+            // Bayer-like deterministic threshold
+            const bx=(x>>1)&3, by=(y>>1)&3;
+            const bayer = ((bx*5+by*7)%16)/16;
+            if (intensity > bayer*.85){
+              const col = mixColor(C_PURP, C_CYAN, intensity);
+              ctx.fillStyle = col;
+              ctx.fillRect(x,y,2,2);
+            }
+          }
+        }
+      }
+      else if (kind==='text'){
+        // text grid: katakana glyphs along orbit
+        const glyphs = 'カキクケコサシスセソタチツテトナニヌネノ01ｘｙ';
+        ctx.font = 'bold 13px JetBrains Mono, monospace';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        const N2=70;
+        for (let i=0;i<N2;i++){
+          const tt = (i/N2)*Math.PI*2;
+          const r = fn(tt)*sc;
+          const x = cx + Math.cos(tt)*(r+off);
+          const y = cy + Math.sin(tt)*(r+off);
+          const m = .6 + .4*Math.sin(tt*4 + t*2);
+          const col = mixColor(C_CYAN, C_PINK, m);
+          ctx.fillStyle = col;
+          ctx.shadowColor = col; ctx.shadowBlur = 8*m;
+          const ch = glyphs[(i + Math.floor(t*4))%glyphs.length];
+          ctx.fillText(ch, x, y);
+        }
+        ctx.shadowBlur=0;
+      }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+})();
+
+/* ---------- fade-in on scroll ---------- */
+(function reveals(){
+  const els = document.querySelectorAll('.s, .hero, .cta-card');
+  els.forEach(e=>e.classList.add('fadein'));
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(en=>{ if (en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); } });
+  },{threshold:.08});
+  els.forEach(e=>io.observe(e));
+})();
+</script>
+</body>
+</html>
