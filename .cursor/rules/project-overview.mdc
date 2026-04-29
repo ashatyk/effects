@@ -54,7 +54,9 @@ src/
 │   │   ├── effect.ts           # EffectProcessor — multi-pass shader compositor (alwaysDirty)
 │   │   ├── segmentation.ts     # SAM web worker → polygon mask
 │   │   ├── envelope.ts         # Pulse → shaped Signal (attack/decay/sustain/release)
-│   │   ├── animation-controller.ts  # 3 controllers: ribbon, particles, fullscreen
+│   │   ├── animation-controller.ts  # Universal 8-slot controller (raw 0..1 → mapped value)
+│   │   ├── noise-visualizer.ts # Pattern-warped fbm preview (chess / stripes), driven by Signal
+│   │   ├── log.ts              # Effect metrics sink — per-pass CPU + GPU dispatch timings (EMA)
 │   │   └── ... (28 processors total)
 │   └── render/
 │       └── instanced-mesh.ts   # Instanced geometry builder for ribbon/particle passes
@@ -85,9 +87,9 @@ src/
     ├── node-editor.css          # Editor layout + React Flow chrome overrides
     │
     ├── node-editor/             # Editor sub-components and hooks
-    │   ├── constants.ts         # GRID_SIZE (20), snapToGrid, nextId, SLOT_COMPAT, edge types
+    │   ├── constants.ts         # GRID_SIZE (20), snapToGrid, nextId, maxNodeIdNumber, SLOT_COMPAT
     │   ├── menuGroups.ts        # "Add Node" popover menu structure (10 groups)
-    │   ├── NodeEditorToolbar.tsx # Toolbar: back, undo/redo, export/import/clear, pin toggle
+    │   ├── NodeEditorToolbar.tsx # Toolbar: back, undo/redo, export/import/clear, pin toggle, FPS cap
     │   ├── AddNodePopover.tsx   # Context-menu popover for adding nodes
     │   └── hooks/
     │       ├── usePipelineEngine.ts     # Pixi Application init + DataflowEngine lifecycle + Dexie restore
@@ -157,13 +159,18 @@ src/
 
 ### Tick (every frame)
 
-1. Mark `alwaysDirty` processors (animation, effect).
-2. Skip if no dirty nodes.
-3. For each dirty node in **topological order**:
+1. **FPS gate**: if `targetFps > 0`, skip until `now - lastTickAt >= 1000/targetFps - 0.5ms`. The 0.5ms slack stops a 60fps cap from dropping every other frame to 30fps because of rAF jitter.
+2. Mark `alwaysDirty` processors (animation, effect).
+3. Skip if no dirty nodes.
+4. For each dirty node in **topological order**:
    - `gatherInputs()` — reads upstream `outputCache[source][sourceHandle]` into `inputs[targetHandle]`.
    - `proc.execute(inputs, params, engine)` → returns output record.
    - Store in `outputCache`; notify React subscribers (`subscribeNode` callbacks).
-4. Clear dirty set.
+5. Clear dirty set.
+
+### FPS cap (`setTargetFps`)
+
+`DataflowEngine.setTargetFps(fps)` throttles graph evaluation. `0` = uncapped (rAF native rate). Toolbar dropdown drives this; the choice is persisted in `localStorage["nodeEditor.fps.v1"]`. Only graph evaluation is capped — rAF still drives compositing of static frames, so the canvas doesn't stutter visually.
 
 ### Dirty propagation
 
@@ -190,7 +197,7 @@ src/
 
 ### Slot Types
 
-`TEXTURE`, `POLYGON`, `NUMBER`, `VEC`, `DEPTH_RAW`, `CONFIG`, `CONTOUR`, `PULSE`, `SIGNAL`, `ANIMATION`, `ANY` (wildcard). Connection validation uses `SLOT_COMPAT` table.
+`TEXTURE`, `POLYGON`, `NUMBER`, `VEC`, `DEPTH_RAW`, `CONFIG`, `CONTOUR`, `PULSE`, `SIGNAL`, `ANIMATION`, `METRICS`, `ANY` (wildcard). Connection validation uses `SLOT_COMPAT` table.
 
 ### Signal Types
 
@@ -198,8 +205,9 @@ src/
 - `Signal` — continuous 0..1 driver: `{ value, time, age, state, lastTimestampMs }`.
 - `ChannelSignal` — per-channel in animation: `{ time, raw, value, state }`.
 - `AnimationSignal` — `{ channels: Record<string, ChannelSignal> }`.
+- `EffectMetrics` — per-frame profiler payload from EffectProcessor: `{ effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }`. `PassMetric` carries `{ id, kind, cpuMs, skipped }`.
 
-### Processor Categories & Catalog (26 types)
+### Processor Categories & Catalog (28 types)
 
 **Input** (6): `number`, `image`, `polygon`, `segmentation`, `sdfTextAtlas`, `textStrip`
 **Image ops** (5): `blur`, `remap`, `blend`, `denoise`, `sdfFromContour`
@@ -209,10 +217,10 @@ src/
 **Animation triggers** (2): `tap` (pointer → PulseSignal), `autoTimer` (time-based waveforms)
 **Animation modulators** (2): `envelope` (pulse → shaped signal), `combineSignals` (add/max/min/mul/mix)
 **Animation controller** (1): `animationController` — universal 8-slot mapper. Inputs `signal_0..signal_7` (raw 0..1) plus optional `config` (CONFIG, supplies per-effect slot labels and default min/max). Output `signal: AnimationSignal` keyed by index strings `'0'..'7'`. Per-slot params `min_i`/`max_i`.
-**Output** (3): `effect` (multi-pass shader compositor), `preview` (pass-through + canvas extract), `contourPreview`
-**Utility** (1): `config` (effect selection + params passthrough)
+**Output** (3): `effect` (multi-pass shader compositor; emits `texture` + `metrics`), `preview` (pass-through + canvas extract), `contourPreview`
+**Utility** (3): `config` (effect selection + params passthrough), `noiseVisualizer` (pattern-warp preview of canonical fbm), `log` (effect timing inspector)
 
-**`alwaysDirty` processors**: `effect`, `tap`, `autoTimer`, `envelope`, `combineSignals`, `animationController`.
+**`alwaysDirty` processors**: `effect`, `tap`, `autoTimer`, `envelope`, `combineSignals`, `animationController`. The `log` processor relies on dirty-propagation from upstream Effect — it's not alwaysDirty itself, so an unwired Log node sits idle and adds zero per-frame cost.
 
 ---
 
@@ -253,7 +261,23 @@ ping-pong morphing (single wave), god rays (single ray), light beam (single ray)
 
 ### Noise Standard
 
-Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 (`uChan5.x` for ms) — shaders never invent their own time source. Future noise-visualizer node will sample exactly the same `fbm2D` so previews match render output.
+Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 (`uChan5.x` for ms) — shaders never invent their own time source.
+
+### Noise Visualizer (`noiseVisualizer`)
+
+A debug surface for the canonical `fbm2D`. Renders a binary pattern (chess or stripes) sampled at `uv + noise displacement` so the user can *see* what the noise field is doing to a known surface. Two decorrelated `fbm2D` samples form a 2D vector field; amplitude is in UV units (typical 0..0.3).
+
+- Input: `signal: SIGNAL` (typically wired from AutoTimer). Drift driver = `signal.value`, NOT `signal.time` — that way `constant` mode → static field, `unbounded` → steady drift, `sine`/`triangle` → breathing. Without an upstream signal `tDrive = 0` and the field is frozen.
+- Output: `texture: TEXTURE`. Wire to a Preview node to inspect.
+- Params: `mode` (chess/stripes), `scale` (noise frequency), `amp` (displacement), `cells`/`stripes` (pattern frequency), `speed` (drift gain).
+
+### Effect Profiling (`log`)
+
+`EffectProcessor.execute()` records per-pass CPU build time (mesh + shader + uniform setup) and a single GPU dispatch time around `renderer.render()`. Per-pass GPU timing isn't split because the whole stage flushes through one batched draw — true per-pass GPU timing would need `EXT_disjoint_timer_query`, which is unevenly supported. Output `metrics: METRICS` carries `EffectMetrics`.
+
+The `log` node consumes `metrics` and stores both the raw last frame and an EMA-smoothed copy (`smoothing` param, default 0.85). The view shows `total / cpu / gpu dispatch / fps cap`, then a per-pass list with id, kind tag (`inst` for instanced, `full` for fullscreen), `cpuMs`, and a horizontal bar proportional to the heaviest pass. Skipped passes show "skipped" with no bar. React commits are throttled to 100ms regardless of upstream tick rate — the smoothed numbers don't change visibly faster than that.
+
+Logical use: drop a Log node next to an Effect, wire `effect.metrics → log.metrics`, watch which pass dominates the budget while you tweak parameters. With the FPS cap turned down (e.g. 10fps), profiling stays cheap during exploratory work.
 
 ---
 
@@ -277,6 +301,16 @@ Two tables:
 2. Serializes current React Flow state → `SerializedNode[]` + `SerializedEdge[]`.
 3. Persists image blobs (data URLs → IndexedDB) and segmentation masks.
 4. Pushes snapshot. Undo/redo restore from Dexie and re-hydrate the engine.
+
+### Node ID Counter (defensive sync)
+
+Node IDs follow `n_<int>` and are minted by a module-level counter in `node-editor/constants.ts` (`nextId` / `getNodeIdCounter` / `setNodeIdCounter`). The counter must never fall behind the live nodes' max suffix — otherwise `nextId()` would hand out an ID that already exists, and `setNodes([...nds, dup])` would silently drop the original because React Flow dedupes by `id`. This used to surface as "looks like a node-count limit, every add deletes one of the first nodes".
+
+Three guards keep it consistent:
+
+- `applySnapshot` syncs to `Math.max(snap.nodeIdCounter, maxNodeIdNumber(snap.nodes))` so even a snapshot with `nodeIdCounter: 0` (older imports) heals on restore.
+- `addNode` runs `setNodeIdCounter(Math.max(getNodeIdCounter(), maxNodeIdNumber(nodes)))` just before minting — heals an open session without reload.
+- `exportScene` writes the live `getNodeIdCounter()` value, not `0`.
 
 ---
 
