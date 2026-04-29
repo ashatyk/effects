@@ -1,0 +1,11 @@
+/* ── Pin sidebar card ── */
+
+.pn-sidebar-card {
+    background: transparent;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.pn-sidebar-card .pn {
+    width: 100%;
+}

@@ -26,11 +26,8 @@ import { TapProcessor, tapDef } from './tap'
 import { EnvelopeProcessor, envelopeDef } from './envelope'
 import { AutoTimerProcessor, autoTimerDef } from './auto-timer'
 import { CombineSignalsProcessor, combineSignalsDef } from './combine-signals'
-import {
-    RibbonAnimControllerProcessor, ribbonAnimControllerDef,
-    ParticlesAnimControllerProcessor, particlesAnimControllerDef,
-    FullscreenAnimControllerProcessor, fullscreenAnimControllerDef,
-} from './animation-controller'
+import { AnimationControllerProcessor, animationControllerDef } from './animation-controller'
+import { NoiseVisualizerProcessor, noiseVisualizerDef } from './noise-visualizer'
 
 export interface ProcessorEntry {
     def: ProcessorDef
@@ -63,7 +60,6 @@ export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
     envelope:        { def: envelopeDef,        create: () => new EnvelopeProcessor() },
     autoTimer:       { def: autoTimerDef,       create: () => new AutoTimerProcessor() },
     combineSignals:  { def: combineSignalsDef,  create: () => new CombineSignalsProcessor() },
-    ribbonAnimController:     { def: ribbonAnimControllerDef,     create: () => new RibbonAnimControllerProcessor() },
-    particlesAnimController:  { def: particlesAnimControllerDef,  create: () => new ParticlesAnimControllerProcessor() },
-    fullscreenAnimController: { def: fullscreenAnimControllerDef, create: () => new FullscreenAnimControllerProcessor() },
+    animationController: { def: animationControllerDef, create: () => new AnimationControllerProcessor() },
+    noiseVisualizer: { def: noiseVisualizerDef, create: () => new NoiseVisualizerProcessor() },
 }

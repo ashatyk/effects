@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -7,10 +9,13 @@ export default `
     out vec4 fragColor;
 
     uniform vec2  uResolution;
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_scroll;     // x = time_ms — drives the orbit
-    uniform vec4 uChan_radial;     // additive orbit offset (px)
-    uniform vec4 uChan_intensity;  // alpha multiplier
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: scroll — uChan0.x is monotonic ms (drives orbit cycle).
+       Slot 1: radial — additive orbit offset (px).
+       Slot 4: intensity — alpha multiplier. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan4;
 
     uniform sampler2D verticalDistanceTexture;
     uniform sampler2D uDiffuse;
@@ -62,11 +67,7 @@ export default `
         return (t.w > 0.5) ? -d : d;
     }
 
-    float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-    }
+${NOISE_GLSL}
 
     vec3 sampleEnv(vec3 dir) {
         float y = dir.y * 0.5 + 0.5;
@@ -148,8 +149,8 @@ export default `
         float sdist = signedDistancePx(vUV);
         if (sdist < 0.0) { discard; }
 
-        float tSec = uChan_scroll.x * 0.001;
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan_radial.z;
+        float tSec = uChan0.x * 0.001;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -225,7 +226,7 @@ export default `
             depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
         }
 
-        float alpha = dropMask * depthMask * uChan_intensity.z;
+        float alpha = dropMask * depthMask * uChan4.z;
         if (alpha < 0.001) { discard; }
 
         fragColor = vec4(color * alpha, alpha);

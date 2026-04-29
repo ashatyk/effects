@@ -73,6 +73,10 @@ export type InstancedPass = {
         repeatsField?: string
         /** ribbon-mode only: arc length of one quad segment (px). */
         segmentSizeField?: string
+        /** Animation channel slot whose `value` drives the contour scroll
+         *  phase (px). Defaults to slot 0 — the canonical "phase / scroll"
+         *  position in the standard slot layout. */
+        phaseSlot?: number
     }
 }
 
@@ -91,20 +95,33 @@ export type PerInstanceAttr = {
 }
 
 /**
- * Effect class — defines the standard set of animation channel ids the effect
- * may declare. Each class has a fixed channel vocabulary so a single
- * AnimationController-per-class can wire generically to any effect of the
- * same class.
+ * Fixed-size pool of generic animation channels. Effects declare which
+ * indices they consume via `PlaygroundConfig.animation.slots`; shaders
+ * reference them as `uChan0..uChan{ANIMATION_CHANNEL_COUNT-1}`.
+ *
+ * Canonical layout (convention, not enforced):
+ *   0 — primary phase driver (scroll / phase / progress)
+ *   1 — radial offset / phase
+ *   2 — width / size
+ *   3 — spacing / glow
+ *   4 — intensity (alpha)
+ *   5 — noise time driver (see `src/pipeline/noise.glsl.ts`)
+ *   6, 7 — free
  */
-export type EffectClass = 'orbital-ribbon' | 'orbital-particles' | 'fullscreen'
+export const ANIMATION_CHANNEL_COUNT = 8
 
 /**
- * One animation channel declaration. The runtime turns each of these into a
- * shader uniform `uChan_<id>` of type `vec4(time_ms, raw, value, state)`.
+ * One animation channel declaration. The runtime turns each declared slot
+ * into a shader uniform `uChan{slot}` of type `vec4(time_ms, raw, value, state)`.
+ * Indices 0..ANIMATION_CHANNEL_COUNT-1 not present in the array still bind
+ * `uChan{i}` with idle defaults so a shader can opt into any slot regardless
+ * of whether the manifest mentions it.
  */
-export type ChannelDef = {
-    id: string                 // channel id (must belong to its EffectClass)
-    label: string              // UI label in the controller
+export type SlotDef = {
+    /** Channel index in the animation pool (0..ANIMATION_CHANNEL_COUNT-1). */
+    slot: number
+    /** UI label shown by the AnimationController for this slot. */
+    label: string
     /** Lower bound for the channel's mapped `value` (when `raw=0`). */
     defaultMin: number
     /** Upper bound for the channel's mapped `value` (when `raw=1`). */
@@ -116,7 +133,7 @@ export type ChannelDef = {
  *   - what the effect node consumes (implicit through pass.requiresInputs);
  *   - parameters exposed to the user (`fields` + `staticUniforms`);
  *   - how to render it (`passes[]`, executed in order into a single output RT);
- *   - which animation channels it consumes (`animation.channels`).
+ *   - which animation channel slots it consumes (`animation.slots`).
  *
  * The manifest is intentionally renderer-agnostic: it doesn't reference Pixi
  * types directly. The same JSON can be loaded by a Metal/Vulkan runtime that
@@ -129,8 +146,7 @@ export type PlaygroundConfig = {
     staticUniforms?: Record<string, { value: number | number[]; type: UniformKind }>
     passes: EffectPass[]
     animation: {
-        class: EffectClass
-        channels: ChannelDef[]
+        slots: SlotDef[]
     }
 }
 

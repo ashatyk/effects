@@ -1,33 +1,30 @@
-import { NumberNodeView } from './NumberNodeView'
-import { ImageNodeView } from './ImageNodeView'
-import { PolygonNodeView } from './PolygonNodeView'
-import { SdfFromContourNodeView } from './SdfFromContourNodeView'
-import { BlurNodeView } from './BlurNodeView'
-import { RemapNodeView } from './RemapNodeView'
-import { DepthEstimateNodeView } from './DepthEstimateNodeView'
-import { DepthBlitNodeView } from './DepthBlitNodeView'
-import { MaterialEstimateNodeView } from './MaterialEstimateNodeView'
-import { MarigoldDepthNodeView } from './MarigoldDepthNodeView'
-import { MarigoldNormalsNodeView } from './MarigoldNormalsNodeView'
-import { EffectNodeView } from './EffectNodeView'
-import { PreviewNodeView } from './PreviewNodeView'
-import { SegmentationNodeView } from './SegmentationNodeView'
-import { DenoiseNodeView } from './DenoiseNodeView'
-import { BlendNodeView } from './BlendNodeView'
-import { ConfigNodeView } from './ConfigNodeView'
-import { SdfTextAtlasNodeView } from './SdfTextAtlasNodeView'
-import { ContourResampleNodeView } from './ContourResampleNodeView'
-import { ContourPreviewNodeView } from './ContourPreviewNodeView'
-import { TextStripNodeView } from './TextStripNodeView'
-import { TapNodeView } from './TapNodeView'
-import { EnvelopeNodeView } from './EnvelopeNodeView'
-import { AutoTimerNodeView } from './AutoTimerNodeView'
-import { CombineSignalsNodeView } from './CombineSignalsNodeView'
-import {
-    RibbonAnimControllerNodeView,
-    ParticlesAnimControllerNodeView,
-    FullscreenAnimControllerNodeView,
-} from './AnimationControllerNodeView'
+import { NumberNodeView } from './views/NumberNodeView'
+import { ImageNodeView } from './views/ImageNodeView'
+import { PolygonNodeView } from './views/PolygonNodeView'
+import { SdfFromContourNodeView } from './views/SdfFromContourNodeView'
+import { BlurNodeView } from './views/BlurNodeView'
+import { RemapNodeView } from './views/RemapNodeView'
+import { DepthEstimateNodeView } from './views/DepthEstimateNodeView'
+import { DepthBlitNodeView } from './views/DepthBlitNodeView'
+import { MaterialEstimateNodeView } from './views/MaterialEstimateNodeView'
+import { MarigoldDepthNodeView } from './views/MarigoldDepthNodeView'
+import { MarigoldNormalsNodeView } from './views/MarigoldNormalsNodeView'
+import { EffectNodeView } from './views/EffectNodeView'
+import { PreviewNodeView } from './views/PreviewNodeView'
+import { SegmentationNodeView } from './views/SegmentationNodeView'
+import { DenoiseNodeView } from './views/DenoiseNodeView'
+import { BlendNodeView } from './views/BlendNodeView'
+import { ConfigNodeView } from './views/ConfigNodeView'
+import { SdfTextAtlasNodeView } from './views/SdfTextAtlasNodeView'
+import { ContourResampleNodeView } from './views/ContourResampleNodeView'
+import { ContourPreviewNodeView } from './views/ContourPreviewNodeView'
+import { TextStripNodeView } from './views/TextStripNodeView'
+import { TapNodeView } from './views/TapNodeView'
+import { EnvelopeNodeView } from './views/EnvelopeNodeView'
+import { AutoTimerNodeView } from './views/AutoTimerNodeView'
+import { CombineSignalsNodeView } from './views/CombineSignalsNodeView'
+import { AnimationControllerNodeView } from './views/AnimationControllerNodeView'
+import { NoiseVisualizerNodeView } from './views/NoiseVisualizerNodeView'
 
 export const pipelineNodeTypes = {
     number: NumberNodeView,
@@ -55,7 +52,6 @@ export const pipelineNodeTypes = {
     envelope: EnvelopeNodeView,
     autoTimer: AutoTimerNodeView,
     combineSignals: CombineSignalsNodeView,
-    ribbonAnimController: RibbonAnimControllerNodeView,
-    particlesAnimController: ParticlesAnimControllerNodeView,
-    fullscreenAnimController: FullscreenAnimControllerNodeView,
+    animationController: AnimationControllerNodeView,
+    noiseVisualizer: NoiseVisualizerNodeView,
 }

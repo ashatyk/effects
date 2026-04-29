@@ -1,0 +1,120 @@
+---
+description: Long-term product vision and three-tier architecture for the Effects platform. Read this before architectural changes to engine, manifest, or runtime boundaries.
+alwaysApply: true
+---
+
+# Effects — Product Vision
+
+## What we are building
+
+A platform that lets marketplaces (e.g. e-commerce, fashion, marketplaces of physical goods) embed **clickable image effects** on product photos. Suppliers author their listings with effects layered on top of imagery; shoppers see and interact with those effects on the surfaces of the marketplace (product cards, gallery, PDP).
+
+The same effect (e.g. "neon orbit", "marching ants outline", "god rays") flows through three tiers:
+
+```mermaid
+flowchart LR
+    subgraph T1[Tier 1 - Editor]
+        D[Effect designer<br/>builds node graph]
+    end
+    subgraph T2[Tier 2 - Supplier tool]
+        S[Supplier picks effect,<br/>uploads photo,<br/>tweaks exposed params]
+    end
+    subgraph T3[Tier 3 - Display runtime]
+        M[Marketplace shopper<br/>sees + interacts]
+    end
+    D -- PublishedPipeline manifest --> S
+    S -- SupplierConfig snapshot --> M
+```
+
+The codebase you are looking at is **Tier 1**. It must produce artifacts that Tiers 2 and 3 can consume without dragging in React, MUI, xyflow, or any editor concern.
+
+## Tier 1 — Effect Editor (current)
+
+In-browser visual node graph (this app). Designers wire processors into pipelines. Output is a `SceneSnapshot` persisted to IndexedDB and exportable as JSON.
+
+Already in place: `DataflowEngine`, `PROCESSOR_CATALOG`, 11 effect manifests, universal 8-slot animation pool, history with pinned nodes & viewport.
+
+## Tier 2 — Supplier configuration tool (next major work)
+
+Auto-generated UI built on top of a *published* pipeline. Suppliers DO NOT see the graph — they see a curated form: image upload slots, named sliders/colors, click zones with labels.
+
+Required additions (not yet implemented):
+
+- **`FieldDef.exposed`** flag on per-field metadata. Only exposed fields appear in supplier UI.
+- **Per-node publish metadata** on graph nodes (e.g. label for `image` upload slot, label for `tap` click zone).
+- **`derivePublishedSurface(snapshot) → PublishedPipeline`** — pure function that walks the graph from output back to inputs, collects exposed fields + image slots + tap zones into a flat manifest:
+  ```ts
+  type PublishedPipeline = {
+      id: string
+      version: string
+      graph: SerializedScene
+      surface: {
+          imageSlots: { nodeId: string, label: string }[]
+          fields:     { path: string, label: string, kind, default, min?, max? }[]
+          tapZones:   { nodeId: string, label: string, hint?: string }[]
+      }
+  }
+  ```
+- **Validation gate** before publish: exactly one render output, no dangling input handles, all exposed fields have UI metadata.
+- **Manifest version** field on `SceneSnapshot` so we can migrate forward without losing old published effects.
+
+The supplier UI itself is a separate app on top of this manifest.
+
+## Tier 3 — Display runtime (multi-platform)
+
+A slim renderer embedded into product surfaces. Takes `(PublishedPipeline, SupplierConfig, sourceImage)` and renders the live effect with click handling. **No editor code.**
+
+### Platform targets
+
+| Platform   | Surface             | GPU API        |
+|-----------|---------------------|---------------|
+| Web       | Marketplace browser | WebGL2 / WebGPU |
+| iOS       | Native app          | Metal (Swift) |
+| Android   | Native app          | Vulkan (Kotlin) |
+| Server    | Static export / OG  | Headless GL or compute |
+
+Each platform needs the same effect definition to produce the same visual output.
+
+### Cross-platform shader strategy
+
+Today shaders are hand-written GLSL 300 ES strings, tied to WebGL2. To ship beyond web we must pick a **single source-of-truth shading language and a cross-compile pipeline**. Options:
+
+1. **GLSL → SPIRV-Cross** — author in GLSL, compile to SPIR-V via `glslang`, transpile to MSL (Metal) / HLSL / WGSL via `spirv-cross`. Mature toolchain, but GLSL is showing its age.
+2. **WGSL → Naga** (Rust). Modern, good for WebGPU-first; Naga emits MSL / HLSL / SPIR-V / GLSL. Fits a future where Web also targets WebGPU.
+3. **Slang** (NVIDIA). Most expressive, multi-backend, but extra dependency.
+
+**Recommended direction**: lean on **WGSL via Naga**. Reasons:
+- Web rendering will eventually move to WebGPU; WGSL is its native language.
+- Naga is BSD-licensed, embeddable in Rust/C++ build steps, used in production by wgpu.
+- Generated MSL/Vulkan output is reviewable and stable.
+
+Concrete steps when we get there:
+1. Convert all `effects/*/*.frag.ts` and `*.vert.ts` strings from GLSL to WGSL.
+2. Add a build step that runs Naga to produce `.metal`, `.spv`, and back-compat GLSL alongside.
+3. Keep `pipeline/noise.glsl.ts` shape but author once in WGSL — same canonical primitives translated by Naga.
+4. The GPU helpers (`renderPass`, `renderPassInto`) become a renderer abstraction with WebGL2 / WebGPU / Metal / Vulkan backends — `node-engine/dataflow-engine.ts` calls into this abstraction instead of Pixi directly.
+
+Until then: keep all renderer-specific code (Pixi, Metal, Vulkan calls) **out of `node-engine/types.ts`, `pipeline/types.ts`, and effect manifests**. The current code already respects this — preserve it.
+
+## Architectural invariants (do not break)
+
+These are choices made today to keep the three tiers cleanly separable. Future refactors must preserve them:
+
+- **Manifests are renderer-agnostic.** `PlaygroundConfig`, `EffectPass`, `FieldDef`, `SlotDef` reference no Pixi/WebGL/Metal types. Adding `import { Texture } from 'pixi.js'` to `pipeline/types.ts` would break Tier 3.
+- **`DataflowEngine` is framework-agnostic.** No React, MUI, or xyflow imports inside `src/node-engine/`. Tier 3 imports `node-engine/` + `effects/` + `pipeline/` and nothing else from this repo.
+- **Snapshots are the cross-tier transport.** `SceneSnapshot` (graph + asset blobs) is the format that flows from Tier 1 to Tier 2 to Tier 3. Adding fields is fine; removing or making them React-specific is not.
+- **Animation channels stay positional.** The 8-channel pool with the canonical layout (slot 0 = phase, 1 = radial, 2 = size, 3 = spacing/glow, 4 = intensity, 5 = noise time, 6/7 free) is a wire contract between effect authors and runtimes. Don't reintroduce named channels.
+- **Noise is one canonical chunk.** All effects sample `hash21` / `valueNoise2D` / `fbm2D` from `src/pipeline/noise.glsl.ts`. When porting to WGSL/Metal we port this chunk and all effects automatically follow.
+- **Composition over in-shader unrolling.** Multi-instance visuals (3 rays, 2 waves, etc.) are built by chaining Effect nodes, not by baking arrays into shaders. Keeps shaders single-purpose, easier to port and visualize.
+
+## Suggested ordering of next big steps
+
+1. **Pre-Tier-2 plumbing** (small, non-invasive, can do in current repo):
+   - Add `FieldDef.exposed`, per-node publish metadata, `derivePublishedSurface` utility.
+   - Add `manifestVersion` to `SceneSnapshot`.
+2. **Tier 2 supplier UI** as a separate package consuming `PublishedPipeline`. Reuses the runtime, not the editor.
+3. **Tier 3 web renderer**: extract `node-engine/` + `effects/` + `pipeline/` into a runtime package. Editor depends on runtime.
+4. **WGSL migration**: rewrite shaders, wire Naga build step, add WebGPU backend to runtime alongside WebGL2.
+5. **Native runtimes**: Swift+Metal and Kotlin+Vulkan, each consuming the same `PublishedPipeline` JSON and pre-compiled shader artifacts.
+
+When in doubt about whether a change is "Tier 1 only" or "leaks into Tier 2/3": ask whether the change affects manifest shape, processor execute() behavior, or shader code. If yes — it crosses tiers and needs to land in code that doesn't depend on React.

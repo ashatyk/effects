@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -8,11 +10,15 @@ export default `
 
     uniform vec2  uResolution;
 
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_scroll;     // x = time_ms — drives the orbit step
-    uniform vec4 uChan_radial;     // additive offset on orbit centre (px)
-    uniform vec4 uChan_size;       // multiplier on dot radius
-    uniform vec4 uChan_intensity;  // alpha multiplier
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: scroll — uChan0.x is monotonic ms (drives orbit stepping).
+       Slot 1: radial — additive offset on orbit centre (px).
+       Slot 2: size — multiplier on dot radius.
+       Slot 4: intensity — alpha multiplier. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan2;
+    uniform vec4 uChan4;
 
     uniform sampler2D verticalDistanceTexture;
     uniform sampler2D depthTexture;
@@ -51,20 +57,16 @@ export default `
         return (t.w > 0.5) ? -d : d;
     }
 
-    float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-    }
+${NOISE_GLSL}
 
     void main() {
         float sdist = signedDistancePx(vUV);
         if (sdist < 0.0) { discard; }
 
         float interval = max(0.03, uStepInterval);
-        float tSec = uChan_scroll.x * 0.001;
+        float tSec = uChan0.x * 0.001;
         float step = floor(tSec / interval);
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan_radial.z;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -81,7 +83,7 @@ export default `
         float cellDistToOrbit = abs(sdfAtCell - (orbit + noiseOffset));
         float proximity = 1.0 - clamp(cellDistToOrbit / max(1.0, uOrbitWidth), 0.0, 1.0);
 
-        float radius = mix(0.0, uDotMaxRadius * uChan_size.z, proximity * proximity);
+        float radius = mix(0.0, uDotMaxRadius * uChan2.z, proximity * proximity);
         radius *= exp(-uFalloff * sdfAtCell);
 
         radius = max(radius, 0.0);
@@ -102,7 +104,7 @@ export default `
             depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
         }
 
-        float alpha = dotMask * uDotColor.a * depthMask * uChan_intensity.z;
+        float alpha = dotMask * uDotColor.a * depthMask * uChan4.z;
         if (alpha < 0.001) { discard; }
 
         fragColor = vec4(uDotColor.rgb * alpha, alpha);

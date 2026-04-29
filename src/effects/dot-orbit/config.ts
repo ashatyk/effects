@@ -169,13 +169,13 @@ export const config: PlaygroundConfig = {
         },
     ],
     animation: {
-        class: 'orbital-particles',
-        channels: [
-            { id: 'scroll',    label: 'Scroll (px)',          defaultMin: 0, defaultMax: 600 },
-            { id: 'radial',    label: 'Radial offset (px)',   defaultMin: 0, defaultMax: 20 },
-            { id: 'size',      label: 'Size multiplier',      defaultMin: 1, defaultMax: 2 },
-            { id: 'glow',      label: 'Glow multiplier',      defaultMin: 1, defaultMax: 2 },
-            { id: 'intensity', label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        slots: [
+            { slot: 0, label: 'Scroll (px)',          defaultMin: 0, defaultMax: 600 },
+            { slot: 1, label: 'Radial offset (px)',   defaultMin: 0, defaultMax: 20 },
+            { slot: 2, label: 'Size multiplier',      defaultMin: 1, defaultMax: 2 },
+            { slot: 3, label: 'Glow multiplier',      defaultMin: 1, defaultMax: 2 },
+            { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+            { slot: 5, label: 'Noise time (ms)',      defaultMin: 0, defaultMax: 1 },
         ],
     },
 }

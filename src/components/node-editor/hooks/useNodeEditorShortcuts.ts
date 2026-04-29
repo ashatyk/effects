@@ -1,0 +1,72 @@
+import { useEffect, useRef } from 'react'
+import type { Node } from '@xyflow/react'
+import type { PipelineNodeData } from '../constants'
+import { GRID_SIZE, snapToGrid, nextId } from '../constants'
+import type { DataflowEngine } from '../../../node-engine/dataflow-engine'
+
+type PNode = Node<PipelineNodeData>
+
+interface Deps {
+    nodes: PNode[]
+    setNodes: React.Dispatch<React.SetStateAction<PNode[]>>
+    engineRef: React.MutableRefObject<DataflowEngine | null>
+    handleUndo: () => void
+    handleRedo: () => void
+}
+
+export function useNodeEditorShortcuts({ nodes, setNodes, engineRef, handleUndo, handleRedo }: Deps) {
+    const clipboardRef = useRef<PNode[]>([])
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const isMeta = e.metaKey || e.ctrlKey
+
+            if (isMeta && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault()
+                handleUndo()
+                return
+            }
+            if (isMeta && e.key === 'z' && e.shiftKey) {
+                e.preventDefault()
+                handleRedo()
+                return
+            }
+            if (isMeta && e.key === 'y') {
+                e.preventDefault()
+                handleRedo()
+                return
+            }
+
+            if (isMeta && e.key === 'c') {
+                const selected = nodes.filter(n => n.selected)
+                if (selected.length > 0) clipboardRef.current = selected
+            }
+            if (isMeta && e.key === 'v' && clipboardRef.current.length > 0) {
+                const offset = GRID_SIZE * 2
+                const newNodes: PNode[] = clipboardRef.current.map(n => {
+                    const id = nextId()
+                    const nn: PNode = {
+                        id,
+                        type: n.type,
+                        position: {
+                            x: snapToGrid(n.position.x + offset),
+                            y: snapToGrid(n.position.y + offset),
+                        },
+                        data: { ...n.data, params: { ...n.data.params } },
+                        selected: true,
+                    }
+                    return nn
+                })
+                setNodes(nds => {
+                    const deselected = nds.map(n => ({ ...n, selected: false }))
+                    return [...deselected, ...newNodes]
+                })
+                for (const nn of newNodes) {
+                    engineRef.current?.addNode(nn.id, nn.data.processor, { ...nn.data.params })
+                }
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [nodes, setNodes, handleUndo, handleRedo, engineRef])
+}

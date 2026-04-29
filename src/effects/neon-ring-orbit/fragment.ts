@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -7,11 +9,15 @@ export default `
     out vec4 fragColor;
 
     uniform vec2  uResolution;
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_scroll;     // x = time_ms — drives orbit cycle
-    uniform vec4 uChan_radial;     // additive orbit offset (px)
-    uniform vec4 uChan_glow;       // multiplier on glow intensity
-    uniform vec4 uChan_intensity;  // alpha multiplier
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: scroll — uChan0.x is monotonic ms (drives orbit cycle).
+       Slot 1: radial — additive orbit offset (px).
+       Slot 3: glow — multiplier on glow intensity.
+       Slot 4: intensity — alpha multiplier. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan3;
+    uniform vec4 uChan4;
 
     uniform sampler2D verticalDistanceTexture;
     uniform sampler2D depthTexture;
@@ -56,11 +62,7 @@ export default `
         return (t.w > 0.5) ? -d : d;
     }
 
-    float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-    }
+${NOISE_GLSL}
 
     float cellRadius(vec2 cellIdx, vec2 cellSizeUV, float orbit) {
         vec2 centerUV = (cellIdx + 0.5) * cellSizeUV;
@@ -88,8 +90,8 @@ export default `
         float sdist = signedDistancePx(vUV);
         if (sdist < 0.0) { discard; }
 
-        float tSec = uChan_scroll.x * 0.001;
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan_radial.z;
+        float tSec = uChan0.x * 0.001;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -212,7 +214,7 @@ export default `
         }
 
         float totalFill = fillMask * uRingColor.a;
-        float totalGlow = glowMask * uGlowIntensity * uChan_glow.z;
+        float totalGlow = glowMask * uGlowIntensity * uChan3.z;
 
         float combined = max(totalFill, max(totalGlow, lineMask));
         if (combined < 0.001) { discard; }
@@ -229,9 +231,9 @@ export default `
             depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
         }
 
-        float alpha = combined * depthMask * uChan_intensity.z;
+        float alpha = combined * depthMask * uChan4.z;
         if (alpha < 0.001) { discard; }
 
-        fragColor = vec4(color * depthMask * uChan_intensity.z, alpha);
+        fragColor = vec4(color * depthMask * uChan4.z, alpha);
     }
 `

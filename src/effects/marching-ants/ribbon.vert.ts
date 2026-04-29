@@ -15,9 +15,11 @@ in float aArcSNext;
 uniform vec2  uResolution;
 uniform float uBandHeight;     // strip thickness in pixels (baseline)
 
-/* Animation channels (vec4 = time_ms, raw, value, state). */
-uniform vec4  uChan_radial;    // radial offset in px (additive)
-uniform vec4  uChan_width;     // multiplier on uBandHeight
+/* Animation channels (vec4 = time_ms, raw, value, state).
+   Slot 1: radial offset in px (additive).
+   Slot 2: multiplier on uBandHeight. */
+uniform vec4 uChan1;
+uniform vec4 uChan2;
 
 out vec2 vUV;                  // (arcS_px, side_0..1)
 
@@ -61,8 +63,8 @@ void main() {
     vec2 n = vec2(-t.y, t.x);
 
     /* Animated band thickness + radial offset of the strip centre. */
-    float bandH = uBandHeight * uChan_width.z;
-    float side  = (aLocal.y - 0.5) * bandH + uChan_radial.z;
+    float bandH = uBandHeight * uChan2.z;
+    float side  = (aLocal.y - 0.5) * bandH + uChan1.z;
     vec2 worldPos = p + n * side;
     vec2 ndc = (worldPos / uResolution) * 2.0 - 1.0;
     gl_Position = vec4(ndc, 0.0, 1.0);

@@ -21,8 +21,11 @@ uniform vec2 uResolution;
 uniform float uTextHeight;       // px — height of the text strip on screen (baseline)
 
 /* Animation channels — vec4(time_ms, raw, value, state). */
-uniform vec4 uChan_radial;       // additive radial offset (px)
-uniform vec4 uChan_width;        // multiplier on uTextHeight
+/* Animation channels — vec4(time_ms, raw, value, state).
+   Slot 1: radial — additive radial offset (px).
+   Slot 2: width — multiplier on uTextHeight. */
+uniform vec4 uChan1;
+uniform vec4 uChan2;
 
 void main() {
     /* Pick segment endpoint (start vs end) by aLocal.x. */
@@ -33,8 +36,8 @@ void main() {
     vec2 n = vec2(-t.y, t.x);
 
     /* Animated strip thickness and radial offset. */
-    float h = uTextHeight * uChan_width.z;
-    float side = (aLocal.y - 0.5) * h + uChan_radial.z;
+    float h = uTextHeight * uChan2.z;
+    float side = (aLocal.y - 0.5) * h + uChan1.z;
 
     vec2 worldPos = p + n * side;
     vec2 ndc = (worldPos / uResolution) * 2.0 - 1.0;

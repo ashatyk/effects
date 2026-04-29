@@ -75,19 +75,11 @@ export const config: PlaygroundConfig = {
             slider: { min: 0, max: 5, step: 0.01 },
         },
         {
-            name: 'uColor1',
-            label: 'Цвет волны 1',
+            name: 'uColor',
+            label: 'Цвет волны',
             kind: 'vec3<f32>',
             color: true,
             default: [1.0, 1.0, 1.0],
-            slider: { min: 0, max: 1, step: 0.01 },
-        },
-        {
-            name: 'uColor2',
-            label: 'Цвет волны 2',
-            kind: 'vec3<f32>',
-            color: true,
-            default: [0.77, 0.23, 0.65],
             slider: { min: 0, max: 1, step: 0.01 },
         },
         {
@@ -116,13 +108,6 @@ export const config: PlaygroundConfig = {
             label: 'Скорость шума',
             kind: 'f32',
             default: 10.0,
-            slider: { min: 0, max: 100, step: 1 },
-        },
-        {
-            name: 'uWave2ShiftPx',
-            label: 'Смещение второй волны (px)',
-            kind: 'f32',
-            default: 4.0,
             slider: { min: 0, max: 100, step: 1 },
         },
         {
@@ -183,11 +168,11 @@ export const config: PlaygroundConfig = {
         },
     ],
     animation: {
-        class: 'fullscreen',
-        channels: [
-            { id: 'progress',  label: 'Progress',             defaultMin: 0, defaultMax: 1 },
-            { id: 'intensity', label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
-            { id: 'phase',     label: 'Phase (rad)',          defaultMin: 0, defaultMax: 6.2831853 },
+        slots: [
+            { slot: 0, label: 'Progress',             defaultMin: 0, defaultMax: 1 },
+            { slot: 1, label: 'Wave phase (ms)',      defaultMin: 0, defaultMax: 1 },
+            { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+            { slot: 5, label: 'Noise time (ms)',      defaultMin: 0, defaultMax: 1 },
         ],
     },
 }

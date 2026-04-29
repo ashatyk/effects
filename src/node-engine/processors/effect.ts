@@ -7,8 +7,9 @@ import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples, typ
 import { effects } from '../../effects'
 import { buildUniformEntries, applyCoordsUniforms } from '../../pipeline/uniforms'
 import { DEFAULT_VERTEX } from '../../pipeline/default-vertex'
-import type {
-    EffectInputName, EffectPass, FullscreenPass, InstancedPass, PlaygroundConfig,
+import {
+    ANIMATION_CHANNEL_COUNT,
+    type EffectInputName, type EffectPass, type FullscreenPass, type InstancedPass, type PlaygroundConfig,
 } from '../../pipeline/types'
 import { buildInstancedMesh, resampleContourRibbon, resampleContourScrolling, streamsFromContour } from '../render/instanced-mesh'
 
@@ -73,6 +74,7 @@ export class EffectProcessor extends BaseProcessor {
         }
 
         const uniforms = this.makeUniformGroup(config, configData, ctx)
+        this.warnUndeclaredChannels(config)
 
         const stage = new Container()
         const ephemeralGeometries: Geometry[] = []
@@ -135,12 +137,14 @@ export class EffectProcessor extends BaseProcessor {
 
         let streams
         if (pass.scrolling) {
-            /* Scroll phase comes from the animation graph's `scroll` channel
-               (declared by all OrbitalRibbon / OrbitalParticles effects). When
-               no AnimationController is wired, channel value defaults to its
-               manifest min — typically 0, i.e. no scrolling. */
+            /* Scroll phase comes from the animation channel slot configured
+               on the pass (defaults to slot 0 — the canonical "phase"
+               position). When no AnimationController is wired, the channel
+               value defaults to its manifest min — typically 0, i.e. no
+               scrolling. */
             const animation = ctx.inputs.animation as AnimationSignal | null
-            const phase = animation?.channels?.scroll?.value ?? 0
+            const phaseSlot = pass.scrolling.phaseSlot ?? 0
+            const phase = animation?.channels?.[String(phaseSlot)]?.value ?? 0
             if (pass.scrolling.mode === 'ribbon') {
                 const segSize = pass.scrolling.segmentSizeField
                     ? Math.max(2, this.readScalar(configData, params, pass.scrolling.segmentSizeField, 8))
@@ -242,20 +246,25 @@ export class EffectProcessor extends BaseProcessor {
         entries.uNormalsEnabled = { value: ctx.hasNormals ? 1.0 : 0.0, type: 'f32' }
         entries.uMaterialsEnabled = { value: ctx.hasMaterials ? 1.0 : 0.0, type: 'f32' }
 
-        /* Animation channels: every channel declared by the manifest becomes a
-           shader uniform `uChan_<id>` of type `vec4(time_ms, raw, value, state)`.
-           When the `animation` input is not wired, each channel falls back to
-           an idle ChannelSignal (time=0, raw=0, value=defaultMin, state=0). */
+        /* Animation channels: the entire pool (size = ANIMATION_CHANNEL_COUNT)
+           is bound as `uChan{i}` uniforms of type `vec4(time_ms, raw, value, state)`.
+           Every shader can opt into any slot regardless of whether the manifest
+           mentions it explicitly — unused slots get an idle ChannelSignal
+           (time=0, raw=0, value=slot's defaultMin or 0, state=0).
+           Component contract is fixed: .x = time_ms, .y = raw 0..1,
+           .z = mapped value, .w = state. */
         const animation = ctx.inputs.animation as AnimationSignal | null
-        for (const channel of config.animation.channels) {
-            const cs: ChannelSignal | undefined = animation?.channels?.[channel.id]
+        const slotByIndex = new Map(config.animation.slots.map(s => [s.slot, s]))
+        for (let i = 0; i < ANIMATION_CHANNEL_COUNT; i++) {
+            const slot = slotByIndex.get(i)
+            const cs: ChannelSignal | undefined = animation?.channels?.[String(i)]
             const v = cs ?? {
                 time: 0,
                 raw: 0,
-                value: channel.defaultMin,
+                value: slot?.defaultMin ?? 0,
                 state: 0 as 0 | 1,
             }
-            entries[`uChan_${channel.id}`] = {
+            entries[`uChan${i}`] = {
                 value: [v.time, v.raw, v.value, v.state],
                 type: 'vec4<f32>',
             }
@@ -313,6 +322,33 @@ export class EffectProcessor extends BaseProcessor {
         return r
     }
 
+    /**
+     * Scan every shader source on the active manifest for `uChan{i}` references
+     * and warn when an index falls outside the bound pool or isn't declared
+     * in `animation.slots`. The warning fires once per (effect, slot) pair —
+     * we don't want to spam the console on every frame.
+     */
+    private warnUndeclaredChannels(config: PlaygroundConfig): void {
+        const cacheKey = config.name
+        if (this.warnedConfigs.has(cacheKey)) return
+        this.warnedConfigs.add(cacheKey)
+
+        const declared = new Set(config.animation.slots.map(s => s.slot))
+        const referenced = new Set<number>()
+        for (const pass of config.passes) {
+            collectChannelRefs(pass.fragment, referenced)
+            if ('vertex' in pass && pass.vertex) collectChannelRefs(pass.vertex, referenced)
+        }
+        for (const i of referenced) {
+            if (i < 0 || i >= ANIMATION_CHANNEL_COUNT) {
+                console.warn(`[EffectProcessor] "${config.name}" shader references uChan${i} which is outside the channel pool (0..${ANIMATION_CHANNEL_COUNT - 1}).`)
+            } else if (!declared.has(i)) {
+                console.warn(`[EffectProcessor] "${config.name}" shader uses uChan${i} but the slot is not declared in animation.slots — runtime falls back to defaults.`)
+            }
+        }
+    }
+    private warnedConfigs = new Set<string>()
+
     destroy(): void {
         super.destroy()
     }
@@ -324,6 +360,18 @@ function collectSamplers(source: string, out: Set<string>): void {
     const re = /\buniform\s+(?:lowp|mediump|highp)?\s*sampler2D\s+(\w+)/g
     let m: RegExpExecArray | null
     while ((m = re.exec(source)) !== null) out.add(m[1])
+}
+
+/* Find every `uChan{N}` token referenced by a shader — covers both uniform
+   declarations and call sites like `uChan5.x`. Used to validate that a
+   manifest declares all channels its shaders read. */
+function collectChannelRefs(source: string, out: Set<number>): void {
+    const re = /\buChan(\d+)\b/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(source)) !== null) {
+        const n = parseInt(m[1], 10)
+        if (Number.isFinite(n)) out.add(n)
+    }
 }
 
 function makeQuadGeo(w: number, h: number): Geometry {

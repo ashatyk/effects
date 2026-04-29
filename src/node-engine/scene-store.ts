@@ -9,6 +9,12 @@ export interface SceneSnapshot {
     nodes: SerializedNode[]
     edges: SerializedEdge[]
     nodeIdCounter: number
+    /* Optional UX state captured alongside the graph so undo/redo restores
+       the full editor surface, not just the dataflow. Both fields are
+       optional for backward-compat with snapshots written before they were
+       introduced. */
+    pinnedIds?: string[]
+    viewport?: { x: number; y: number; zoom: number }
 }
 
 export interface SerializedNode {

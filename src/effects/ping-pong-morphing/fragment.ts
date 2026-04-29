@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -8,10 +10,15 @@ export default `
 
     uniform vec2  uResolution;
 
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_progress;   // z = 0..1 morph progress
-    uniform vec4 uChan_intensity;  // alpha multiplier
-    uniform vec4 uChan_phase;      // x = time_ms — drives noise drift
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: morph progress (0..1).
+       Slot 1: wave phase — uChan1.x is monotonic ms.
+       Slot 4: intensity multiplier on final colour & alpha.
+       Slot 5: noise time — uChan5.x drives fbm drift independently of wave. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan4;
+    uniform vec4 uChan5;
 
     //sdfTexture
     uniform sampler2D verticalDistanceTexture;   // RGB packed [0..1], A insideFlag
@@ -32,16 +39,12 @@ export default `
     uniform float uWaveWidthPx;
     uniform float uWaveSpeed;
     uniform float uAnimationSpeed;
-    uniform vec3 uColor1;
-    uniform vec3 uColor2;
+    uniform vec3 uColor;
     uniform float uOpacity;
-    uniform float uMaxDistancePx;
-    uniform float uWave2ShiftPx;
 
     uniform float uNoiseScalePx;
     uniform float uNoiseAmpPx;
     uniform float uNoiseSpeed;
-    uniform float uNoiseSeedOffset;
 
     uniform vec4  uEaseCubic;
 
@@ -58,36 +61,11 @@ export default `
 
     float saturate(float x){ return clamp(x,0.0,1.0); }
 
-    float hash21(vec2 p) {
-        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-        p3 += dot(p3, p3.yzx + 33.33);
-        return fract((p3.x + p3.y) * p3.z);
-    }
+${NOISE_GLSL}
 
-    float valueNoise(vec2 p) {
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        vec2 u = smoothstep(0.0, 1.0, f);
-        float a = hash21(i);
-        float b = hash21(i + vec2(1.0, 0.0));
-        float c = hash21(i + vec2(0.0, 1.0));
-        float d = hash21(i + vec2(1.0, 1.0));
-        return a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y;
-    }
-
-    float fbm(vec2 p){
-        float a=0.0, amp=0.5;
-        for(int i=0;i<3;i++){
-            a+=amp*valueNoise(p);
-            p=p*2.02+17.0;
-            amp*=0.5;
-        }
-        return a;
-    }
-
+    /* Bipolar fbm in [-1, 1] used by the wave displacement. */
     float jaggedNoise(vec2 p){
-        float n = fbm(p);
-        return 2.0*n - 1.0;
+        return 2.0 * fbm2D(p) - 1.0;
     }
 
     float bez3(float t, float p0, float p1, float p2, float p3){
@@ -113,12 +91,12 @@ export default `
     float toothSaw01(float x, float sharp){
         return pow(fract(x), max(sharp, 1e-3));
     }
-    
+
     float toothTriWrap01(float x){
         float f = fract(x);
         return 1.0 - abs(2.0*f - 1.0);
     }
-    
+
     float toothSquare01(float x, float duty, float smoothW){
         float f = fract(x);
         float e = clamp(smoothW, 1e-4, 0.49);
@@ -127,8 +105,8 @@ export default `
         float b = smoothstep(1.0 - e, 1.0, f);
         return clamp(max(a, b), 0.0, 1.0);
     }
-    
-    float toothOffsetPx(vec2 qPx, vec2 centerPx,float apearInter){
+
+    float toothOffsetPx(vec2 qPx, vec2 centerPx, float apearInter){
         if (uToothMix <= 0.0 || uToothAmpPx <= 0.0 || uToothCount <= 0.0) return 0.0;
         vec2  r   = qPx - centerPx;
         float ang = atan(r.y, r.x);                         // [-pi..pi]
@@ -138,7 +116,7 @@ export default `
         float s01;
         if (uToothShape == 0.0)      s01 = toothTriWrap01(phase);
         else if (uToothShape == 1.0) s01 = toothSaw01(phase, max(uToothSharp,1.0));
-        else                       s01 = toothSquare01(phase, uToothDuty, uToothSmooth);
+        else                         s01 = toothSquare01(phase, uToothDuty, uToothSmooth);
 
         float bip = 2.0*s01 - 1.0;                          // [-1..1]
         return uToothAmpPx * bip * saturate(uToothMix) * apearInter;
@@ -152,16 +130,13 @@ export default `
         float sc,
         vec2 drift,
         vec2 centerN,
-        float seedShift,
-        float profileOffsetPx // новый параметр
+        float profileOffsetPx
     ){
-        float seed = fract(dot(centerN, vec2(0.3183099,0.3678794)) + seedShift);
-        vec2 nP = (q + drift + vec2(131.0,59.0)*seed)/sc;
+        float seed = fract(dot(centerN, vec2(0.3183099, 0.3678794)));
+        vec2 nP = (q + drift + vec2(131.0, 59.0) * seed) / sc;
 
         float n = jaggedNoise(nP);
         float dNoisy = d - uNoiseAmpPx * n;
-
-        // вычитаем зубчатый профиль
         float dProfile = dNoisy - profileOffsetPx;
 
         float aa = max(fwidth(dProfile), 0.75);
@@ -195,50 +170,42 @@ export default `
             discard;
         }
 
-        /* Progress is the controller's authoritative driver of the morph.
-           uChan_progress.z is in 0..1; uChan_phase.x is monotonic ms. */
-        float tSec = uChan_phase.x * 0.001;
-        float sApear = uChan_progress.z;
+        /* Wave timing comes from uChan1; appearance ramp from uChan0;
+           noise drift from uChan5 — fully decoupled time sources so each
+           can be wired to its own animation graph. */
+        float tWaveSec  = uChan1.x * 0.001;
+        float tNoiseSec = uChan5.x * 0.001;
+        float sApear    = uChan0.z;
 
         vec2 c1 = uEaseCubic.xy, c2 = uEaseCubic.zw;
-
         float apearInter = cubicBezierEase(sApear * 2.0, c1, c2);
 
-        float s = fract(tSec * max(uWaveSpeed, 0.0));
-        
+        float s = fract(tWaveSec * max(uWaveSpeed, 0.0));
+
         float halfInter = (s < 0.5) ? cubicBezierEase(s * 2.0, c1, c2)
-        : cubicBezierEase(2.0 - s * 2.0, c1, c2);
+                                    : cubicBezierEase(2.0 - s * 2.0, c1, c2);
 
         float centerOffset1 = (uWaveBasePx * apearInter + uWaveAmpPx * (2.0 * halfInter - 1.0));
-        float centerOffset2 = centerOffset1;
-        float centerOffset3 = centerOffset1 + uWave2ShiftPx;
-        float centerOffset4 = centerOffset1 + uWave2ShiftPx;
 
         float sc = max(uNoiseScalePx, 1e-3);
-        vec2 drift  = uNoiseSpeed * tSec * vec2(0.73, -0.51);
+        vec2 drift  = uNoiseSpeed * tNoiseSec * vec2(0.73, -0.51);
         vec2 centerN = 0.5 * (uPointAABB.xy + uPointAABB.zw);
 
-        // зубчатый оффсет в пикселях
-        float dTooth = toothOffsetPx(q, centerPx,apearInter);
+        float dTooth = toothOffsetPx(q, centerPx, apearInter);
 
-        float a1 = saturate(waveAlpha(q, d, centerOffset1, halfW,           sc, drift * 1.0, centerN, 0.00,             dTooth) * uOpacity);
-        float a2 = saturate(waveAlpha(q, d, centerOffset2, halfW + 2.0,     sc, drift * 1.0, centerN, 0.00,             dTooth) * (uOpacity * 0.2));
-        float a3 = saturate(waveAlpha(q, d, centerOffset3, halfW * 1.20,    sc, drift * 2.3, centerN, uNoiseSeedOffset, dTooth) * uOpacity);
-        float a4 = saturate(waveAlpha(q, d, centerOffset4, halfW * 1.20+2.0,sc, drift * 2.3, centerN, uNoiseSeedOffset, dTooth) * (uOpacity * 0.2));
+        /* a1 = filled wave body, a2 = darker edge halo. The two-wave
+           composition (filled + outline) is preserved; multi-wave looks
+           are achieved by stacking another Effect node on top. */
+        float a1 = saturate(waveAlpha(q, d, centerOffset1, halfW,       sc, drift, centerN, dTooth) * uOpacity);
+        float a2 = saturate(waveAlpha(q, d, centerOffset1, halfW + 2.0, sc, drift, centerN, dTooth) * (uOpacity * 0.2));
 
         float edgeMask = smoothstep(uEdgeFeatherPx - d, uEdgeFeatherPx + d, d);
 
-        vec3 C1 = uColor1 * a1; float A1 = a1;
-        vec3 C2 = vec3(0.0);    float A2 = a2;
-        vec3 C3 = uColor2 * a3; float A3 = a3;
-        vec3 C4 = vec3(0.0);    float A4 = a4;
+        vec3 C1 = uColor * a1; float A1 = a1;
+        vec3 C2 = vec3(0.0);   float A2 = a2;
 
-        vec3 C12  = C1 + (1.0 - A1) * C2;
-        float A12 = A1 + (1.0 - A1) * A2;
-        vec3 C123 = C12 + (1.0 - A12) * C3;
-        float A123= A12 + (1.0 - A12) * A3;
-        vec3 Cp   = C123 + (1.0 - A123) * C4;
-        float A   = A123 + (1.0 - A123) * A4;
+        vec3 Cp = C1 + (1.0 - A1) * C2;
+        float A = A1 + (1.0 - A1) * A2;
 
         float depthMask = 1.0;
         if (uDepthEnabled > 0.5) {
@@ -247,6 +214,6 @@ export default `
             depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
         }
 
-        fragColor = vec4(Cp * edgeMask * depthMask * uChan_intensity.z, A * edgeMask * depthMask * uChan_intensity.z);
+        fragColor = vec4(Cp * edgeMask * depthMask * uChan4.z, A * edgeMask * depthMask * uChan4.z);
     }
 `

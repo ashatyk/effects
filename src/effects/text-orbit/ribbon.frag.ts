@@ -18,9 +18,11 @@ uniform float uTextRepeats;   // how many phrase copies per contour (baseline)
 uniform float uTextRepeatPadding; // px gap between phrase repeats along contour
 uniform float uTextEdgeAA;        // softness of the glyph alpha cutoff (0..0.5)
 
-/* Animation channels — vec4(time_ms, raw, value, state). */
-uniform vec4 uChan_spacing;   // multiplier on phrase length (more spacing = fewer repeats)
-uniform vec4 uChan_intensity; // alpha multiplier
+/* Animation channels — vec4(time_ms, raw, value, state).
+   Slot 3: spacing — multiplier on phrase length (more spacing = fewer repeats).
+   Slot 4: intensity — alpha multiplier. */
+uniform vec4 uChan3;
+uniform vec4 uChan4;
 
 void main() {
     /* Phrase arc length used for UV mapping.
@@ -28,7 +30,7 @@ void main() {
        Otherwise use the natural aspect-driven length (1 phrase). */
     float natural = max(1.0, uTextHeight * uTextAspect);
     float repeats = max(1.0, uTextRepeats);
-    float phraseArc = (uContourLen / repeats) * uChan_spacing.z;
+    float phraseArc = (uContourLen / repeats) * uChan3.z;
     if (phraseArc <= 1.0) phraseArc = natural;
 
     /* Reserve a fraction of the slot for inter-repeat padding. The text
@@ -51,7 +53,7 @@ void main() {
     /* Inner glow: pixels close to text edge get extra glow color. */
     float glow = (1.0 - lum) * uGlowIntensity;
     vec3 color = uTextColor.rgb * lum + uGlowColor.rgb * glow;
-    float alpha = uTextColor.a * (lum + glow * 0.5) * alphaMask * uChan_intensity.z;
+    float alpha = uTextColor.a * (lum + glow * 0.5) * alphaMask * uChan4.z;
 
     fragColor = vec4(color * alpha, alpha);
 }

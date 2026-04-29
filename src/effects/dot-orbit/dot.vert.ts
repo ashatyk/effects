@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `#version 300 es
 precision highp float;
@@ -22,49 +24,45 @@ uniform float uNoiseAmount;     // 0..1 — fraction of (max-min) replaced by no
 uniform float uNoiseScale;      // spatial frequency of noise (per 100 px)
 uniform float uGlowSize;        // quad must be expanded by glow corona radius
 
-/* Animation channels — vec4(time_ms, raw, value, state). */
-uniform vec4 uChan_scroll;      // x = time_ms since clip start (drives wobble)
-uniform vec4 uChan_radial;      // additive radial offset of dot anchor (px)
-uniform vec4 uChan_size;        // multiplier on dot radius
+/* Animation channels — vec4(time_ms, raw, value, state).
+   Slot 0: scroll — uChan0.x is monotonic ms (drives wave phase).
+   Slot 1: radial — additive radial offset of dot anchor (px).
+   Slot 2: size — multiplier on dot radius.
+   Slot 5: noise time — uChan5.x drives noise drift independently of wave. */
+uniform vec4 uChan0;
+uniform vec4 uChan1;
+uniform vec4 uChan2;
+uniform vec4 uChan5;
 
 out vec2  vLocal;
 out float vRadius;
 out float vArc;
 out float vHeightT;     // 0..1, normalized current radius — used for color/alpha bias
 
-float hash11(float p) {
-    p = fract(p * 0.1031);
-    p *= p + 33.33;
-    p *= p + p;
-    return fract(p);
-}
-
-/* 1D value noise with smoothstep interpolation — cheap, no atlas, plenty of
-   character variation per instance. */
-float vnoise11(float x) {
-    float i = floor(x);
-    float f = fract(x);
-    float u = f * f * (3.0 - 2.0 * f);
-    return mix(hash11(i), hash11(i + 1.0), u);
-}
+${NOISE_GLSL}
 
 void main() {
     /* Compose dot height from a travelling sine wave plus low-frequency noise,
        both keyed off the per-instance arc length so the pattern flows along
-       the contour rather than being attached to the screen. The temporal
-       phase is driven by the scroll channel's elapsed time (sec). */
-    float tSec  = uChan_scroll.x * 0.001;
-    float arc01 = aArcS * 0.01;
-    float wave  = sin(arc01 * uWaveFrequency + tSec * uWaveSpeed);            // -1..1
-    float noise = vnoise11(arc01 * uNoiseScale + tSec * 0.3) * 2.0 - 1.0;     // -1..1
-    float mixT  = mix(wave, noise, clamp(uNoiseAmount, 0.0, 1.0));             // -1..1
-    float t01   = 0.5 + 0.5 * mixT;                                            // 0..1
+       the contour rather than being attached to the screen.
 
-    float radius = mix(max(uDotMinRadius, 0.5), uDotMaxRadius, t01) * uChan_size.z;
+       Wave phase comes from slot 0 (the scroll/phase channel); noise drift
+       comes from slot 5 (dedicated noise time) so the two animations are
+       independent. The 2D canonical valueNoise2D is sampled with arc on x
+       and time on y to produce 1D-but-time-varying noise. */
+    float tWaveSec  = uChan0.x * 0.001;
+    float tNoiseSec = uChan5.x * 0.001;
+    float arc01 = aArcS * 0.01;
+    float wave  = sin(arc01 * uWaveFrequency + tWaveSec * uWaveSpeed);                                 // -1..1
+    float noise = valueNoise2D(vec2(arc01 * uNoiseScale, tNoiseSec * 0.3)) * 2.0 - 1.0;                // -1..1
+    float mixT  = mix(wave, noise, clamp(uNoiseAmount, 0.0, 1.0));                                     // -1..1
+    float t01   = 0.5 + 0.5 * mixT;                                                                    // 0..1
+
+    float radius = mix(max(uDotMinRadius, 0.5), uDotMaxRadius, t01) * uChan2.z;
 
     /* Anchor offset along the contour normal (radial channel). */
     vec2 nrm = vec2(-aTangent.y, aTangent.x);
-    vec2 anchor = aPosition + nrm * uChan_radial.z;
+    vec2 anchor = aPosition + nrm * uChan1.z;
 
     /* Expand the billboard quad by glow size so the outer corona (rendered
        at r in [1, glowSize] in disk-local units) fits inside the polygon

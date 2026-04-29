@@ -19,6 +19,7 @@ export const config: PlaygroundConfig = {
                 mode: 'ribbon',
                 speedField: 'uSlideSpeed',
                 segmentSizeField: 'uSegmentSize',
+                phaseSlot: 0,
             },
             geometry: {
                 /* Per-segment quad: 4 corners, two triangles.
@@ -122,13 +123,12 @@ export const config: PlaygroundConfig = {
         },
     ],
     animation: {
-        class: 'orbital-ribbon',
-        channels: [
-            { id: 'scroll',    label: 'Scroll (px)',          defaultMin: 0, defaultMax: 600 },
-            { id: 'radial',    label: 'Radial offset (px)',   defaultMin: 0, defaultMax: 20 },
-            { id: 'width',     label: 'Width multiplier',     defaultMin: 1, defaultMax: 2 },
-            { id: 'spacing',   label: 'Spacing multiplier',   defaultMin: 1, defaultMax: 2 },
-            { id: 'intensity', label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        slots: [
+            { slot: 0, label: 'Scroll (px)',          defaultMin: 0, defaultMax: 600 },
+            { slot: 1, label: 'Radial offset (px)',   defaultMin: 0, defaultMax: 20 },
+            { slot: 2, label: 'Width multiplier',     defaultMin: 1, defaultMax: 2 },
+            { slot: 3, label: 'Spacing multiplier',   defaultMin: 1, defaultMax: 2 },
+            { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
         ],
     },
 }

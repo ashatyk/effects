@@ -27,6 +27,14 @@ export class DataflowEngine implements IDataflowEngine {
     private edges: EdgeRecord[] = []
     private rafId = 0
 
+    /* FPS cap. 0 disables gating and lets the engine tick at the browser's
+       native rAF cadence. Positive values throttle `tick()` so the editor
+       stops melting laptops while the user iterates on parameters. The cap
+       only governs how often we *evaluate* the graph; rAF still drives
+       compositing of static frames. */
+    private targetFps = 0
+    private lastTickAt = 0
+
     private geoCache = new Map<string, Geometry>()
     private nodeListeners = new Map<string, Set<() => void>>()
 
@@ -216,8 +224,34 @@ export class DataflowEngine implements IDataflowEngine {
 
     /* ── Main loop ── */
 
+    /**
+     * Cap how often the dataflow graph is re-evaluated. `fps <= 0` removes
+     * the cap. The cap is purely temporal — alwaysDirty processors still
+     * get evaluated on every accepted frame, so dropping fps directly
+     * reduces work proportionally.
+     */
+    setTargetFps(fps: number): void {
+        const next = Number.isFinite(fps) && fps > 0 ? Math.floor(fps) : 0
+        if (next === this.targetFps) return
+        this.targetFps = next
+        /* Reset the gate so a new cap takes effect on the very next frame
+           rather than waiting out the previous interval. */
+        this.lastTickAt = 0
+    }
+
     start(): void {
         const tick = () => {
+            if (this.targetFps > 0) {
+                const now = performance.now()
+                /* Subtract a small slack so a 60fps cap doesn't drop every
+                   other frame to 30fps because of rAF jitter. */
+                const minInterval = 1000 / this.targetFps - 0.5
+                if (now - this.lastTickAt < minInterval) {
+                    this.rafId = requestAnimationFrame(tick)
+                    return
+                }
+                this.lastTickAt = now
+            }
             this.tick()
             this.rafId = requestAnimationFrame(tick)
         }

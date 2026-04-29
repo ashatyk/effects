@@ -4,31 +4,35 @@ import {
     SLOT, type ProcessorDef, type IDataflowEngine,
     type Signal, type AnimationSignal, type ChannelSignal,
 } from '../types'
-
-export interface ChannelDescriptor {
-    id: string
-    label: string
-    defaultMin: number
-    defaultMax: number
-}
+import { ANIMATION_CHANNEL_COUNT, type SlotDef } from '../../pipeline/types'
+import { effects } from '../../effects'
 
 /**
- * Build a ProcessorDef for an animation controller bound to a fixed channel
- * vocabulary (one per effect class). The generated def has:
- *   - `signal_<channel>` inputs of SLOT.SIGNAL (all optional)
- *   - one `signal: SLOT.ANIMATION` output
- *   - per-channel params: `min_<channel>`, `max_<channel>`
+ * Build the input/output schema and default params for the universal
+ * AnimationController. Channels are purely positional: `signal_0..signal_{N-1}`
+ * carry the raw 0..1 driver, `min_i`/`max_i` map it to the physical range.
+ *
+ * The trailing `config` input is optional and supplies per-effect slot
+ * metadata (label, default min/max) so the controller's UI can show the
+ * right names without hard-coding a vocabulary.
  */
-export function buildControllerDef(type: string, title: string, channels: ChannelDescriptor[]): ProcessorDef {
-    const inputs = channels.map(c => ({ name: `signal_${c.id}`, type: SLOT.SIGNAL, label: c.id }))
+function buildControllerDef(): ProcessorDef {
+    const inputs = [
+        ...Array.from({ length: ANIMATION_CHANNEL_COUNT }, (_, i) => ({
+            name: `signal_${i}`,
+            type: SLOT.SIGNAL,
+            label: `ch${i}`,
+        })),
+        { name: 'config', type: SLOT.CONFIG, label: 'config' },
+    ]
     const defaultParams: Record<string, unknown> = {}
-    for (const c of channels) {
-        defaultParams[`min_${c.id}`] = c.defaultMin
-        defaultParams[`max_${c.id}`] = c.defaultMax
+    for (let i = 0; i < ANIMATION_CHANNEL_COUNT; i++) {
+        defaultParams[`min_${i}`] = 0
+        defaultParams[`max_${i}`] = 1
     }
     return {
-        type,
-        title,
+        type: 'animationController',
+        title: 'Animation Controller',
         category: 'animCtrl',
         inputs,
         outputs: [{ name: 'signal', type: SLOT.ANIMATION }],
@@ -36,33 +40,19 @@ export function buildControllerDef(type: string, title: string, channels: Channe
     }
 }
 
-/**
- * Generic controller execute logic — produces an AnimationSignal by reading
- * each `signal_<channel>` input and folding it into a ChannelSignal via the
- * configured `min`/`max` mapping.
- */
-export abstract class AnimationControllerProcessor extends BaseProcessor {
-    alwaysDirty = true
-    abstract readonly channels: ChannelDescriptor[]
+export const animationControllerDef = buildControllerDef()
 
-    execute(inputs: Record<string, any>, params: Record<string, any>, _engine: IDataflowEngine): Record<string, any> {
-        const out: AnimationSignal = { channels: {} }
-        for (const c of this.channels) {
-            const sig = inputs[`signal_${c.id}`] as Signal | null | undefined
-            const minV = Number(params[`min_${c.id}`] ?? c.defaultMin)
-            const maxV = Number(params[`max_${c.id}`] ?? c.defaultMax)
-            const raw = sig ? clamp01(sig.value) : 0
-            const value = lerp(minV, maxV, raw)
-            const channelSignal: ChannelSignal = {
-                time: sig?.time ?? 0,
-                raw,
-                value,
-                state: (sig?.state ?? 0) as 0 | 1,
-            }
-            out.channels[c.id] = channelSignal
-        }
-        return { signal: out }
-    }
+/**
+ * Look up the slot defaults for the effect named in the upstream config.
+ * Returns an empty array when the input is absent or the effect is unknown,
+ * which makes the controller behave as a pure "0..1 → params" mapper.
+ */
+function resolveSlots(configIn: unknown): SlotDef[] {
+    if (!configIn || typeof configIn !== 'object') return []
+    const name = (configIn as Record<string, unknown>).__effectName
+    if (typeof name !== 'string') return []
+    const effect = effects.find(e => e.name === name)
+    return effect?.animation?.slots ?? []
 }
 
 function clamp01(v: number): number {
@@ -76,42 +66,38 @@ function lerp(a: number, b: number, t: number): number {
     return a + (b - a) * t
 }
 
-/* ───── Class A: OrbitalRibbon ───── */
-const RIBBON_CHANNELS: ChannelDescriptor[] = [
-    { id: 'scroll',    label: 'Scroll',    defaultMin: 0, defaultMax: 600 },
-    { id: 'radial',    label: 'Radial',    defaultMin: 0, defaultMax: 20 },
-    { id: 'width',     label: 'Width',     defaultMin: 1, defaultMax: 2 },
-    { id: 'spacing',   label: 'Spacing',   defaultMin: 1, defaultMax: 2 },
-    { id: 'intensity', label: 'Intensity', defaultMin: 1, defaultMax: 1 },
-]
-export const ribbonAnimControllerDef = buildControllerDef('ribbonAnimController', 'Ribbon Animation', RIBBON_CHANNELS)
-export class RibbonAnimControllerProcessor extends AnimationControllerProcessor {
-    readonly def = ribbonAnimControllerDef
-    readonly channels = RIBBON_CHANNELS
-}
+export class AnimationControllerProcessor extends BaseProcessor {
+    readonly def = animationControllerDef
+    alwaysDirty = true
 
-/* ───── Class B: OrbitalParticles ───── */
-const PARTICLES_CHANNELS: ChannelDescriptor[] = [
-    { id: 'scroll',    label: 'Scroll',    defaultMin: 0, defaultMax: 600 },
-    { id: 'radial',    label: 'Radial',    defaultMin: 0, defaultMax: 20 },
-    { id: 'size',      label: 'Size',      defaultMin: 1, defaultMax: 2 },
-    { id: 'glow',      label: 'Glow',      defaultMin: 1, defaultMax: 2 },
-    { id: 'intensity', label: 'Intensity', defaultMin: 1, defaultMax: 1 },
-]
-export const particlesAnimControllerDef = buildControllerDef('particlesAnimController', 'Particles Animation', PARTICLES_CHANNELS)
-export class ParticlesAnimControllerProcessor extends AnimationControllerProcessor {
-    readonly def = particlesAnimControllerDef
-    readonly channels = PARTICLES_CHANNELS
-}
+    execute(inputs: Record<string, any>, params: Record<string, any>, _engine: IDataflowEngine): Record<string, any> {
+        const slots = resolveSlots(inputs.config)
+        const slotByIndex = new Map<number, SlotDef>(slots.map(s => [s.slot, s]))
 
-/* ───── Class C: Fullscreen ───── */
-const FULLSCREEN_CHANNELS: ChannelDescriptor[] = [
-    { id: 'progress',  label: 'Progress',  defaultMin: 0, defaultMax: 1 },
-    { id: 'intensity', label: 'Intensity', defaultMin: 1, defaultMax: 1 },
-    { id: 'phase',     label: 'Phase',     defaultMin: 0, defaultMax: 6.2831853 },
-]
-export const fullscreenAnimControllerDef = buildControllerDef('fullscreenAnimController', 'Fullscreen Animation', FULLSCREEN_CHANNELS)
-export class FullscreenAnimControllerProcessor extends AnimationControllerProcessor {
-    readonly def = fullscreenAnimControllerDef
-    readonly channels = FULLSCREEN_CHANNELS
+        const out: AnimationSignal = { channels: {} }
+        for (let i = 0; i < ANIMATION_CHANNEL_COUNT; i++) {
+            const sig = inputs[`signal_${i}`] as Signal | null | undefined
+            const slot = slotByIndex.get(i)
+
+            /* User-set params take priority; otherwise we honour the slot's
+               manifest defaults so the curve stays semantic when the user
+               hasn't tweaked anything. Falls back to 0..1 when neither
+               source has values (no upstream Config wired). */
+            const minRaw = params[`min_${i}`]
+            const maxRaw = params[`max_${i}`]
+            const minV = minRaw !== undefined ? Number(minRaw) : (slot?.defaultMin ?? 0)
+            const maxV = maxRaw !== undefined ? Number(maxRaw) : (slot?.defaultMax ?? 1)
+
+            const raw = sig ? clamp01(sig.value) : 0
+            const value = lerp(minV, maxV, raw)
+            const channelSignal: ChannelSignal = {
+                time: sig?.time ?? 0,
+                raw,
+                value,
+                state: (sig?.state ?? 0) as 0 | 1,
+            }
+            out.channels[String(i)] = channelSignal
+        }
+        return { signal: out }
+    }
 }

@@ -1,15 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
+import './styles/pin-sidebar.css'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import IconButton from '@mui/material/IconButton'
 import CloseIcon from '@mui/icons-material/Close'
 import PushPinIcon from '@mui/icons-material/PushPin'
 import { pipelineNodeTypes } from './nodeTypes'
-import { HeadlessNodeProvider } from './HeadlessNodeContext'
-import { NodeIdProvider } from './NodeIdContext'
-import { usePinning } from './PinContext'
+import { HeadlessNodeProvider } from './context/HeadlessNodeContext'
+import { NodeIdProvider } from './context/NodeIdContext'
+import { usePinning } from './context/PinContext'
 import type { PipelineNodeData } from './types'
 
 interface Props {

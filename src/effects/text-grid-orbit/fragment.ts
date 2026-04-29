@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -7,11 +9,15 @@ export default `
     out vec4 fragColor;
 
     uniform vec2  uResolution;
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_scroll;     // x = time_ms — drives the orbit step
-    uniform vec4 uChan_radial;     // additive orbit offset (px)
-    uniform vec4 uChan_glow;       // multiplier on glow intensity
-    uniform vec4 uChan_intensity;  // alpha multiplier
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: scroll — uChan0.x is monotonic ms (drives orbit stepping).
+       Slot 1: radial — additive orbit offset (px).
+       Slot 3: glow — multiplier on glow intensity.
+       Slot 4: intensity — alpha multiplier. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan3;
+    uniform vec4 uChan4;
 
     uniform sampler2D verticalDistanceTexture;
     uniform sampler2D depthTexture;
@@ -53,20 +59,16 @@ export default `
         return (t.w > 0.5) ? -d : d;
     }
 
-    float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-    }
+${NOISE_GLSL}
 
     void main() {
         float sdist = signedDistancePx(vUV);
         if (sdist < 0.0) { discard; }
 
         float interval = max(0.03, uStepInterval);
-        float tSec = uChan_scroll.x * 0.001;
+        float tSec = uChan0.x * 0.001;
         float step = floor(tSec / interval);
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan_radial.z;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -117,7 +119,7 @@ export default `
         float distFromEdge = (sd - 0.5) * 48.0 / max(atlasPerScreen, 0.1);
         float glowFalloff = uGlowSpread * uGlowSpread * 0.5;
         float glowMask = exp(-distFromEdge * distFromEdge / max(glowFalloff, 0.1));
-        glowMask *= (1.0 - glyphMask) * uGlowIntensity * uChan_glow.z;
+        glowMask *= (1.0 - glyphMask) * uGlowIntensity * uChan3.z;
 
         float combined = max(glyphMask, glowMask);
         if (combined < 0.001) { discard; }
@@ -133,9 +135,9 @@ export default `
         vec3 glowColor = uGlowColor.rgb * glowMask;
         vec3 color = coreColor + glowColor;
 
-        float alpha = combined * uDotColor.a * depthMask * uChan_intensity.z;
+        float alpha = combined * uDotColor.a * depthMask * uChan4.z;
         if (alpha < 0.001) { discard; }
 
-        fragColor = vec4(color * depthMask * uChan_intensity.z, alpha);
+        fragColor = vec4(color * depthMask * uChan4.z, alpha);
     }
 `

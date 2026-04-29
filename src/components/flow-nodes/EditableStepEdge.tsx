@@ -6,6 +6,7 @@ import {
     useStore,
     type EdgeProps,
 } from '@xyflow/react'
+import './styles/editable-edge.css'
 
 /**
  * Orthogonal "editable step" edge.

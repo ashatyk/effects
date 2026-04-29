@@ -1,0 +1,169 @@
+/* ── MUI overrides scoped to .pn ──
+   Remap the dark theme controls to the light card palette. Outside of
+   `.pn` the global dark MUI theme still applies. */
+
+.pn .MuiOutlinedInput-root {
+    background: var(--pn-bg-input);
+    color: var(--pn-text);
+    min-height: 28px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.pn .MuiOutlinedInput-root.MuiInputBase-multiline {
+    min-height: unset !important;
+    align-items: stretch;
+}
+
+.pn .MuiOutlinedInput-root .MuiOutlinedInput-notchedOutline {
+    border-color: var(--pn-divider-strong);
+    border-width: 1px;
+}
+
+.pn .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+    border-color: rgba(0, 0, 0, 0.42);
+}
+
+.pn .MuiOutlinedInput-root.Mui-focused {
+    box-shadow:
+        inset 0 1px 2px rgba(0, 0, 0, 0.06),
+        0 0 0 3px color-mix(in srgb, var(--pn-accent, #0a0a0a) 22%, transparent);
+}
+
+.pn .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+    border-color: var(--pn-accent, var(--pn-text));
+    border-width: 1px;
+}
+
+.pn .MuiInputBase-input,
+.pn .MuiSelect-select {
+    color: var(--pn-text);
+    font-size: 13px;
+}
+
+.pn .MuiOutlinedInput-input.MuiInputBase-inputSizeSmall {
+    padding: 0 14px;
+    line-height: 1.2;
+}
+
+.pn .MuiOutlinedInput-input.MuiInputBase-inputMultiline {
+    padding: 8px 12px !important;
+    line-height: 1.45;
+}
+
+.pn .MuiInputBase-sizeSmall {
+    min-height: 28px;
+}
+
+.pn .MuiInputBase-input::placeholder {
+    color: var(--pn-text-muted);
+    opacity: 1;
+}
+
+.pn .MuiSelect-icon,
+.pn .MuiSvgIcon-root {
+    color: var(--pn-text-secondary);
+}
+
+/* Header pin icon inherits the header's light text colour. */
+.pn-header .MuiSvgIcon-root {
+    color: inherit;
+}
+
+.pn .MuiFormLabel-root,
+.pn .MuiFormControlLabel-label {
+    color: var(--pn-text);
+}
+
+.pn .MuiButton-text {
+    color: var(--pn-text);
+}
+
+.pn .MuiButton-outlined {
+    color: var(--pn-text);
+    border-color: var(--pn-divider-strong);
+}
+
+.pn .MuiButton-outlined:hover {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: var(--pn-text);
+}
+
+.pn .MuiButton-containedPrimary {
+    background-color: var(--pn-text) !important;
+    color: var(--pn-bg-input) !important;
+}
+
+.pn .MuiButton-containedPrimary:hover {
+    background-color: #000 !important;
+}
+
+/* ── Select dropdowns (portaled outside .pn) ── */
+
+.pn-menu-paper {
+    background-color: #ffffff !important;
+    color: #0a0a0a !important;
+    border: 1px solid rgba(0, 0, 0, 0.18) !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35) !important;
+}
+
+.pn-menu-paper .MuiMenuItem-root {
+    color: #0a0a0a;
+    font-size: 13px;
+}
+
+.pn-menu-paper .MuiMenuItem-root:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+}
+
+.pn-menu-paper .MuiMenuItem-root.Mui-selected {
+    background-color: rgba(0, 0, 0, 0.10);
+}
+
+.pn-menu-paper .MuiMenuItem-root.Mui-selected:hover {
+    background-color: rgba(0, 0, 0, 0.14);
+}
+
+/* ── Switch ── */
+
+.pn .MuiSwitch-track {
+    background-color: rgba(0, 0, 0, 0.22) !important;
+    opacity: 1;
+}
+
+.pn .MuiSwitch-thumb {
+    background-color: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.pn .MuiSwitch-switchBase.Mui-checked .MuiSwitch-thumb {
+    background-color: var(--pn-text) !important;
+}
+
+.pn .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track {
+    background-color: var(--pn-text) !important;
+    opacity: 0.55;
+}
+
+/* ── Slider ── */
+
+.pn .MuiSlider-rail {
+    background-color: rgba(0, 0, 0, 0.18);
+    opacity: 1;
+}
+
+.pn .MuiSlider-track {
+    background-color: var(--pn-text) !important;
+    border: none;
+}
+
+.pn .MuiSlider-thumb {
+    background-color: var(--pn-text) !important;
+}
+
+.pn .MuiSlider-thumb:hover,
+.pn .MuiSlider-thumb.Mui-focusVisible {
+    box-shadow: 0 0 0 6px rgba(0, 0, 0, 0.10);
+}

@@ -1,13 +1,15 @@
 import React from 'react'
 import { Handle, NodeResizer, Position, useNodeId, useStore } from '@xyflow/react'
+import './styles/node-card.css'
+import './styles/node-card-mui.css'
 import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
 import PushPinIcon from '@mui/icons-material/PushPin'
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
 import type { HandleDef } from '../../node-engine/types'
-import { useIsHeadlessNode } from './HeadlessNodeContext'
-import { useResolvedNodeId } from './NodeIdContext'
-import { usePinning } from './PinContext'
+import { useIsHeadlessNode } from './context/HeadlessNodeContext'
+import { useResolvedNodeId } from './context/NodeIdContext'
+import { usePinning } from './context/PinContext'
 import { categoryColor } from './categoryColors'
 
 /* Row pitch for input/output handles inside a node card. MUST equal the

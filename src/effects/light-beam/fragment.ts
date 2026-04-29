@@ -8,10 +8,13 @@ export default `
 
     uniform vec2  uResolution;
 
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_progress;   // z = 0..1 appearance progress
-    uniform vec4 uChan_intensity;  // alpha multiplier
-    uniform vec4 uChan_phase;      // x = time_ms — drives ray phase
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: appearance progress (0..1).
+       Slot 1: ray rotation phase — uChan1.x is monotonic ms.
+       Slot 4: intensity multiplier on final alpha. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan4;
 
     uniform vec4  uPointAABB;
     uniform sampler2D verticalDistanceTexture;
@@ -22,18 +25,15 @@ export default `
     uniform float uDepthEnabled;
     uniform float uEdgeFeatherPx;
 
-    uniform vec4 uColor0, uColor1, uColor2;
-
-    uniform vec3 uRayStrength3;
-    uniform vec3 uRayDensity3;
-    uniform vec3 uRaySpeed3;
-    uniform vec3 uRayFalloff3;
-    uniform vec3 uJoinSoftness3;
-
-    uniform vec3 uRayPhaseOffsetFrac3;
+    uniform vec4 uColor;
+    uniform float uRayStrength;
+    uniform float uRayDensity;
+    uniform float uRaySpeed;
+    uniform float uRayFalloff;
+    uniform float uJoinSoftness;
+    uniform float uRayPhaseOffsetFrac;
 
     uniform vec4  uEaseCubic;
-    uniform float uAnimationSpeed;
 
     const float TWO_PI    = 6.28318530718;
     const float EPS_ATTEN = 1e-3;
@@ -54,17 +54,6 @@ export default `
 
     float rayAngular(float theta, float density, float phase, float joinSoft){
         return smoothstep(0.0, 1.0 - 0.85*clamp(joinSoft, 0.0, 1.0), max(0.0, cos(theta * density + phase)));
-    }
-
-    vec4 layer(float theta, float d, vec4 color, float strength, float density, float speed, float falloff, float joinSoft, float phaseOffsetFrac, float inter){
-        float f = max(0.0001, uEdgeFeatherPx);
-        float startRamp   = smoothstep(0.0, f, d);
-        float radialAtten = exp(-falloff * d);
-        float phase = (uChan_phase.x * 0.001) * speed + TWO_PI * clamp(phaseOffsetFrac, 0.0, 1.0);
-        float beam  = rayAngular(theta, density, phase, joinSoft) * inter;
-        float m = strength * startRamp * radialAtten * beam;
-        vec3 rgb = color.rgb * color.a * m;
-        return vec4(rgb, color.a * m);
     }
 
     float reachPx(float falloff, float feather){
@@ -93,6 +82,8 @@ export default `
     }
 
     void main(){
+        if (uRayStrength <= 0.0 || uRayDensity <= 0.0 || uColor.a <= 0.0) discard;
+
         vec2 p = vUV * uResolution;
 
         vec2 bbMin = uPointAABB.xy * uResolution;
@@ -102,19 +93,8 @@ export default `
         float sdist = signedDistancePx(vUV);
 
         vec2 c1 = uEaseCubic.xy, c2 = uEaseCubic.zw;
-        float startS = uChan_progress.z;
+        float startS = uChan0.z;
         float apearInter = cubicBezierEase(startS * 2.0, c1, c2);
-
-        bool a0 = (uRayStrength3.x > 0.0) && (uRayDensity3.x > 0.0) && (uColor0.a > 0.0);
-        bool a1 = (uRayStrength3.y > 0.0) && (uRayDensity3.y > 0.0) && (uColor1.a > 0.0);
-        bool a2 = (uRayStrength3.z > 0.0) && (uRayDensity3.z > 0.0) && (uColor2.a > 0.0);
-
-        if (!(a0 || a1 || a2)) { discard; }
-
-        float dMax = 0.0;
-        if (a0) dMax = max(dMax, reachPx(uRayFalloff3.x, EPS_ATTEN));
-        if (a1) dMax = max(dMax, reachPx(uRayFalloff3.y, EPS_ATTEN));
-        if (a2) dMax = max(dMax, reachPx(uRayFalloff3.z, EPS_ATTEN));
 
         float ax = uResolution.y / uResolution.x;
         vec2  va = vec2((p.x - ctr.x) * ax, (p.y - ctr.y));
@@ -122,11 +102,15 @@ export default `
 
         float d = abs(sdist);
 
-        vec4 acc = vec4(0.0);
+        float f = max(0.0001, uEdgeFeatherPx);
+        float startRamp   = smoothstep(0.0, f, d);
+        float radialAtten = exp(-uRayFalloff * d);
+        float phase = (uChan1.x * 0.001) * uRaySpeed + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
+        float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * apearInter;
+        float m = uRayStrength * startRamp * radialAtten * beam;
 
-        if (a0) acc += layer(theta, d, uColor0, uRayStrength3.x, uRayDensity3.x, uRaySpeed3.x, uRayFalloff3.x, uJoinSoftness3.x, uRayPhaseOffsetFrac3.x, apearInter);
-        if (a1) acc += layer(theta, d, uColor1, uRayStrength3.y, uRayDensity3.y, uRaySpeed3.y, uRayFalloff3.y, uJoinSoftness3.y, uRayPhaseOffsetFrac3.y, apearInter);
-        if (a2) acc += layer(theta, d, uColor2, uRayStrength3.z, uRayDensity3.z, uRaySpeed3.z, uRayFalloff3.z, uJoinSoftness3.z, uRayPhaseOffsetFrac3.z, apearInter);
+        vec3 rgb = uColor.rgb * uColor.a * m;
+        vec4 acc = vec4(rgb, uColor.a * m);
 
         if (sdist > 0.0 && uDepthEnabled > 0.5) {
             float depthHere = texture(depthTexture, vUV).r;
@@ -134,7 +118,7 @@ export default `
             float depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
             acc *= depthMask;
         }
-        acc *= uChan_intensity.z;
+        acc *= uChan4.z;
 
         fragColor = clamp(acc, 0.0, 1.0);
     }

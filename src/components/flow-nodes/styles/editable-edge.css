@@ -1,0 +1,38 @@
+/* ── Editable Step Edge — orthogonal polyline with hover midpoints ── */
+
+.pn-edge-handle {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ededed;
+    border: 2px solid currentColor;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    position: absolute;
+    pointer-events: all;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s;
+}
+
+.pn-edge-handle.h {
+    cursor: ns-resize;
+}
+
+.pn-edge-handle.v {
+    cursor: ew-resize;
+}
+
+.pn-edge-handle.visible,
+.pn-edge-handle:hover,
+.pn-edge-handle.dragging {
+    opacity: 1;
+}
+
+.pn-edge-handle:hover {
+    transform: translate(-50%, -50%) scale(1.15);
+}
+
+.pn-edge-handle.dragging {
+    outline: 3px solid color-mix(in srgb, currentColor 30%, transparent);
+    outline-offset: 1px;
+}

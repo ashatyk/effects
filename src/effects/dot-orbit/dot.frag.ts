@@ -21,9 +21,11 @@ uniform float uGlowSize;
 uniform float uGlowIntensity;
 uniform float uEdgeSoftness;
 
-/* Animation channels — vec4(time_ms, raw, value, state). */
-uniform vec4 uChan_glow;       // multiplier on glow intensity
-uniform vec4 uChan_intensity;  // alpha multiplier
+/* Animation channels — vec4(time_ms, raw, value, state).
+   Slot 3: glow — multiplier on glow intensity.
+   Slot 4: intensity — alpha multiplier. */
+uniform vec4 uChan3;
+uniform vec4 uChan4;
 
 void main() {
     float r = length(vLocal);
@@ -39,7 +41,7 @@ void main() {
     float gw = max(uGlowSize, 1.0);
     float corona = step(1.0, r) * (1.0 - smoothstep(1.0, gw, r));
     corona *= corona;
-    float glow = corona * uGlowIntensity * uChan_glow.z;
+    float glow = corona * uGlowIntensity * uChan3.z;
 
     /* Gradient along contour. uGradientFrequency 0 = single A->B sweep,
        otherwise that many A<->B cycles. We bias by current height so taller
@@ -54,7 +56,7 @@ void main() {
     float baseA   = mix(uColorA.a,   uColorB.a,   gradT);
 
     vec3  rgb = baseCol * disk + uGlowColor.rgb * glow;
-    float a   = (baseA * disk + uGlowColor.a * glow) * uChan_intensity.z;
+    float a   = (baseA * disk + uGlowColor.a * glow) * uChan4.z;
 
     if (a < 1e-3) discard;
 

@@ -1,3 +1,5 @@
+import { NOISE_GLSL } from '../../pipeline/noise.glsl'
+
 // language=GLSL
 export default `
     #version 300 es
@@ -7,12 +9,17 @@ export default `
     out vec4 fragColor;
 
     uniform vec2  uResolution;
-    /* Animation channels — vec4(time_ms, raw, value, state). */
-    uniform vec4 uChan_scroll;     // x = time_ms — drives orbit / pulse / colour cycle
-    uniform vec4 uChan_radial;     // additive offset on orbit centre (px)
-    uniform vec4 uChan_size;       // multiplier on drop radius
-    uniform vec4 uChan_glow;       // multiplier on glow intensity
-    uniform vec4 uChan_intensity;  // alpha multiplier
+    /* Animation channels — vec4(time_ms, raw, value, state).
+       Slot 0: scroll — uChan0.x is monotonic ms (drives orbit / pulse / colour cycle).
+       Slot 1: radial — additive offset on orbit centre (px).
+       Slot 2: size — multiplier on drop radius.
+       Slot 3: glow — multiplier on glow intensity.
+       Slot 4: intensity — alpha multiplier. */
+    uniform vec4 uChan0;
+    uniform vec4 uChan1;
+    uniform vec4 uChan2;
+    uniform vec4 uChan3;
+    uniform vec4 uChan4;
 
     uniform sampler2D verticalDistanceTexture;
     uniform sampler2D depthTexture;
@@ -61,11 +68,7 @@ export default `
         return (t.w > 0.5) ? -d : d;
     }
 
-    float hash21(vec2 p) {
-        p = fract(p * vec2(123.34, 456.21));
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-    }
+${NOISE_GLSL}
 
     // Угол вдоль контура получаем из направления градиента SDF —
     // это наружная нормаль, вращающаяся монотонно вдоль орбиты
@@ -84,8 +87,8 @@ export default `
         float sdist = signedDistancePx(vUV);
         if (sdist < 0.0) { discard; }
 
-        float tSec = uChan_scroll.x * 0.001;
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan_radial.z;
+        float tSec = uChan0.x * 0.001;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(tSec * uOrbitSpeed) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -106,7 +109,7 @@ export default `
         float tt = sdfAngle(cellCenterUV);
 
         float pulse = sin(tt * uDropPulseFreq + tSec * uDropPulseSpeed);
-        float baseR = mix(0.0, uDropBaseRadius * uChan_size.z, proximity * proximity);
+        float baseR = mix(0.0, uDropBaseRadius * uChan2.z, proximity * proximity);
         float radius = baseR + uDropPulseAmp * pulse;
         radius *= exp(-uFalloff * sdfAtCell);
         radius = max(radius, 0.0);
@@ -129,7 +132,7 @@ export default `
         float glow = exp(-glowDist * glowDist / max(uGlowSpread * uGlowSpread * 0.5, 0.1));
 
         float coreA = core * uCoreIntensity;
-        float glowA = glow * uGlowIntensity * uChan_glow.z;
+        float glowA = glow * uGlowIntensity * uChan3.z;
 
         float alphaLocal = clamp(coreA + glowA * (1.0 - core), 0.0, 1.0);
         if (alphaLocal < 0.001) { discard; }
@@ -141,7 +144,7 @@ export default `
             depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
         }
 
-        float alpha = alphaLocal * depthMask * uChan_intensity.z;
+        float alpha = alphaLocal * depthMask * uChan4.z;
         if (alpha < 0.001) { discard; }
 
         vec3 rgb = col * alpha;

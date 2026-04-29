@@ -15,10 +15,13 @@ uniform float uContourLen;     // total perimeter in px (set by pass runner)
 uniform vec4  uColor;          // dash colour
 uniform vec4  uColorAlt;       // gap  colour (alpha=0 => transparent gap)
 
-/* Animation channels — vec4(time_ms, raw, value, state). */
-uniform vec4 uChan_width;      // multiplier on uBandHeight (matches vert)
-uniform vec4 uChan_spacing;    // multiplier on dash+gap period
-uniform vec4 uChan_intensity;  // alpha multiplier
+/* Animation channels — vec4(time_ms, raw, value, state).
+   Slot 2: width multiplier on uBandHeight (matches vert).
+   Slot 3: spacing multiplier on dash+gap period.
+   Slot 4: intensity multiplier on alpha. */
+uniform vec4 uChan2;
+uniform vec4 uChan3;
+uniform vec4 uChan4;
 
 /* Signed-distance to a rounded box centred at origin.
    b = half-extents (without rounding), r = corner radius. */
@@ -36,9 +39,9 @@ float bandMask(float vY, float bandH) {
 
 void main() {
     /* Animated band thickness and dash-period scaling. */
-    float bandH    = uBandHeight * uChan_width.z;
-    float dashBase = uDashLen    * uChan_spacing.z;
-    float gapBase  = uGapLen     * uChan_spacing.z;
+    float bandH    = uBandHeight * uChan2.z;
+    float dashBase = uDashLen    * uChan3.z;
+    float gapBase  = uGapLen     * uChan3.z;
 
     /* --- snap period so the closed contour holds a whole number of dashes,
            preserving the user-set dash:gap ratio. Eliminates the seam dash
@@ -70,10 +73,10 @@ void main() {
     float band  = bandMask(vUV.y, bandH);
     float dashA = uColor.a * dash;
     float gapA  = uColorAlt.a * band * (1.0 - dash);
-    float a     = (dashA + gapA) * uChan_intensity.z;
+    float a     = (dashA + gapA) * uChan4.z;
     if (a < 1e-3) discard;
 
     vec3 rgb = uColor.rgb * dashA + uColorAlt.rgb * gapA;
-    fragColor = vec4(rgb * uChan_intensity.z, a);
+    fragColor = vec4(rgb * uChan4.z, a);
 }
 `
