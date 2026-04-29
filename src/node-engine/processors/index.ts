@@ -28,6 +28,7 @@ import { AutoTimerProcessor, autoTimerDef } from './auto-timer'
 import { CombineSignalsProcessor, combineSignalsDef } from './combine-signals'
 import { AnimationControllerProcessor, animationControllerDef } from './animation-controller'
 import { NoiseVisualizerProcessor, noiseVisualizerDef } from './noise-visualizer'
+import { LogProcessor, logDef } from './log'
 
 export interface ProcessorEntry {
     def: ProcessorDef
@@ -62,4 +63,5 @@ export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
     combineSignals:  { def: combineSignalsDef,  create: () => new CombineSignalsProcessor() },
     animationController: { def: animationControllerDef, create: () => new AnimationControllerProcessor() },
     noiseVisualizer: { def: noiseVisualizerDef, create: () => new NoiseVisualizerProcessor() },
+    log:             { def: logDef,             create: () => new LogProcessor() },
 }

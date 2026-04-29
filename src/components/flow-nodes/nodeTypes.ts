@@ -25,6 +25,7 @@ import { AutoTimerNodeView } from './views/AutoTimerNodeView'
 import { CombineSignalsNodeView } from './views/CombineSignalsNodeView'
 import { AnimationControllerNodeView } from './views/AnimationControllerNodeView'
 import { NoiseVisualizerNodeView } from './views/NoiseVisualizerNodeView'
+import { LogNodeView } from './views/LogNodeView'
 
 export const pipelineNodeTypes = {
     number: NumberNodeView,
@@ -54,4 +55,5 @@ export const pipelineNodeTypes = {
     combineSignals: CombineSignalsNodeView,
     animationController: AnimationControllerNodeView,
     noiseVisualizer: NoiseVisualizerNodeView,
+    log: LogNodeView,
 }

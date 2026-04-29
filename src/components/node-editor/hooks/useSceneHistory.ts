@@ -12,7 +12,7 @@ import {
     type SerializedEdge,
 } from '../../../node-engine/scene-store'
 import type { PipelineNodeData } from '../constants'
-import { SNAPSHOT_DEBOUNCE_MS, IMAGE_BLOB_PREFIX, SEG_BLOB_PREFIX, setNodeIdCounter, getNodeIdCounter } from '../constants'
+import { SNAPSHOT_DEBOUNCE_MS, IMAGE_BLOB_PREFIX, SEG_BLOB_PREFIX, setNodeIdCounter, getNodeIdCounter, maxNodeIdNumber } from '../constants'
 
 type PNode = Node<PipelineNodeData>
 
@@ -130,7 +130,17 @@ export function useSceneHistory({
         isRestoringRef.current = true
         try {
             for (const n of nodes) engine.removeNode(n.id)
-            setNodeIdCounter(snap.nodeIdCounter || 0)
+            /* Sync the shared id counter to whichever is higher: the
+               value the snapshot wrote, or the largest numeric suffix
+               actually present in the restored nodes. The second clause
+               heals snapshots / imports where the counter was 0 (an
+               older bug in `exportScene`) — without it the next
+               `nextId()` would hand out an ID already in use, and
+               React Flow dedupes by `id` so the original node would
+               silently disappear. */
+            const fromSnap = snap.nodeIdCounter || 0
+            const fromIds = maxNodeIdNumber(snap.nodes)
+            setNodeIdCounter(Math.max(fromSnap, fromIds))
             const restoredNodes: PNode[] = []
             for (const sn of snap.nodes) {
                 if (!PROCESSOR_CATALOG[sn.data.processor]) continue

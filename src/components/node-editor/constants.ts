@@ -26,10 +26,30 @@ export const SLOT_COMPAT: Record<string, Set<string>> = {
     [SLOT.PULSE]: new Set([SLOT.PULSE, SLOT.ANY]),
     [SLOT.SIGNAL]: new Set([SLOT.SIGNAL, SLOT.ANY]),
     [SLOT.ANIMATION]: new Set([SLOT.ANIMATION, SLOT.ANY]),
-    [SLOT.ANY]: new Set([SLOT.TEXTURE, SLOT.POLYGON, SLOT.NUMBER, SLOT.VEC, SLOT.DEPTH_RAW, SLOT.CONFIG, SLOT.CONTOUR, SLOT.PULSE, SLOT.SIGNAL, SLOT.ANIMATION, SLOT.ANY]),
+    [SLOT.METRICS]: new Set([SLOT.METRICS, SLOT.ANY]),
+    [SLOT.ANY]: new Set([SLOT.TEXTURE, SLOT.POLYGON, SLOT.NUMBER, SLOT.VEC, SLOT.DEPTH_RAW, SLOT.CONFIG, SLOT.CONTOUR, SLOT.PULSE, SLOT.SIGNAL, SLOT.ANIMATION, SLOT.METRICS, SLOT.ANY]),
 }
 
 let nodeIdCounter = 0
 export function nextId(): string { return `n_${++nodeIdCounter}` }
 export function setNodeIdCounter(v: number) { nodeIdCounter = v }
 export function getNodeIdCounter(): number { return nodeIdCounter }
+
+/**
+ * Walk a list of serialised nodes and return the highest numeric suffix
+ * found in IDs of the form `n_<int>`. Used to defensively bump the
+ * shared node-id counter past any imported / restored scene's nodes —
+ * otherwise `nextId()` could hand out an ID that already exists, and
+ * `setNodes([...nds, dup])` then silently drops the original because
+ * React Flow dedupes by `id`.
+ */
+export function maxNodeIdNumber(nodes: { id: string }[]): number {
+    let max = 0
+    for (const n of nodes) {
+        const m = /^n_(\d+)$/.exec(n.id)
+        if (!m) continue
+        const v = parseInt(m[1], 10)
+        if (Number.isFinite(v) && v > max) max = v
+    }
+    return max
+}

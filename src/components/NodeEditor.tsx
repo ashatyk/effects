@@ -28,7 +28,7 @@ import { PinProvider, usePinState } from './flow-nodes/context/PinContext'
 import { NodePinSidebar } from './flow-nodes/NodePinSidebar'
 
 import {
-    GRID_SIZE, snapToGrid, nextId,
+    GRID_SIZE, snapToGrid, nextId, getNodeIdCounter, setNodeIdCounter, maxNodeIdNumber,
     pipelineEdgeTypes, SLOT_COMPAT,
     type PipelineNodeData,
 } from './node-editor/constants'
@@ -171,6 +171,11 @@ function NodeEditorInner() {
     const addNode = useCallback((processorType: string) => {
         const entry = PROCESSOR_CATALOG[processorType]
         if (!entry) return
+        /* Heal the counter just before minting a new id. Cheap O(N) walk
+           that costs us nothing on small graphs and prevents the
+           catastrophic "every new node overwrites an existing one"
+           regression when an old (counter=0) snapshot is loaded. */
+        setNodeIdCounter(Math.max(getNodeIdCounter(), maxNodeIdNumber(nodes)))
         const id = nextId()
         const newNode: PNode = {
             id,
@@ -185,7 +190,7 @@ function NodeEditorInner() {
         setNodes(nds => [...nds, newNode])
         engineRef.current?.addNode(id, processorType, { ...entry.def.defaultParams })
         setContextMenu(null)
-    }, [setNodes, contextMenu])
+    }, [setNodes, contextMenu, nodes])
 
     const onNodesDelete = useCallback((deleted: PNode[]) => {
         for (const n of deleted) engineRef.current?.removeNode(n.id)
@@ -208,7 +213,11 @@ function NodeEditorInner() {
         const data: SceneData = {
             nodes: exportNodes,
             edges,
-            nodeIdCounter: 0,
+            /* Persist the live counter so re-importing the file (or
+               loading it on a fresh tab) doesn't reset the id sequence
+               and start handing out IDs that already exist in the
+               exported graph. */
+            nodeIdCounter: getNodeIdCounter(),
             pinnedIds: [...pin.pinnedIds],
             viewport,
         }

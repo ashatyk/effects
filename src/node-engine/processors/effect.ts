@@ -3,7 +3,7 @@ import {
     Container, Geometry, Mesh, Shader, Texture, UniformGroup,
 } from 'pixi.js'
 import { BaseProcessor } from './base-processor'
-import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples, type AnimationSignal, type ChannelSignal } from '../types'
+import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples, type AnimationSignal, type ChannelSignal, type PassMetric, type EffectMetrics } from '../types'
 import { effects } from '../../effects'
 import { buildUniformEntries, applyCoordsUniforms } from '../../pipeline/uniforms'
 import { DEFAULT_VERTEX } from '../../pipeline/default-vertex'
@@ -31,7 +31,13 @@ export const effectDef: ProcessorDef = {
         { name: 'animation', type: SLOT.ANIMATION, label: 'animation' },
         { name: 'config', type: SLOT.CONFIG },
     ],
-    outputs: [{ name: 'texture', type: SLOT.TEXTURE }],
+    /* `metrics` carries per-pass CPU build timing and total GPU dispatch
+       time, refreshed every frame. Wire it into a Log node to see where
+       a frame's budget is spent. */
+    outputs: [
+        { name: 'texture', type: SLOT.TEXTURE },
+        { name: 'metrics', type: SLOT.METRICS },
+    ],
     defaultParams: {},
 }
 
@@ -52,13 +58,14 @@ export class EffectProcessor extends BaseProcessor {
     private cachedEffectName: string | null = null
 
     execute(inputs: Record<string, any>, params: Record<string, any>, engine: IDataflowEngine): Record<string, any> {
+        const tStart = performance.now()
         const configData = inputs.config as Record<string, any> | null
         if (configData?.__effectName) {
             this.cachedEffectName = configData.__effectName as string
         }
         const effectName = this.cachedEffectName ?? effects[0]?.name ?? ''
         const config = effects.find(e => e.name === effectName) ?? effects[0]
-        if (!config) return { texture: null }
+        if (!config) return { texture: null, metrics: null }
 
         const [w, h] = this.resolveRes(inputs, params, engine)
         const rt = this.ensureRT(w, h)
@@ -76,10 +83,21 @@ export class EffectProcessor extends BaseProcessor {
         const uniforms = this.makeUniformGroup(config, configData, ctx)
         this.warnUndeclaredChannels(config)
 
+        /* Per-pass CPU build timing. We measure mesh construction +
+           shader compilation here; GPU dispatch is timed separately
+           around the single `renderer.render` call below since the
+           whole stage goes through one batched draw and per-pass
+           GPU timing would require timer-query extensions. */
+        const passMetrics: PassMetric[] = []
         const stage = new Container()
         const ephemeralGeometries: Geometry[] = []
         for (const pass of config.passes) {
-            if (!passInputsSatisfied(pass, inputs)) continue
+            if (!passInputsSatisfied(pass, inputs)) {
+                passMetrics.push({ id: pass.id, kind: pass.kind, cpuMs: 0, skipped: true })
+                continue
+            }
+            const tPass = performance.now()
+            let cpuMs = 0
             try {
                 const resources = this.makeResources(pass, ctx, uniforms)
                 const mesh = pass.kind === 'fullscreen'
@@ -89,20 +107,36 @@ export class EffectProcessor extends BaseProcessor {
                     mesh.blendMode = pass.blend === 'add' ? 'add' : 'normal'
                     stage.addChild(mesh)
                 }
+                cpuMs = performance.now() - tPass
             } catch (e) {
+                cpuMs = performance.now() - tPass
                 console.warn(`[EffectProcessor] pass "${pass.id}" failed:`, e)
             }
+            passMetrics.push({ id: pass.id, kind: pass.kind, cpuMs, skipped: false })
         }
 
+        const tDispatch = performance.now()
         engine.app.renderer.render({
             container: stage,
             target: rt,
             clear: true,
         })
+        const gpuDispatchMs = performance.now() - tDispatch
+
         stage.destroy({ children: true })
         for (const geo of ephemeralGeometries) geo.destroy(true)
 
-        return { texture: rt.source }
+        const totalMs = performance.now() - tStart
+        const cpuMs = passMetrics.reduce((acc, p) => acc + p.cpuMs, 0)
+        const metrics: EffectMetrics = {
+            effectName: config.name,
+            totalMs,
+            cpuMs,
+            gpuDispatchMs,
+            passes: passMetrics,
+            timestampMs: tStart,
+        }
+        return { texture: rt.source, metrics }
     }
 
     /* ───────── Mesh construction per pass ───────── */

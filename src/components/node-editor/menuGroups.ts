@@ -44,7 +44,7 @@ const RAW_GROUPS: MenuGroup[] = [
     },
     {
         title: 'Utilities',
-        items: ['config', 'noiseVisualizer'],
+        items: ['config', 'noiseVisualizer', 'log'],
     },
 ]
 
