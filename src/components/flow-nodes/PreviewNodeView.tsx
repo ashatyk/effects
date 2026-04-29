@@ -1,17 +1,14 @@
 import { memo, useRef, useEffect, useCallback } from 'react'
 import type { NodeProps } from '@xyflow/react'
-import { NodeResizer } from '@xyflow/react'
 import { BaseNodeShell } from './BaseNodeShell'
 import { useEngine } from './EngineContext'
-import { useIsHeadlessNode } from './HeadlessNodeContext'
 import { ActionButton } from './widgets'
 import { previewDef } from '../../node-engine/processors/preview'
 import { PreviewProcessor } from '../../node-engine/processors/preview'
 import type { PipelineNodeData } from './types'
 
-export const PreviewNodeView = memo(({ id, selected }: NodeProps & { data: PipelineNodeData }) => {
+export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const headless = useIsHeadlessNode()
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const subRef = useRef<(() => void) | null>(null)
 
@@ -52,20 +49,16 @@ export const PreviewNodeView = memo(({ id, selected }: NodeProps & { data: Pipel
     }, [engine, id])
 
     return (
-        <>
-            {!headless && (
-                <NodeResizer
-                    minWidth={120}
-                    minHeight={60}
-                    isVisible={selected}
-                    lineClassName="pn-resize-line"
-                    handleClassName="pn-resize-handle"
-                />
-            )}
-            <BaseNodeShell title="Preview" category={previewDef.category} inputs={previewDef.inputs} outputs={previewDef.outputs}>
-                <canvas ref={canvasRef} className="pn-preview-canvas" />
-                <ActionButton onClick={saveImage} variant="primary">Save image</ActionButton>
-            </BaseNodeShell>
-        </>
+        <BaseNodeShell
+            title="Preview"
+            category={previewDef.category}
+            inputs={previewDef.inputs}
+            outputs={previewDef.outputs}
+            minWidth={120}
+            minHeight={60}
+        >
+            <canvas ref={canvasRef} className="pn-preview-canvas" />
+            <ActionButton onClick={saveImage} variant="primary">Save image</ActionButton>
+        </BaseNodeShell>
     )
 })

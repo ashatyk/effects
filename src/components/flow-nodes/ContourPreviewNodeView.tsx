@@ -1,18 +1,15 @@
 import { memo, useRef, useEffect, useCallback } from 'react'
 import type { NodeProps } from '@xyflow/react'
-import { NodeResizer } from '@xyflow/react'
 import { BaseNodeShell } from './BaseNodeShell'
 import { useEngine } from './EngineContext'
-import { useIsHeadlessNode } from './HeadlessNodeContext'
 import { contourPreviewDef, ContourPreviewProcessor } from '../../node-engine/processors/contour-preview'
 import type { PipelineNodeData } from './types'
 
 const TANGENT_LEN = 12
 const POINT_RADIUS = 1.5
 
-export const ContourPreviewNodeView = memo(({ id, selected }: NodeProps & { data: PipelineNodeData }) => {
+export const ContourPreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const headless = useIsHeadlessNode()
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const subRef = useRef<(() => void) | null>(null)
 
@@ -83,19 +80,15 @@ export const ContourPreviewNodeView = memo(({ id, selected }: NodeProps & { data
     }, [engine, id, draw])
 
     return (
-        <>
-            {!headless && (
-                <NodeResizer
-                    minWidth={140}
-                    minHeight={80}
-                    isVisible={selected}
-                    lineClassName="pn-resize-line"
-                    handleClassName="pn-resize-handle"
-                />
-            )}
-            <BaseNodeShell title="Contour Preview" category={contourPreviewDef.category} inputs={contourPreviewDef.inputs} outputs={contourPreviewDef.outputs}>
-                <canvas ref={canvasRef} className="pn-preview-canvas" />
-            </BaseNodeShell>
-        </>
+        <BaseNodeShell
+            title="Contour Preview"
+            category={contourPreviewDef.category}
+            inputs={contourPreviewDef.inputs}
+            outputs={contourPreviewDef.outputs}
+            minWidth={140}
+            minHeight={80}
+        >
+            <canvas ref={canvasRef} className="pn-preview-canvas" />
+        </BaseNodeShell>
     )
 })

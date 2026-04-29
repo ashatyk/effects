@@ -16,21 +16,22 @@
  */
 export const CATEGORY_COLORS: Record<string, string> = {
     /* Hand-picked for maximum hue separation around the colour wheel.
-     * Saturation is held high (~80–95 %) and lightness mid-range so each
-     * accent reads punchy on the dark canvas without blowing out against
-     * the off-white card body. The animation chain intentionally keeps a
-     * warm gradient (yellow → orange → pink) so the eye reads the signal
-     * flow as one continuous family. */
-    input:       '#22c55e', // hsl 142°  green     — data sources
-    animTrigger: '#fbbf24', // hsl  43°  amber     — pulse generators
-    animMod:     '#f97316', // hsl  25°  orange    — signal modulators
-    animCtrl:    '#ec4899', // hsl 330°  pink      — animation controllers
-    imageOp:     '#3b82f6', // hsl 221°  blue      — image processing
-    contour:     '#14b8a6', // hsl 173°  teal      — geometry / polygon ops
-    depth:       '#0ea5e9', // hsl 199°  sky       — depth / 3D
-    ai:          '#a855f7', // hsl 271°  violet    — ML inference
-    output:      '#ef4444', // hsl   0°  red       — terminal sinks
-    util:        '#94a3b8', // hsl 215°  slate     — auxiliary
+     * All accents sit on the dark side of the perceived-luminance line
+     * (Y'601 < 0.5) so the unified light header title (#f5f5f5 + drop
+     * shadow in App.css) reads cleanly across every category — no
+     * per-colour text-color overrides needed. The animation chain still
+     * runs a warm gradient (gold → orange → pink) so the eye reads the
+     * signal flow as one continuous family. */
+    input:       '#22c55e', // hsl 142°  green       — data sources
+    animTrigger: '#a16207', // hsl  41°  gold-700    — pulse generators
+    animMod:     '#c2410c', // hsl  17°  orange-700  — signal modulators
+    animCtrl:    '#ec4899', // hsl 330°  pink        — animation controllers
+    imageOp:     '#3b82f6', // hsl 221°  blue        — image processing
+    contour:     '#14b8a6', // hsl 173°  teal        — geometry / polygon ops
+    depth:       '#0ea5e9', // hsl 199°  sky         — depth / 3D
+    ai:          '#a855f7', // hsl 271°  violet      — ML inference
+    output:      '#ef4444', // hsl   0°  red         — terminal sinks
+    util:        '#475569', // hsl 215°  slate-600   — auxiliary
 
     /* Legacy aliases — keep persisted scenes from going grey. */
     source:   '#22c55e',

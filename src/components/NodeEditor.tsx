@@ -12,6 +12,7 @@ import {
     type Edge,
     type Node,
     type NodeTypes,
+    type EdgeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Application } from 'pixi.js'
@@ -41,6 +42,7 @@ import PushPinIcon from '@mui/icons-material/PushPin'
 
 import { EngineProvider } from './flow-nodes/EngineContext'
 import { pipelineNodeTypes } from './flow-nodes/nodeTypes'
+import { EditableStepEdge } from './flow-nodes/EditableStepEdge'
 import { categoryColor } from './flow-nodes/categoryColors'
 import type { PipelineNodeData } from './flow-nodes/types'
 import { SLOT } from '../node-engine/types'
@@ -52,6 +54,11 @@ type PNode = Node<PipelineNodeData>
 
 let nodeIdCounter = 0
 function nextId(): string { return `n_${++nodeIdCounter}` }
+
+/* React Flow edge type registry. Single entry — every connection uses the
+   custom orthogonal "editable step" edge with hover-revealed per-segment
+   drag handles (replaces the old reroute waypoint node). */
+const pipelineEdgeTypes: EdgeTypes = { editableStep: EditableStepEdge }
 
 const SLOT_COMPAT: Record<string, Set<string>> = {
     [SLOT.TEXTURE]: new Set([SLOT.TEXTURE, SLOT.ANY]),
@@ -76,6 +83,19 @@ interface SceneData {
 const SNAPSHOT_DEBOUNCE_MS = 1200
 const IMAGE_BLOB_PREFIX = 'img:'
 const SEG_BLOB_PREFIX = 'seg:'
+
+/* Editor grid step (px in flow space). Drives both:
+   - <Background gap> dot pattern, so the dotted grid users see is the
+     exact grid they snap against;
+   - <ReactFlow snapGrid> for node move/resize, so any drag/resize lands
+     on a multiple of GRID_SIZE.
+   Initial node placement (context-menu insert, paste duplicate) is also
+   floored to GRID_SIZE so a freshly-spawned node is immediately on-grid. */
+const GRID_SIZE = 20
+
+function snapToGrid(value: number, step: number = GRID_SIZE): number {
+    return Math.round(value / step) * step
+}
 
 function NodeEditorInner() {
     const [nodes, setNodes, onNodesChange] = useNodesState<PNode>([])
@@ -111,6 +131,13 @@ function NodeEditorInner() {
                 position: { ...n.position },
                 data: { ...n.data, params: { ...n.data.params } },
             }
+            /* React Flow v12 stashes NodeResizer-driven dimensions on the
+               node directly (`width`/`height`), so persist them too — else
+               a resized card "snaps back" to its content size on reload. */
+            const w = (n as { width?: number }).width
+            const h = (n as { height?: number }).height
+            if (typeof w === 'number') sn.width = w
+            if (typeof h === 'number') sn.height = h
             if (n.style) sn.style = { ...n.style } as Record<string, unknown>
             if (n.data.processor === 'image' && engine) {
                 const proc = engine.getProcessor<ImageProcessor>(n.id)
@@ -222,10 +249,25 @@ function NodeEditorInner() {
                     position: sn.position,
                     data: sn.data as PipelineNodeData,
                     ...(sn.style ? { style: sn.style } : {}),
+                    /* Persisted explicit dimensions (NodeResizer output)
+                       round-trip directly onto the React Flow node so the
+                       card opens at the size the user last left it at. */
+                    ...(typeof sn.width === 'number' ? { width: sn.width } : {}),
+                    ...(typeof sn.height === 'number' ? { height: sn.height } : {}),
                 } as PNode)
             }
             setNodes(restoredNodes)
-            setEdges(snapEdges as Edge[])
+
+            /* Drop edges whose endpoints didn't survive (e.g. legacy
+               reroute waypoints that no longer exist in the catalog) and
+               normalise edge type to the new orthogonal editable step
+               renderer — this transparently migrates older snapshots that
+               were saved as `smoothstep`. */
+            const aliveIds = new Set(restoredNodes.map(n => n.id))
+            const migratedEdges = (snapEdges as Edge[])
+                .filter(e => aliveIds.has(e.source) && aliveIds.has(e.target))
+                .map(e => ({ ...e, type: 'editableStep' }))
+            setEdges(migratedEdges)
         } finally {
             isRestoringRef.current = false
         }
@@ -339,7 +381,10 @@ function NodeEditorInner() {
         const newNode: PNode = {
             id,
             type: processorType,
-            position: { x: contextMenu?.flowX ?? 200, y: contextMenu?.flowY ?? 200 },
+            position: {
+                x: snapToGrid(contextMenu?.flowX ?? 200),
+                y: snapToGrid(contextMenu?.flowY ?? 200),
+            },
             data: { processor: processorType, params: { ...entry.def.defaultParams } },
             ...(processorType === 'preview' ? { style: { width: 300 } } : {}),
         }
@@ -347,50 +392,6 @@ function NodeEditorInner() {
         engineRef.current?.addNode(id, processorType, { ...entry.def.defaultParams })
         setContextMenu(null)
     }, [setNodes, contextMenu])
-
-    /* ── Insert reroute node on edge double-click ── */
-    const onEdgeDoubleClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
-        const engine = engineRef.current
-        if (!engine) return
-        const flowPos = screenToFlowPosition({ x: _event.clientX, y: _event.clientY })
-
-        const rerouteId = nextId()
-        const entry = PROCESSOR_CATALOG['reroute']
-        if (!entry) return
-
-        engine.addNode(rerouteId, 'reroute', {})
-        const rerouteNode: PNode = {
-            id: rerouteId,
-            type: 'reroute',
-            position: { x: flowPos.x - 10, y: flowPos.y - 10 },
-            data: { processor: 'reroute', params: {} },
-        }
-
-        setNodes(nds => [...nds, rerouteNode])
-        setEdges(eds => {
-            const without = eds.filter(e => e.id !== edge.id)
-            const edgeToReroute: Edge = {
-                id: `e_${edge.source}_${edge.sourceHandle}_${rerouteId}`,
-                source: edge.source,
-                sourceHandle: edge.sourceHandle,
-                target: rerouteId,
-                targetHandle: 'in',
-            }
-            const edgeFromReroute: Edge = {
-                id: `e_${rerouteId}_out_${edge.target}_${edge.targetHandle}`,
-                source: rerouteId,
-                sourceHandle: 'out',
-                target: edge.target!,
-                targetHandle: edge.targetHandle,
-            }
-            return [...without, edgeToReroute, edgeFromReroute]
-        })
-
-        setTimeout(() => {
-            engine.markDirty(rerouteId)
-            if (edge.target) engine.markDirty(edge.target)
-        }, 50)
-    }, [screenToFlowPosition, setNodes, setEdges])
 
     /* ── Delete nodes ── */
     const onNodesDelete = useCallback((deleted: PNode[]) => {
@@ -436,13 +437,18 @@ function NodeEditorInner() {
                 if (selected.length > 0) clipboardRef.current = selected
             }
             if (isMeta && e.key === 'v' && clipboardRef.current.length > 0) {
-                const offset = 40
+                /* Two-cell paste offset keeps the clones visibly off the
+                   originals while still landing on grid intersections. */
+                const offset = GRID_SIZE * 2
                 const newNodes: PNode[] = clipboardRef.current.map(n => {
                     const id = nextId()
                     const nn: PNode = {
                         id,
                         type: n.type,
-                        position: { x: n.position.x + offset, y: n.position.y + offset },
+                        position: {
+                            x: snapToGrid(n.position.x + offset),
+                            y: snapToGrid(n.position.y + offset),
+                        },
                         data: { ...n.data, params: { ...n.data.params } },
                         selected: true,
                     }
@@ -518,28 +524,15 @@ function NodeEditorInner() {
         await sceneStore.clearAll()
     }, [nodes, setNodes, setEdges])
 
-    /* ── Per-edge stroke colour from source node's category ──
-       Reroute nodes fall through to their incoming edge's colour so the
-       hop appears as a continuous coloured line. */
+    /* ── Per-edge stroke colour from source node's category. ── */
     const colouredEdges = useMemo(() => {
         const colorByNode = new Map<string, string>()
-        const isReroute = new Set<string>()
         for (const n of nodes) {
-            if (n.data?.processor === 'reroute') isReroute.add(n.id)
             const cat = PROCESSOR_CATALOG[n.data?.processor]?.def.category
             colorByNode.set(n.id, categoryColor(cat))
         }
-        /* Resolve the actual upstream colour for reroutes by walking back
-           through their incoming edge until we hit a real node. */
-        const resolvedColor = (id: string, depth = 0): string => {
-            if (depth > 32) return colorByNode.get(id) ?? categoryColor(undefined)
-            if (!isReroute.has(id)) return colorByNode.get(id) ?? categoryColor(undefined)
-            const incoming = edges.find(e => e.target === id)
-            if (!incoming) return colorByNode.get(id) ?? categoryColor(undefined)
-            return resolvedColor(incoming.source, depth + 1)
-        }
         return edges.map(e => {
-            const stroke = resolvedColor(e.source)
+            const stroke = colorByNode.get(e.source) ?? categoryColor(undefined)
             const existing = (e.style ?? {}) as React.CSSProperties
             return { ...e, style: { ...existing, stroke } }
         })
@@ -577,7 +570,7 @@ function NodeEditorInner() {
         },
         {
             title: 'Image Ops',
-            items: ['blur', 'remap', 'blend', 'denoise', 'edgeDetect', 'sdf', 'sdfFromContour'],
+            items: ['blur', 'remap', 'blend', 'denoise', 'sdfFromContour'],
         },
         {
             title: 'Contour',
@@ -585,11 +578,11 @@ function NodeEditorInner() {
         },
         {
             title: 'Depth',
-            items: ['depthEstimate', 'depthBlit', 'depthProject'],
+            items: ['depthEstimate', 'depthBlit'],
         },
         {
             title: 'AI / ML',
-            items: ['materialEstimate', 'marigoldDepth', 'marigoldNormals', 'qwenImageEdit', 'textRemovalMask'],
+            items: ['materialEstimate', 'marigoldDepth', 'marigoldNormals'],
         },
         {
             title: 'Output',
@@ -600,13 +593,12 @@ function NodeEditorInner() {
             items: ['config'],
         },
     ]
-        /* Filter out anything hidden, missing from the catalog, or the
-         * special internal `reroute` waypoint (added by edge double-click). */
+        /* Filter out anything hidden or missing from the catalog. */
         .map(g => ({
             ...g,
             items: g.items.filter(t => {
                 const e = PROCESSOR_CATALOG[t]
-                return e && !e.def.hidden && t !== 'reroute'
+                return e && !e.def.hidden
             }),
         }))
         .filter(g => g.items.length > 0)
@@ -692,7 +684,7 @@ function NodeEditorInner() {
                                 onNodesDelete={onNodesDelete}
                                 isValidConnection={isValidConnection}
                                 nodeTypes={pipelineNodeTypes as unknown as NodeTypes}
-                                onEdgeDoubleClick={onEdgeDoubleClick}
+                                edgeTypes={pipelineEdgeTypes}
                                 onPaneContextMenu={onPaneContextMenu}
                                 onClick={() => setContextMenu(null)}
                                 deleteKeyCode={['Delete', 'Backspace']}
@@ -700,13 +692,20 @@ function NodeEditorInner() {
                                 selectionKeyCode="Shift"
                                 minZoom={0.2}
                                 maxZoom={3}
-                                /* Smoothstep for every edge — applied to new
-                                   connections (via addEdge) and to edges
-                                   loaded from the persisted scene that have
-                                   no explicit type. */
-                                defaultEdgeOptions={{ type: 'smoothstep' }}
+                                /* Custom orthogonal edge with hover-revealed
+                                   per-segment drag handles (replaces both
+                                   smoothstep and the old reroute-node hop). */
+                                defaultEdgeOptions={{ type: 'editableStep' }}
+                                /* Grid-aligned movement & resize. React Flow
+                                   applies snapGrid to BOTH node drag and the
+                                   NodeResizer, so we get consistent step in
+                                   one place. The visual dot pattern below
+                                   uses the same step so what you see is
+                                   what you snap to. */
+                                snapToGrid
+                                snapGrid={[GRID_SIZE, GRID_SIZE]}
                             >
-                                <Background color="rgba(255,255,255,0.05)" gap={20} size={1} />
+                                <Background color="rgba(255,255,255,0.05)" gap={GRID_SIZE} size={1} />
                             </ReactFlow>
                             <Popover
                                 open={!!contextMenu}

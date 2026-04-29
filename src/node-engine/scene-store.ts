@@ -22,16 +22,28 @@ export interface SerializedNode {
         imageUrl?: string
         [key: string]: unknown
     }
+    /* In React Flow v12 the NodeResizer writes the explicit dimensions
+       to `node.width` / `node.height` (NOT into `node.style`). Persist
+       them top-level so a resized card survives reload/undo without
+       collapsing back to its content-intrinsic size. `style` is kept for
+       any other inline styling we might add later. */
+    width?: number
+    height?: number
     style?: Record<string, unknown>
     selected?: boolean
 }
 
 export interface SerializedEdge {
     id?: string
+    type?: string
     source: string
     sourceHandle?: string | null
     target: string
     targetHandle?: string | null
+    /* Free-form payload — currently used by EditableStepEdge to persist
+       its bend points (`{ bends: { x, y }[] }`). Keeping it untyped here
+       so individual edge implementations own their schema. */
+    data?: Record<string, unknown>
 }
 
 export interface BlobEntry {

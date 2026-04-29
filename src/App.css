@@ -900,27 +900,20 @@ input[type='color']::-webkit-color-swatch {
     width: 100%;
 }
 
-/* Pin toggle in the node header */
-.pn-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+/* Title spans the rest of the flex row, pushing the pin toggle right.
+   The flex container itself is set up by the main `.pn-header` block
+   below — we only need this single rule to make the title elastic.
+   `min-width: 0` lets the title shrink below its intrinsic width
+   (inside a flex item the default min-width is `auto`); paired with
+   `text-overflow: ellipsis` long node names truncate cleanly instead
+   of pushing the pin icon out of the card. */
+.pn-header-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
-
-.pn-header-title { flex: 1; }
-
-.pn-pin-btn {
-    background: transparent;
-    border: none;
-    color: var(--pn-text-secondary, #525252);
-    font-size: 13px;
-    line-height: 1;
-    padding: 0 2px;
-    cursor: pointer;
-    transition: color 0.12s;
-}
-
-.pn-pin-btn:hover { color: var(--pn-text, #0a0a0a); }
 
 /* ── Pipeline Node (light off-white cards on dark canvas) ──
    Strategy: nodes carry their own light surface palette via CSS vars so
@@ -959,6 +952,13 @@ input[type='color']::-webkit-color-swatch {
     font-weight: 700;
     color: var(--pn-text);
     min-width: 160px;
+    /* Fill the ReactFlow node bounding box so NodeResizer (which assigns
+       width/height to the outer `.react-flow__node`) actually resizes the
+       visible card chrome. `100%` of an indeterminate parent collapses to
+       `auto`, so unresized nodes still self-size to their content. */
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
     /* A touch deeper than before — punchier separation from the canvas
        without going harsh. */
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
@@ -973,14 +973,39 @@ input[type='color']::-webkit-color-swatch {
 }
 
 .pn-header {
-    padding: 6px 10px;
-    font-weight: 600;
-    font-size: 11px;
-    color: var(--pn-text);
+    /* Explicit grid-aligned height (4 px top border + 36 px header = 40 px
+       to the bottom of the header = 2 grid cells). With the symmetric
+       10 px pad inside `.pn-handles`, the FIRST handle lands exactly on
+       the third dot row (Y = 60 px). Border-box keeps the 1 px bottom
+       divider inside the 36 px envelope. */
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    /* Bigger / bolder than before but still bounded by the fixed
+       36 px envelope: at 13 px / 700 / 1 line, the title comfortably
+       fits the content area (35 px after the 1 px bottom divider). */
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    /* All titles unified to a single light tint so the colour cue is
+       carried purely by the accent background. The drop-shadow keeps
+       the type readable even on the brighter accents (amber, slate)
+       where pure white would otherwise smear into the bg. */
+    color: #f5f5f5;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    background: var(--pn-bg-alt);
-    border-bottom: 1px solid var(--pn-divider);
+    /* Header IS the accent — the 4 px top border continues into a fully
+       saturated header band so the category reads as one strong colour
+       block from the very first glance. */
+    background: var(--pn-accent, var(--pn-bg-alt));
+    /* Bottom divider tinted with the accent so it doesn't read as a
+       hard dark line cutting through the colour block. */
+    border-bottom: 1px solid color-mix(in srgb, var(--pn-accent, #000) 50%, rgba(0, 0, 0, 0.25));
     /* Inner radius = outer 10px − 4px border = 6px. Keeps the darker
        header from "ear-ing" past the rounded category border at the
        top corners. */
@@ -989,16 +1014,22 @@ input[type='color']::-webkit-color-swatch {
 }
 
 .pn-handles {
+    /* No padding here — the JS-side `ROW_TOP_PAD` baked into each
+       handle/label `top` is what places the rows on grid cells.
+       Adding CSS padding too would over-shift the rows. */
     position: relative;
-    padding: 2px 0;
+    padding: 0;
 }
 
 .pn-label {
+    /* Height/line-height equal ROW_H (20 px in BaseNodeShell). Larger
+       values overflow into adjacent rows; smaller values leave a stripe
+       of cold background between labels. */
     position: absolute;
     font-size: 10px;
     color: var(--pn-text-secondary);
-    height: 22px;
-    line-height: 22px;
+    height: 20px;
+    line-height: 20px;
     white-space: nowrap;
 }
 
@@ -1124,6 +1155,15 @@ input[type='color']::-webkit-color-swatch {
 .pn .MuiSelect-icon,
 .pn .MuiSvgIcon-root {
     color: var(--pn-text-secondary);
+}
+
+/* Header pin icon (and any future header-level MUI icon) must follow
+   the header's own colour pipeline, not the widget-area secondary
+   tint. `color: inherit` propagates the IconButton sx colour
+   (`#f5f5f5`) through to the SVG glyph. Scoped to `.pn-header` so
+   widget-area icons (Select arrows, etc.) keep the muted look. */
+.pn-header .MuiSvgIcon-root {
+    color: inherit;
 }
 
 .pn .MuiFormLabel-root,
@@ -1337,47 +1377,50 @@ input[type='color']::-webkit-color-swatch {
 
 .seg-del-btn:hover { color: #f44; }
 
-/* ── Reroute node ── */
-.pn-reroute {
-    width: 20px;
-    height: 20px;
+/* ── Editable Step Edge — orthogonal polyline with hover midpoints ── */
+.pn-edge-handle {
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: #0a0a0a;
-    border: 2px solid rgba(255, 255, 255, 0.45);
-    position: relative;
-    cursor: grab;
-    transition: border-color 0.15s, background 0.15s;
+    background: #ededed;
+    border: 2px solid currentColor;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    position: absolute;
+    pointer-events: all;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.12s, transform 0.12s;
+    /* `currentColor` inherits the edge's stroke colour from the parent
+       group so the dot ring matches the data-flow tint. */
 }
-.pn-reroute:hover {
-    border-color: #ededed;
-    background: #1a1a1a;
+
+.pn-edge-handle.h {
+    /* Horizontal segment → vertical drag */
+    cursor: ns-resize;
 }
-.pn-reroute .pn-reroute-handle {
-    width: 8px;
-    height: 8px;
-    min-width: 0;
-    min-height: 0;
-    background: transparent;
-    border: none;
-    top: 50% !important;
-    transform: translateY(-50%);
-    /* Anchor only — no drag interactions. React Flow renders existing
-       edges through the handle regardless of pointer-events. */
-    pointer-events: none !important;
-    cursor: default !important;
+
+.pn-edge-handle.v {
+    /* Vertical segment → horizontal drag */
+    cursor: ew-resize;
 }
-.react-flow__node-reroute {
-    background: none !important;
-    border: none !important;
-    padding: 0 !important;
-    width: 20px !important;
-    height: 20px !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
+
+.pn-edge-handle.visible,
+.pn-edge-handle:hover,
+.pn-edge-handle.dragging {
+    opacity: 1;
 }
-.react-flow__node-reroute.selected .pn-reroute {
-    border-color: #ededed;
-    background: #292929;
+
+.pn-edge-handle:hover {
+    transform: translate(-50%, -50%) scale(1.15);
+}
+
+.pn-edge-handle.dragging {
+    /* Keep the post-translate scale stacked correctly: the inline style on
+       the handle sets `translate(-50%,-50%) translate(midX, midY)` so we
+       must not redefine `transform` here — use `outline` for the active
+       state cue instead. */
+    outline: 3px solid color-mix(in srgb, currentColor 30%, transparent);
+    outline-offset: 1px;
 }
 
 /* ── React Flow chrome overrides (Geist palette) ── */
