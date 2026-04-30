@@ -14,10 +14,9 @@ export const config: PlaygroundConfig = {
             blend: 'normal',
             vertex: ribbonVertex,
             fragment: ribbonFragment,
-            requiresInputs: ['contour', 'atlas'],
+            requiresInputs: ['contour', 'txcn1'],
             scrolling: {
                 mode: 'ribbon',
-                speedField: 'uSlideSpeed',
                 segmentSizeField: 'uSegmentSize',
                 phaseSlot: 0,
             },
@@ -62,13 +61,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 2,
             slider: { min: 1, max: 8, step: 1 },
-        },
-        {
-            name: 'uSlideSpeed',
-            label: 'Slide speed (px/sec)',
-            kind: 'f32',
-            default: 60,
-            slider: { min: -300, max: 300, step: 1 },
         },
         {
             name: 'uSegmentSize',
@@ -122,6 +114,11 @@ export const config: PlaygroundConfig = {
             { slot: 2, label: 'Width multiplier',     defaultMin: 1, defaultMax: 2 },
             { slot: 3, label: 'Spacing multiplier',   defaultMin: 1, defaultMax: 2 },
             { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        ],
+    },
+    textures: {
+        slots: [
+            { slot: 1, label: 'Text strip (atlas)' },
         ],
     },
 }

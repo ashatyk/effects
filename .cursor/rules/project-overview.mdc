@@ -176,6 +176,10 @@ src/
 
 `markDirty(nodeId)` — BFS walks downstream via adjacency, marking all descendants dirty. Called on param change, edge change, or by `alwaysDirty` nodes.
 
+### Subscriber preservation across snapshots
+
+`engine.subscribeNode(id, cb)` keys listeners by **node id**, not by processor instance. `applySnapshot` (undo/redo, scene import) tears down every processor and immediately re-adds nodes with the same ids; the React views stay mounted with stable `[engine, id]` deps so their subscribe-effects never re-fire. Therefore `removeNode` must **not** drop the `nodeListeners` entry — if it did, the rebuilt processors would publish into an empty set and previews / metrics widgets / output-reading nodes would freeze on the pre-undo frame. The unsubscribe closure deletes the empty Set entry once the last listener detaches, so permanently-removed nodes don't leave dangling state. Don't reintroduce `nodeListeners.delete(id)` inside `removeNode` — it's the cause of the historical "previews freeze after undo" bug.
+
 ### GPU helpers
 
 - `renderPass(fragment, resources, w?, h?) → RenderTexture` — creates a fullscreen quad `Mesh` with `Shader.from({ gl: { vertex: DEFAULT_VERTEX, fragment }, resources })`, renders to a new RT.
@@ -202,8 +206,8 @@ src/
 ### Signal Types
 
 - `PulseSignal` — discrete tap event: `{ count, lastTimestampMs, lastX?, lastY? }`.
-- `Signal` — continuous 0..1 driver: `{ value, time, age, state, lastTimestampMs }`.
-- `ChannelSignal` — per-channel in animation: `{ time, raw, value, state }`.
+- `Signal` — continuous driver from AutoTimer / Envelope / Combine: `{ value, time, age, state, lastTimestampMs }`. `value` is the user-controlled waveform output (clamped or unbounded depending on mode); `time` is the source-internal monotonic ms clock and is **not** propagated to shaders directly — see "Animation Channels" below.
+- `ChannelSignal` — per-channel packet emitted by `AnimationController`: `{ time, raw, value, state }`. Note: `time` here carries the upstream `Signal.value` (unclamped), **not** the upstream `Signal.time` ms — keeping it as user-controlled drive is what makes `constant 0` actually freeze the channel and `unbounded` mode grow it linearly.
 - `AnimationSignal` — `{ channels: Record<string, ChannelSignal> }`.
 - `EffectMetrics` — per-frame profiler payload from EffectProcessor: `{ effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }`. `PassMetric` carries `{ id, kind, cpuMs, skipped }`.
 
@@ -232,7 +236,16 @@ Each effect is a `PlaygroundConfig` with: `name`, `canvas` size, `fields` (user-
 
 ### Animation Channels (universal pool)
 
-A fixed-size pool of `ANIMATION_CHANNEL_COUNT = 8` generic channels. Effects don't pick names; they pick **indices**. Shaders bind the corresponding `vec4 uChan{i}` uniform with the contract `(time_ms, raw, value, state)` — `.x` for monotonic time, `.y` for raw 0..1 driver, `.z` for the mapped physical value, `.w` for state. Canonical layout (convention only):
+A fixed-size pool of `ANIMATION_CHANNEL_COUNT = 8` generic channels. Effects don't pick names; they pick **indices**. Shaders bind the corresponding `vec4 uChan{i}` uniform; the four components carry the user-controlled drive, its 0..1 form, the controller-mapped value, and the upstream state flag.
+
+| Component | Source | Notes |
+|-----------|--------|-------|
+| `.x` (drive) | upstream `Signal.value` (unclamped) | AutoTimer `unbounded` mode grows linearly forever (good for monotonic phase / scroll); `sine`/`triangle`/`bell`/`gaussian`/`pulse` oscillate 0..1; `constant` is static. To control speed, change `AutoTimer.durationMs`. **NOT** the upstream `Signal.time` ms field — that's intentionally hidden so the user's choice of waveform actually governs what shaders see (otherwise a constant-mode timer would still ramp time forever and animate everything). |
+| `.y` (raw) | `clamp01(Signal.value)` | 0..1 driver after clamping. Useful when the shader needs a bounded mix factor regardless of upstream mode. |
+| `.z` (value) | `lerp(min, max, .y)` | Physical value mapped through the AnimationController's per-slot `min_i`/`max_i` params. Most shaders use this for amplitude-style modulation (radial offset, size, glow multiplier, intensity). |
+| `.w` (state) | upstream `Signal.state` | 0 = idle, 1 = clip in progress. |
+
+Canonical slot layout (convention only, not enforced — any shader can opt into any slot):
 
 | Slot | Role |
 |------|------|
@@ -244,12 +257,14 @@ A fixed-size pool of `ANIMATION_CHANNEL_COUNT = 8` generic channels. Effects don
 | 5    | noise time driver (see `src/pipeline/noise.glsl.ts`) |
 | 6, 7 | free |
 
-The `animationController` runtime warns once per (effect, slot) when a shader references an undeclared `uChan{i}` so manifest/shader drift surfaces in the console.
+The `EffectProcessor` warns once per (effect, slot) when a shader references an undeclared `uChan{i}` so manifest/shader drift surfaces in the console.
+
+**Speed is upstream, period.** Effect manifests no longer expose per-uniform speed knobs (`uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uDropPulseSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. — all removed). Animation rate is fully owned by the chain `AutoTimer (mode + durationMs) → optional Envelope/Combine → AnimationController (min/max)`. To pause an effect: feed it AutoTimer in `constant` mode with value `0`. To slow / speed up: tune `durationMs` on the AutoTimer (smaller = faster `value` growth in `unbounded` mode, faster cycle in `sine`/`triangle`). To rescale amplitude: expand/contract the controller's `min_i`/`max_i` range for that slot.
 
 ### Pass Types
 
 - **Fullscreen**: fragment shader rendered to a fullscreen quad. Optional `requiresInputs`.
-- **Instanced**: vertex + fragment shaders with per-instance geometry from contour data. Optional `scrolling` config (glyph or ribbon mode with speed/spacing fields).
+- **Instanced**: vertex + fragment shaders with per-instance geometry from contour data. Optional `scrolling` config picks `mode` (`glyph` for one-instance-per-glyph, `ribbon` for tilted-quad strip), names the spacing/segment fields it reads, and (via `phaseSlot`, default 0) picks which animation channel's `.value` drives the contour scroll phase in pixels. There is no `speedField` — scroll speed comes from the upstream signal driving the chosen slot.
 
 ### Runtime (EffectProcessor)
 
@@ -259,9 +274,11 @@ Resolves active effect from `config` input, builds `UniformGroup` from fields + 
 
 ping-pong morphing (single wave), god rays (single ray), light beam (single ray), dot orbit, glow drop orbit, neon ring orbit, drop grid orbit, dot grid orbit, text orbit, text grid orbit, marching ants. Multi-ray / multi-wave compositions are now built by **chaining multiple Effect nodes** through the `source` input (with `blend: 'add'`) — one node per ray/wave with its own colour, density, phase offset, etc. The shaders themselves render exactly one instance.
 
+None of these effects expose a speed parameter. The configs only carry geometric / colour / shape uniforms; everything that animates is fed via animation slots and is therefore driven by the user's AutoTimer + AnimationController graph.
+
 ### Noise Standard
 
-Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 (`uChan5.x` for ms) — shaders never invent their own time source.
+Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 — shaders sample `uv + uChan5.x * driftRate * driftDir`. Drift speed is owned upstream by the AutoTimer wired into slot 5 (`unbounded` mode for steady drift, `constant 0` to freeze it); shaders never invent their own time source and never multiply by a per-effect speed uniform.
 
 ### Noise Visualizer (`noiseVisualizer`)
 

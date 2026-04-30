@@ -61,7 +61,14 @@ export class DataflowEngine implements IDataflowEngine {
         this.nodeParams.delete(nodeId)
         this.outputCache.delete(nodeId)
         this.dirtySet.delete(nodeId)
-        this.nodeListeners.delete(nodeId)
+        /* Subscribers are bound to the node *id*, not to a processor instance.
+           applySnapshot() (undo/redo) tears down every node and immediately
+           re-adds the same ids; the React views stay mounted with stable
+           [engine, id] deps so their subscribe-effect never re-fires. If we
+           dropped the listener set here, the re-added processor's outputs
+           would publish into an empty set and previews / metrics / output-
+           reading widgets would freeze on the pre-undo frame. The set is
+           cleaned up by the unsubscribe closure once it goes empty. */
         this.rebuildGraph()
     }
 
@@ -215,7 +222,15 @@ export class DataflowEngine implements IDataflowEngine {
     subscribeNode(nodeId: string, cb: () => void): () => void {
         if (!this.nodeListeners.has(nodeId)) this.nodeListeners.set(nodeId, new Set())
         this.nodeListeners.get(nodeId)!.add(cb)
-        return () => this.nodeListeners.get(nodeId)?.delete(cb)
+        return () => {
+            const set = this.nodeListeners.get(nodeId)
+            if (!set) return
+            set.delete(cb)
+            /* Drop the empty entry so a permanently-removed node doesn't
+               leave a dangling Set behind. Re-add at the same id (undo/redo)
+               recreates the entry on the next subscribe call. */
+            if (set.size === 0) this.nodeListeners.delete(nodeId)
+        }
     }
 
     private notifyNode(nodeId: string): void {

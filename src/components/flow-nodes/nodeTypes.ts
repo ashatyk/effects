@@ -4,11 +4,6 @@ import { PolygonNodeView } from './views/PolygonNodeView'
 import { SdfFromContourNodeView } from './views/SdfFromContourNodeView'
 import { BlurNodeView } from './views/BlurNodeView'
 import { RemapNodeView } from './views/RemapNodeView'
-import { DepthEstimateNodeView } from './views/DepthEstimateNodeView'
-import { DepthBlitNodeView } from './views/DepthBlitNodeView'
-import { MaterialEstimateNodeView } from './views/MaterialEstimateNodeView'
-import { MarigoldDepthNodeView } from './views/MarigoldDepthNodeView'
-import { MarigoldNormalsNodeView } from './views/MarigoldNormalsNodeView'
 import { EffectNodeView } from './views/EffectNodeView'
 import { PreviewNodeView } from './views/PreviewNodeView'
 import { SegmentationNodeView } from './views/SegmentationNodeView'
@@ -34,11 +29,6 @@ export const pipelineNodeTypes = {
     sdfFromContour: SdfFromContourNodeView,
     blur: BlurNodeView,
     remap: RemapNodeView,
-    depthEstimate: DepthEstimateNodeView,
-    depthBlit: DepthBlitNodeView,
-    materialEstimate: MaterialEstimateNodeView,
-    marigoldDepth: MarigoldDepthNodeView,
-    marigoldNormals: MarigoldNormalsNodeView,
     effect: EffectNodeView,
     preview: PreviewNodeView,
     segmentation: SegmentationNodeView,

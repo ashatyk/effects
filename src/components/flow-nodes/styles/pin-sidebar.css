@@ -4,6 +4,14 @@
     background: transparent;
     border-radius: 6px;
     overflow: hidden;
+    /* Lock the card to its natural intrinsic height. Without this the
+       sidebar's flex column applies the default `flex-shrink: 1`, so once
+       the pinned cards' total height exceeds the viewport every card
+       (and the canvases inside that scale by aspect ratio) shrink
+       proportionally — preview images visibly squash, preview→tap→preview
+       stacks lose all internal padding. We want the parent to scroll
+       instead, which is what the auto-overflow on the container does. */
+    flex-shrink: 0;
 }
 
 .pn-sidebar-card .pn {

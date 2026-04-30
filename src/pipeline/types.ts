@@ -17,16 +17,22 @@ export type FieldDef = {
 /**
  * Effect-node input names that a pass may declare as required.
  * If the input is missing in the graph, the pass is either skipped (hard
- * deps: 'sdf', 'contour') or bound with a fallback resource (white texture
- * for textures, `uXEnabled = 0.0` flag for optional textures).
+ * deps: 'source', 'contour', 'txcn{i}') or bound with a fallback resource
+ * (white texture for unconnected `txcn{i}`).
+ *
+ * `txcn0..txcn7` are eight unnamed texture inputs surfaced on the Effect
+ * node. Each effect manifest declares which of those slots it actually
+ * consumes via `PlaygroundConfig.textures.slots`, with a human-readable
+ * label that the Effect node UI shows next to the corresponding handle
+ * (e.g. `txcn0 · SDF`, `txcn1 · Atlas`). Shaders bind the channels they
+ * need by declaring `uniform sampler2D uTxcn{i};` — there is no longer
+ * any typed `sdf` / `atlas` boundary at the node level, so the same
+ * Effect node can host any combination of texture maps.
  */
 export type EffectInputName =
     | 'source'
-    | 'sdf'
-    | 'depth' | 'depth_ref'
-    | 'normals'
-    | 'albedo' | 'roughness' | 'metallic'
-    | 'atlas'
+    | 'txcn0' | 'txcn1' | 'txcn2' | 'txcn3'
+    | 'txcn4' | 'txcn5' | 'txcn6' | 'txcn7'
     | 'coords_tex'
     | 'contour'
 
@@ -68,14 +74,15 @@ export type InstancedPass = {
     scrolling?: {
         mode?: 'glyph' | 'ribbon'
         spacingField?: string
-        speedField: string
         phraseLenField?: string
         repeatsField?: string
         /** ribbon-mode only: arc length of one quad segment (px). */
         segmentSizeField?: string
         /** Animation channel slot whose `value` drives the contour scroll
          *  phase (px). Defaults to slot 0 — the canonical "phase / scroll"
-         *  position in the standard slot layout. */
+         *  position in the standard slot layout. Speed is governed by the
+         *  upstream signal (AutoTimer durationMs / Controller min/max) — the
+         *  manifest no longer exposes a per-effect speed field. */
         phaseSlot?: number
     }
 }
@@ -112,7 +119,12 @@ export const ANIMATION_CHANNEL_COUNT = 8
 
 /**
  * One animation channel declaration. The runtime turns each declared slot
- * into a shader uniform `uChan{slot}` of type `vec4(time_ms, raw, value, state)`.
+ * into a shader uniform `uChan{slot}` of type `vec4(drive, raw, value, state)`,
+ * where `.x` is the upstream `Signal.value` (unclamped — AutoTimer.unbounded
+ * grows linearly, sine/triangle oscillate 0..1, constant is static), `.y` is
+ * the clamped 0..1 form of that drive, `.z` is the controller-mapped value
+ * (`lerp(min, max, raw)`), and `.w` is the upstream state flag.
+ *
  * Indices 0..ANIMATION_CHANNEL_COUNT-1 not present in the array still bind
  * `uChan{i}` with idle defaults so a shader can opt into any slot regardless
  * of whether the manifest mentions it.
@@ -129,11 +141,35 @@ export type SlotDef = {
 }
 
 /**
+ * Pool of generic texture channels the Effect node exposes
+ * (`txcn0..txcn{TEXTURE_CHANNEL_COUNT-1}`). Effects declare which indices
+ * they consume via `PlaygroundConfig.textures.slots`; shaders bind them
+ * by declaring `uniform sampler2D uTxcn{i};`. Slots that the manifest
+ * doesn't declare still exist on the Effect node — the user can wire any
+ * texture into them and the shader can opt into any pool index.
+ */
+export const TEXTURE_CHANNEL_COUNT = 8
+
+/**
+ * One generic texture-channel declaration. Feeds the Effect node UI:
+ * connected handles get a `txcn{i} · {label}` caption so the user knows
+ * what the active effect expects in each slot.
+ */
+export type TextureSlotDef = {
+    /** Channel index in the txcn pool (0..TEXTURE_CHANNEL_COUNT-1). */
+    slot: number
+    /** UI label shown next to the Effect node input handle for this slot
+     *  (e.g. 'SDF (signed distance)', 'Atlas'). */
+    label: string
+}
+
+/**
  * Declarative effect manifest. Describes:
  *   - what the effect node consumes (implicit through pass.requiresInputs);
  *   - parameters exposed to the user (`fields` + `staticUniforms`);
  *   - how to render it (`passes[]`, executed in order into a single output RT);
- *   - which animation channel slots it consumes (`animation.slots`).
+ *   - which animation channel slots it consumes (`animation.slots`);
+ *   - which generic texture channels it consumes (`textures.slots`).
  *
  * The manifest is intentionally renderer-agnostic: it doesn't reference Pixi
  * types directly. The same JSON can be loaded by a Metal/Vulkan runtime that
@@ -147,6 +183,11 @@ export type PlaygroundConfig = {
     passes: EffectPass[]
     animation: {
         slots: SlotDef[]
+    }
+    /** Optional — when omitted the Effect node still shows 8 anonymous
+     *  txcn handles, but with no captions to guide wiring. */
+    textures?: {
+        slots: TextureSlotDef[]
     }
 }
 

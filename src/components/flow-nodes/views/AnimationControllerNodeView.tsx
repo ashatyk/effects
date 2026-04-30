@@ -180,11 +180,30 @@ export const AnimationControllerNodeView = memo(function AnimationControllerNode
     const set = useSetParam(id)
     const slotByIndex = useUpstreamSlots(id)
 
+    /* Override the static `chN` input labels with the slot.label exposed
+       by the upstream config when present. Wiring is much easier when
+       `ch4` reads as "intensity multiplier" right next to the port —
+       you don't have to scroll down to the params grid to confirm what
+       each channel maps to. Falls back to `chN` when no config is
+       connected or when the active effect declares fewer slots.
+       (The handle `name` is `signal_{N}` — see `buildControllerDef()` —
+       so we match against that rather than the default `ch{N}` label.) */
+    const labelledInputs = useMemo(() => {
+        return animationControllerDef.inputs.map(h => {
+            const m = /^signal_(\d+)$/.exec(h.name)
+            if (!m) return h
+            const idx = parseInt(m[1], 10)
+            const slot = slotByIndex.get(idx)
+            if (!slot) return h
+            return { ...h, label: `ch${idx} · ${slot.label}` }
+        })
+    }, [slotByIndex])
+
     return (
         <BaseNodeShell
             title="Animation Controller"
             category={animationControllerDef.category}
-            inputs={animationControllerDef.inputs}
+            inputs={labelledInputs}
             outputs={animationControllerDef.outputs}
             minWidth={240}
         >

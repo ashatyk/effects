@@ -11,26 +11,12 @@ export const config: PlaygroundConfig = {
     canvas: { width: 900, height: 1200 },
     passes: [
         copySourcePass,
-        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['sdf'] },
+        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['txcn0'] },
     ],
     staticUniforms: {
         uEdgeFeatherPx: { type: 'f32', value: 0 },
     },
     fields: [
-        {
-            name: 'uDepthSoftness',
-            label: 'Depth softness',
-            kind: 'f32',
-            default: 0.1,
-            slider: { min: 0.01, max: 0.5, step: 0.01 },
-        },
-        {
-            name: 'uEaseCubic',
-            label: 'Bezier (x1,y1,x2,y2)',
-            kind: 'vec4<f32>',
-            default: [0.42, 0.00, 0.58, 1.00],
-            slider: { min: 0, max: 1, step: 0.01 },
-        },
         {
             name: 'uColor',
             label: 'Color',
@@ -52,13 +38,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 2,
             slider: { min: 0, max: 10, step: 1 },
-        },
-        {
-            name: 'uRaySpeed',
-            label: 'Ray spin speed',
-            kind: 'f32',
-            default: 1.0,
-            slider: { min: 0, max: 1, step: 0.01 },
         },
         {
             name: 'uRayFalloff',
@@ -87,6 +66,11 @@ export const config: PlaygroundConfig = {
             { slot: 0, label: 'Progress',             defaultMin: 0, defaultMax: 1 },
             { slot: 1, label: 'Phase (rad)',          defaultMin: 0, defaultMax: 6.2831853 },
             { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        ],
+    },
+    textures: {
+        slots: [
+            { slot: 0, label: 'SDF (signed distance)' },
         ],
     },
 }

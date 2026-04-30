@@ -1,23 +1,69 @@
 import dotVertex from './dot.vert'
 import dotFragment from './dot.frag'
-import type { PlaygroundConfig } from '../../pipeline/types'
+import dotGlowFragment from './dot.glow.frag'
+import type { PlaygroundConfig, InstancedGeometryDef } from '../../pipeline/types'
 import { copySourcePass } from '../../pipeline/passes/copy-source'
 
 /**
  * DotOrbit — instanced "string of beads" effect.
  *
  * One quad per dot, glyph-mode scrolling on the resampled contour: the
- * vertex shader varies each dots radius with sin(arc) ⊕ noise(arc, time);
- * the fragment shader paints an anti-aliased disk + outer glow with an
- * along-contour A↔B gradient.
+ * vertex shader varies each dots radius with sin(arc) ⊕ noise(arc, time).
+ *
+ * Rendering is split into two instanced passes that share the same
+ * vertex shader:
+ *   1. `dots-glow`  (additive blend) — paints only the outer corona of
+ *      every dot; halos accumulate into a soft cloud and never occlude
+ *      anything painted on top.
+ *   2. `dots-core`  (normal blend)   — paints only the anti-aliased solid
+ *      disks. They sit on top of the merged halo cloud, so a trailing
+ *      dot's glow can never cover a leading dot's body — the original
+ *      single-pass shader stacked them in instance order, which produced
+ *      the "pink fringe over red head" look the user reported.
  */
+
+const dotGeometry: InstancedGeometryDef = {
+    /* Centred unit quad in [-1, 1]^2 — the vertex shader scales it by
+       the per-instance radius. */
+    perVertex: {
+        aLocal: [
+            [-1.0, -1.0],
+            [ 1.0, -1.0],
+            [ 1.0,  1.0],
+            [-1.0,  1.0],
+        ],
+    },
+    indexBuffer: [0, 1, 2, 0, 2, 3],
+    perInstance: {
+        source: 'inputs.contour',
+        map: [
+            { name: 'aPosition', from: 'positions' },
+            { name: 'aTangent',  from: 'tangents'  },
+            { name: 'aArcS',     from: 'arcS'      },
+        ],
+    },
+}
+
 export const config: PlaygroundConfig = {
     name: 'DotOrbit',
     canvas: { width: 900, height: 1200 },
     passes: [
         copySourcePass,
         {
-            id: 'dots',
+            id: 'dots-glow',
+            kind: 'instanced',
+            blend: 'add',
+            vertex: dotVertex,
+            fragment: dotGlowFragment,
+            requiresInputs: ['contour'],
+            scrolling: {
+                mode: 'glyph',
+                spacingField: 'uDotSpacing',
+            },
+            geometry: dotGeometry,
+        },
+        {
+            id: 'dots-core',
             kind: 'instanced',
             blend: 'normal',
             vertex: dotVertex,
@@ -26,29 +72,8 @@ export const config: PlaygroundConfig = {
             scrolling: {
                 mode: 'glyph',
                 spacingField: 'uDotSpacing',
-                speedField: 'uSlideSpeed',
             },
-            geometry: {
-                /* Centred unit quad in [-1, 1]^2 — the vertex shader scales
-                   it by the per-instance radius. */
-                perVertex: {
-                    aLocal: [
-                        [-1.0, -1.0],
-                        [ 1.0, -1.0],
-                        [ 1.0,  1.0],
-                        [-1.0,  1.0],
-                    ],
-                },
-                indexBuffer: [0, 1, 2, 0, 2, 3],
-                perInstance: {
-                    source: 'inputs.contour',
-                    map: [
-                        { name: 'aPosition', from: 'positions' },
-                        { name: 'aTangent',  from: 'tangents'  },
-                        { name: 'aArcS',     from: 'arcS'      },
-                    ],
-                },
-            },
+            geometry: dotGeometry,
         },
     ],
     fields: [
@@ -81,13 +106,6 @@ export const config: PlaygroundConfig = {
             slider: { min: 0.0, max: 10.0, step: 0.05 },
         },
         {
-            name: 'uWaveSpeed',
-            label: 'Wave speed (rad/sec)',
-            kind: 'f32',
-            default: 1.4,
-            slider: { min: -8.0, max: 8.0, step: 0.05 },
-        },
-        {
             name: 'uNoiseAmount',
             label: 'Noise amount (0..1)',
             kind: 'f32',
@@ -100,13 +118,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 0.7,
             slider: { min: 0.05, max: 6.0, step: 0.05 },
-        },
-        {
-            name: 'uSlideSpeed',
-            label: 'Slide speed (px/sec)',
-            kind: 'f32',
-            default: 0,
-            slider: { min: -300, max: 300, step: 1 },
         },
         {
             name: 'uEdgeSoftness',

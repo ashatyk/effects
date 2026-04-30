@@ -20,16 +20,11 @@ export default `
     uniform vec4 uChan2;
     uniform vec4 uChan4;
 
-    uniform sampler2D verticalDistanceTexture;
-    uniform sampler2D depthTexture;
-    uniform sampler2D depthRefTexture;
-
-    uniform float uDepthEnabled;
-    uniform float uDepthSoftness;
+    /* SDF wired through generic texture channel 0. */
+    uniform sampler2D uTxcn0;
 
     uniform float uOrbitCenter;
     uniform float uOrbitAmplitude;
-    uniform float uOrbitSpeed;
     uniform float uOrbitWidth;
     uniform float uStepInterval;
 
@@ -52,7 +47,7 @@ export default `
     }
 
     float signedDistancePx(vec2 uv) {
-        vec4 t = texture(verticalDistanceTexture, uv);
+        vec4 t = texture(uTxcn0, uv);
         float d = unpackFloat24(t.xyz, 1200.0);
         return (t.w > 0.5) ? -d : d;
     }
@@ -66,7 +61,7 @@ ${NOISE_GLSL}
         float interval = max(0.03, uStepInterval);
         float tSec = uChan0.x * 0.001;
         float step = floor(tSec / interval);
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan1.z;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -97,14 +92,7 @@ ${NOISE_GLSL}
         float dotMask = 1.0 - smoothstep(radius - uEdgeSoftness, radius + uEdgeSoftness, d);
         if (dotMask < 0.001) { discard; }
 
-        float depthMask = 1.0;
-        if (uDepthEnabled > 0.5) {
-            float depthHere = texture(depthTexture, vUV).r;
-            float depthRef  = texture(depthRefTexture, vUV).r;
-            depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
-        }
-
-        float alpha = dotMask * uDotColor.a * depthMask * uChan4.z;
+        float alpha = dotMask * uDotColor.a * uChan4.z;
         if (alpha < 0.001) { discard; }
 
         fragColor = vec4(uDotColor.rgb * alpha, alpha);

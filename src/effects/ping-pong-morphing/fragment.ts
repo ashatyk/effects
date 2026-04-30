@@ -10,23 +10,20 @@ export default `
 
     uniform vec2  uResolution;
 
-    /* Animation channels — vec4(time_ms, raw, value, state).
-       Slot 0: morph progress (0..1).
-       Slot 1: wave phase — uChan1.x is monotonic ms.
+    /* Animation channels — vec4(drive, raw, value, state).
+       Slot 0: appearance progress (0..1) — controls overall amplitude.
+       Slot 1: ping-pong drive (0..1) — wire AutoTimer in 'triangle' or
+               'bell' mode so the value oscillates 0..1..0 over the period.
        Slot 4: intensity multiplier on final colour & alpha.
-       Slot 5: noise time — uChan5.x drives fbm drift independently of wave. */
+       Slot 5: noise time — uChan5.x drives fbm drift (unbounded value). */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan4;
     uniform vec4 uChan5;
 
-    //sdfTexture
-    uniform sampler2D verticalDistanceTexture;   // RGB packed [0..1], A insideFlag
-    uniform sampler2D depthTexture;
-    uniform sampler2D depthRefTexture;
-
-    uniform float uDepthSoftness;
-    uniform float uDepthEnabled;
+    /* SDF wired through generic texture channel 0 (RGB packed [0..1],
+       A insideFlag — see SdfFromContour processor). */
+    uniform sampler2D uTxcn0;
 
     // Полигон
     uniform vec4 uPointAABB;
@@ -37,16 +34,11 @@ export default `
     uniform float uWaveBasePx;
     uniform float uWaveAmpPx;
     uniform float uWaveWidthPx;
-    uniform float uWaveSpeed;
-    uniform float uAnimationSpeed;
     uniform vec3 uColor;
     uniform float uOpacity;
 
     uniform float uNoiseScalePx;
     uniform float uNoiseAmpPx;
-    uniform float uNoiseSpeed;
-
-    uniform vec4  uEaseCubic;
 
     // --- Зубчатый профиль волны по углу вокруг центра ---
     // 0=tri-wrap, 1=saw, 2=square
@@ -66,25 +58,6 @@ ${NOISE_GLSL}
     /* Bipolar fbm in [-1, 1] used by the wave displacement. */
     float jaggedNoise(vec2 p){
         return 2.0 * fbm2D(p) - 1.0;
-    }
-
-    float bez3(float t, float p0, float p1, float p2, float p3){
-        float u=1.0-t; return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3;
-    }
-    float dBez3(float t, float p0, float p1, float p2, float p3){
-        float u=1.0-t;
-        return 3.0*u*u*(p1-p0) + 6.0*u*t*(p2-p1) + 3.0*t*t*(p3-p2);
-    }
-    float cubicBezierEase(float x, vec2 p1, vec2 p2){
-        float t = x;
-        for(int i=0;i<5;i++){
-            float x_t = bez3(t,0.0,p1.x,p2.x,1.0);
-            float dx  = dBez3(t,0.0,p1.x,p2.x,1.0);
-            float diff = x_t - x;
-            if(abs(diff) < 1e-5) break;
-            t = clamp(t - diff / max(dx,1e-5), 0.0, 1.0);
-        }
-        return bez3(t,0.0,p1.y,p2.y,1.0);
     }
 
     // --- Угловой зубчатый профиль ---
@@ -162,7 +135,7 @@ ${NOISE_GLSL}
 
         float halfW = max(uWaveWidthPx, 0.0) * 0.5;
 
-        vec4 sdfTexture = texture(verticalDistanceTexture, vUV);
+        vec4 sdfTexture = texture(uTxcn0, vUV);
         vec2 di = vec2(unpackFloat24(sdfTexture.xyz, 1200.0), sdfTexture.w);
         float d = di.x;
 
@@ -170,25 +143,22 @@ ${NOISE_GLSL}
             discard;
         }
 
-        /* Wave timing comes from uChan1; appearance ramp from uChan0;
-           noise drift from uChan5 — fully decoupled time sources so each
-           can be wired to its own animation graph. */
-        float tWaveSec  = uChan1.x * 0.001;
-        float tNoiseSec = uChan5.x * 0.001;
-        float sApear    = uChan0.z;
+        /* Appearance, wave and noise drives all come from upstream
+           animation graph — the shader does no internal interpolation
+           or fract-based phase generation any more.
 
-        vec2 c1 = uEaseCubic.xy, c2 = uEaseCubic.zw;
-        float apearInter = cubicBezierEase(sApear * 2.0, c1, c2);
+             apear      = uChan0.z   ramped via Envelope / AutoTimer easing.
+             halfBipolar = uChan1.x oscillates 0..1..0 (triangle/bell mode);
+                           remap to -1..1 so the wave swings symmetrically.
+             noiseDrive = uChan5.x — unbounded value, used as continuous
+                           drift coordinate. */
+        float apearInter = uChan0.z;
+        float halfBipolar = 2.0 * uChan1.x - 1.0;
 
-        float s = fract(tWaveSec * max(uWaveSpeed, 0.0));
-
-        float halfInter = (s < 0.5) ? cubicBezierEase(s * 2.0, c1, c2)
-                                    : cubicBezierEase(2.0 - s * 2.0, c1, c2);
-
-        float centerOffset1 = (uWaveBasePx * apearInter + uWaveAmpPx * (2.0 * halfInter - 1.0));
+        float centerOffset1 = uWaveBasePx * apearInter + uWaveAmpPx * halfBipolar;
 
         float sc = max(uNoiseScalePx, 1e-3);
-        vec2 drift  = uNoiseSpeed * tNoiseSec * vec2(0.73, -0.51);
+        vec2 drift  = uChan5.x * vec2(0.73, -0.51);
         vec2 centerN = 0.5 * (uPointAABB.xy + uPointAABB.zw);
 
         float dTooth = toothOffsetPx(q, centerPx, apearInter);
@@ -207,13 +177,6 @@ ${NOISE_GLSL}
         vec3 Cp = C1 + (1.0 - A1) * C2;
         float A = A1 + (1.0 - A1) * A2;
 
-        float depthMask = 1.0;
-        if (uDepthEnabled > 0.5) {
-            float depthHere = texture(depthTexture, vUV).r;
-            float depthRef  = texture(depthRefTexture, vUV).r;
-            depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
-        }
-
-        fragColor = vec4(Cp * edgeMask * depthMask * uChan4.z, A * edgeMask * depthMask * uChan4.z);
+        fragColor = vec4(Cp * edgeMask * uChan4.z, A * edgeMask * uChan4.z);
     }
 `

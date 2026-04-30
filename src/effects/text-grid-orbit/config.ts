@@ -7,7 +7,7 @@ export const config: PlaygroundConfig = {
     canvas: { width: 900, height: 1200 },
     passes: [
         copySourcePass,
-        { id: 'main', kind: 'fullscreen', blend: 'add', fragment, requiresInputs: ['sdf', 'atlas'] },
+        { id: 'main', kind: 'fullscreen', blend: 'add', fragment, requiresInputs: ['txcn0', 'txcn1'] },
     ],
     fields: [
         {
@@ -23,13 +23,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 60,
             slider: { min: 0, max: 300, step: 1 },
-        },
-        {
-            name: 'uOrbitSpeed',
-            label: 'Orbit speed',
-            kind: 'f32',
-            default: 0.8,
-            slider: { min: 0.1, max: 5.0, step: 0.1 },
         },
         {
             name: 'uOrbitWidth',
@@ -124,13 +117,6 @@ export const config: PlaygroundConfig = {
             default: 0.005,
             slider: { min: 0.0, max: 0.05, step: 0.001 },
         },
-        {
-            name: 'uDepthSoftness',
-            label: 'Depth softness',
-            kind: 'f32',
-            default: 0.1,
-            slider: { min: 0.01, max: 0.5, step: 0.01 },
-        },
     ],
     animation: {
         slots: [
@@ -138,6 +124,12 @@ export const config: PlaygroundConfig = {
             { slot: 1, label: 'Radial offset (px)',   defaultMin: 0, defaultMax: 60 },
             { slot: 3, label: 'Glow multiplier',      defaultMin: 1, defaultMax: 2 },
             { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        ],
+    },
+    textures: {
+        slots: [
+            { slot: 0, label: 'SDF (signed distance)' },
+            { slot: 1, label: 'Glyph atlas (SDF)' },
         ],
     },
 }

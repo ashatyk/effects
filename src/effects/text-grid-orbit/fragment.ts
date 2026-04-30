@@ -19,17 +19,14 @@ export default `
     uniform vec4 uChan3;
     uniform vec4 uChan4;
 
-    uniform sampler2D verticalDistanceTexture;
-    uniform sampler2D depthTexture;
-    uniform sampler2D depthRefTexture;
-    uniform sampler2D uAtlas;
-
-    uniform float uDepthEnabled;
-    uniform float uDepthSoftness;
+    /* SDF wired through generic texture channel 0; SDF text atlas
+       through channel 1. Manifest declares both slots so the Effect
+       node UI captions the txcn0 / txcn1 handles for the user. */
+    uniform sampler2D uTxcn0;
+    uniform sampler2D uTxcn1;
 
     uniform float uOrbitCenter;
     uniform float uOrbitAmplitude;
-    uniform float uOrbitSpeed;
     uniform float uOrbitWidth;
     uniform float uStepInterval;
 
@@ -54,7 +51,7 @@ export default `
     }
 
     float signedDistancePx(vec2 uv) {
-        vec4 t = texture(verticalDistanceTexture, uv);
+        vec4 t = texture(uTxcn0, uv);
         float d = unpackFloat24(t.xyz, 1200.0);
         return (t.w > 0.5) ? -d : d;
     }
@@ -68,7 +65,7 @@ ${NOISE_GLSL}
         float interval = max(0.03, uStepInterval);
         float tSec = uChan0.x * 0.001;
         float step = floor(tSec / interval);
-        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step * uOrbitSpeed) + uChan1.z;
+        float orbit = uOrbitCenter + uOrbitAmplitude * sin(step) + uChan1.z;
 
         float cellSizePx = max(4.0, uGridSize);
         vec2 cellSizeUV = vec2(cellSizePx / uResolution.x, cellSizePx / uResolution.y);
@@ -110,7 +107,7 @@ ${NOISE_GLSL}
         vec2 atlasUV = (vec2(col, row) + clampedUV) / 4.0;
 
         // SDF sampling: R channel contains the distance (0.5 = edge, spread = 24 atlas px)
-        float sd = texture(uAtlas, atlasUV).r;
+        float sd = texture(uTxcn1, atlasUV).r;
         float atlasPerScreen = 128.0 / max(cellSizePx * glyphFill, 1.0);
         float edgeWidth = atlasPerScreen / 48.0;
         float glyphMask = smoothstep(0.5 - edgeWidth, 0.5 + edgeWidth, sd);
@@ -124,20 +121,13 @@ ${NOISE_GLSL}
         float combined = max(glyphMask, glowMask);
         if (combined < 0.001) { discard; }
 
-        float depthMask = 1.0;
-        if (uDepthEnabled > 0.5) {
-            float depthHere = texture(depthTexture, vUV).r;
-            float depthRef  = texture(depthRefTexture, vUV).r;
-            depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
-        }
-
         vec3 coreColor = uDotColor.rgb * glyphMask;
         vec3 glowColor = uGlowColor.rgb * glowMask;
         vec3 color = coreColor + glowColor;
 
-        float alpha = combined * uDotColor.a * depthMask * uChan4.z;
+        float alpha = combined * uDotColor.a * uChan4.z;
         if (alpha < 0.001) { discard; }
 
-        fragColor = vec4(color * depthMask * uChan4.z, alpha);
+        fragColor = vec4(color * uChan4.z, alpha);
     }
 `

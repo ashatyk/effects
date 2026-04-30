@@ -146,14 +146,6 @@ export class SceneStore {
         return await db.snapshots.get(this.cursor) ?? null
     }
 
-    get canUndo(): boolean { return this.cursor > 0 && this.count > 1 }
-
-    get canRedo(): boolean {
-        return this.cursor > 0 && this.cursor < (this.count > 0 ? Infinity : 0)
-    }
-
-    get snapshotCount(): number { return this.count }
-
     /* ── Blob storage (images, textures) ── */
 
     async putBlob(key: string, blob: Blob, meta?: { width?: number; height?: number }): Promise<void> {
@@ -177,12 +169,6 @@ export class SceneStore {
         return db.blobs.get(key)
     }
 
-    async getBlobUrl(key: string): Promise<string | null> {
-        const entry = await db.blobs.get(key)
-        if (!entry) return null
-        return URL.createObjectURL(entry.blob)
-    }
-
     async getDataUrl(key: string): Promise<string | null> {
         const entry = await db.blobs.get(key)
         if (!entry) return null
@@ -194,25 +180,11 @@ export class SceneStore {
         })
     }
 
-    async deleteBlob(key: string): Promise<void> {
-        await db.blobs.delete(key)
-    }
-
-    async hasBlob(key: string): Promise<boolean> {
-        return (await db.blobs.get(key)) !== undefined
-    }
-
     /* ── Housekeeping ── */
 
     async clearAll(): Promise<void> {
         await db.snapshots.clear()
         await db.blobs.clear()
-        this.cursor = -1
-        this.count = 0
-    }
-
-    async clearSnapshots(): Promise<void> {
-        await db.snapshots.clear()
         this.cursor = -1
         this.count = 0
     }

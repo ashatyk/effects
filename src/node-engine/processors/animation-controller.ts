@@ -90,8 +90,17 @@ export class AnimationControllerProcessor extends BaseProcessor {
 
             const raw = sig ? clamp01(sig.value) : 0
             const value = lerp(minV, maxV, raw)
+            /* `.time` carries the upstream signal *value* (unclamped) rather
+               than the upstream `Signal.time` field. `Signal.time` from
+               AutoTimer keeps growing in every mode (even `constant`), so a
+               shader reading `uChan{i}.x` would animate regardless of the
+               user's chosen waveform. The signal's *value* is what the user
+               actually controls (constant → static, sine → oscillates,
+               unbounded → grows linearly); shaders that need monotonic phase
+               drive AutoTimer in `unbounded` mode and tune `durationMs` to
+               control speed. */
             const channelSignal: ChannelSignal = {
-                time: sig?.time ?? 0,
+                time: sig?.value ?? 0,
                 raw,
                 value,
                 state: (sig?.state ?? 0) as 0 | 1,

@@ -15,18 +15,23 @@ uniform vec4  uColorA;
 uniform vec4  uColorB;
 uniform float uGradientFrequency;
 uniform float uHeightTint;
-
-uniform vec4  uGlowColor;
-uniform float uGlowSize;
-uniform float uGlowIntensity;
 uniform float uEdgeSoftness;
 
 /* Animation channels — vec4(time_ms, raw, value, state).
-   Slot 3: glow — multiplier on glow intensity.
    Slot 4: intensity — alpha multiplier. */
-uniform vec4 uChan3;
 uniform vec4 uChan4;
 
+/**
+ * Core-only pass for DotOrbit. Renders the anti-aliased solid disk and
+ * nothing else — the corona is painted in a sibling additive 'glow' pass
+ * underneath. Splitting the two pieces into separate passes (glow under
+ * normal-blend cores) keeps each tail dot's halo from leaking across the
+ * head dot it overlaps.
+ *
+ * The companion runtime sorts instances by predicted wave height before
+ * uploading the buffer, so larger dots (head) draw last and fully occlude
+ * smaller adjacent dots (tail) when their disks overlap.
+ */
 void main() {
     float r = length(vLocal);
 
@@ -35,13 +40,7 @@ void main() {
        units (1 unit of vLocal == vRadius pixels on screen). */
     float aaWidth = max(uEdgeSoftness, 0.001) / max(vRadius, 1.0);
     float disk = 1.0 - smoothstep(1.0 - aaWidth, 1.0, r);
-
-    /* Outer halo: soft falloff in the corona r in [1, glowSize]. Quadratic
-       for a softer look than linear; clipped inside the disk via step(). */
-    float gw = max(uGlowSize, 1.0);
-    float corona = step(1.0, r) * (1.0 - smoothstep(1.0, gw, r));
-    corona *= corona;
-    float glow = corona * uGlowIntensity * uChan3.z;
+    if (disk < 1e-3) discard;
 
     /* Gradient along contour. uGradientFrequency 0 = single A->B sweep,
        otherwise that many A<->B cycles. We bias by current height so taller
@@ -55,11 +54,8 @@ void main() {
     vec3  baseCol = mix(uColorA.rgb, uColorB.rgb, gradT);
     float baseA   = mix(uColorA.a,   uColorB.a,   gradT);
 
-    vec3  rgb = baseCol * disk + uGlowColor.rgb * glow;
-    float a   = (baseA * disk + uGlowColor.a * glow) * uChan4.z;
-
+    float a = baseA * disk * uChan4.z;
     if (a < 1e-3) discard;
-
-    fragColor = vec4(rgb * a, a);
+    fragColor = vec4(baseCol * a, a);
 }
 `

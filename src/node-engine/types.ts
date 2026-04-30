@@ -5,7 +5,6 @@ export const SLOT = {
     POLYGON: 'POLYGON',
     NUMBER: 'NUMBER',
     VEC: 'VEC',
-    DEPTH_RAW: 'DEPTH_RAW',
     CONFIG: 'CONFIG',
     CONTOUR: 'CONTOUR',
     /** Discrete event source (tap, programmatic fire). Carries a monotonically
@@ -58,11 +57,17 @@ export interface Signal {
 
 /** Per-channel value packed into AnimationSignal. */
 export interface ChannelSignal {
-    /** Time in ms since this channel's clip started. */
+    /** Upstream `Signal.value` (unclamped). Bound to `uChan{i}.x` in shaders.
+     *  Note: this is intentionally the user-controlled drive (waveform output),
+     *  NOT the upstream `Signal.time` ms — keeping it as drive is what makes
+     *  AutoTimer `constant 0` actually freeze the channel and `unbounded` mode
+     *  grow it linearly forever. Speed is therefore controlled upstream by
+     *  `AutoTimer.durationMs`. */
     time: number
-    /** Raw upstream signal value (0..1) — useful for shader-side compounding. */
+    /** Raw upstream signal value clamped to 0..1. Bound to `uChan{i}.y`. */
     raw: number
-    /** mix(min, max, raw) — physical value ready to plug into the shader. */
+    /** `lerp(min, max, raw)` — physical value ready to plug into the shader.
+     *  Bound to `uChan{i}.z`. */
     value: number
     state: 0 | 1
 }
@@ -103,12 +108,6 @@ export interface EffectMetrics {
     timestampMs: number
 }
 
-export interface DepthRawData {
-    data: Uint8Array
-    width: number
-    height: number
-}
-
 /**
  * Platform-agnostic resampled, smoothed, arc-length parameterized contour.
  * SoA layout so the buffers can be uploaded to GPU as per-instance attributes
@@ -140,10 +139,10 @@ export interface ProcessorDef {
      * with the "Add Node" menu groups so a node's tint matches the section
      * it was picked from.
      *
-     * Legacy values ('source', 'process', 'marigold', 'dnf') are retained
-     * for backward compatibility with persisted scenes saved before the
-     * re-categorisation; they are mapped to current colours in
-     * `categoryColors.ts`.
+     * Legacy values ('depth', 'ai', 'source', 'process', 'marigold', 'dnf')
+     * are retained for backward compatibility with persisted scenes saved
+     * before the depth/marigold/material processors were removed; they
+     * are mapped to fallback colours in `categoryColors.ts`.
      */
     category:
         | 'input'
@@ -152,11 +151,10 @@ export interface ProcessorDef {
         | 'animCtrl'
         | 'imageOp'
         | 'contour'
-        | 'depth'
-        | 'ai'
         | 'output'
         | 'util'
         // legacy
+        | 'depth' | 'ai'
         | 'source' | 'process' | 'marigold' | 'dnf'
     inputs: HandleDef[]
     outputs: HandleDef[]

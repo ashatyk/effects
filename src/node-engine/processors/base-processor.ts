@@ -24,12 +24,6 @@ export abstract class BaseProcessor {
         return fallback ?? 0
     }
 
-    protected valVec(inputs: Record<string, any>, params: Record<string, any>, key: string): number[] | null {
-        if (inputs[key] != null) return inputs[key] as number[]
-        if (params[key] != null) return params[key] as number[]
-        return null
-    }
-
     /**
      * Resolve rendering resolution.
      * Priority order (most specific first):

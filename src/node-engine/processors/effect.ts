@@ -9,24 +9,36 @@ import { buildUniformEntries, applyCoordsUniforms } from '../../pipeline/uniform
 import { DEFAULT_VERTEX } from '../../pipeline/default-vertex'
 import {
     ANIMATION_CHANNEL_COUNT,
-    type EffectInputName, type EffectPass, type FullscreenPass, type InstancedPass, type PlaygroundConfig,
+    TEXTURE_CHANNEL_COUNT,
+    type EffectPass, type FullscreenPass, type InstancedPass, type PlaygroundConfig,
 } from '../../pipeline/types'
 import { buildInstancedMesh, resampleContourRibbon, resampleContourScrolling, streamsFromContour } from '../render/instanced-mesh'
 
+/* Effect node inputs:
+     • `source`     — the bitmap the effect modulates (uDiffuse).
+     • `txcn0..7`   — eight generic texture channels. Each effect manifest
+                      declares which of those slots it reads via
+                      `PlaygroundConfig.textures.slots`, with a label that
+                      the node UI surfaces next to the handle (similar to
+                      how AnimationController shows animation slot names).
+                      Shaders bind the channels they consume by declaring
+                      `uniform sampler2D uTxcn{i};`. Unconnected slots
+                      fall back to a 1×1 white texture so the sampler is
+                      always safe to read.
+     • `contour`    — resampled SoA polyline used by instanced passes.
+     • `animation`  — multi-channel signal driving uChan{i} uniforms.
+     • `config`     — picks the active manifest from the Config node. */
 export const effectDef: ProcessorDef = {
     type: 'effect',
     title: 'Effect',
     category: 'output',
     inputs: [
         { name: 'source', type: SLOT.TEXTURE, label: 'source' },
-        { name: 'sdf', type: SLOT.TEXTURE },
-        { name: 'depth', type: SLOT.TEXTURE },
-        { name: 'depth_ref', type: SLOT.TEXTURE },
-        { name: 'normals', type: SLOT.TEXTURE, label: 'normals' },
-        { name: 'albedo', type: SLOT.TEXTURE, label: 'albedo' },
-        { name: 'roughness', type: SLOT.TEXTURE, label: 'roughness' },
-        { name: 'metallic', type: SLOT.TEXTURE, label: 'metallic' },
-        { name: 'atlas', type: SLOT.TEXTURE, label: 'atlas' },
+        ...Array.from({ length: TEXTURE_CHANNEL_COUNT }, (_, i) => ({
+            name: `txcn${i}`,
+            type: SLOT.TEXTURE,
+            label: `txcn${i}`,
+        })),
         { name: 'contour', type: SLOT.CONTOUR, label: 'contour' },
         { name: 'animation', type: SLOT.ANIMATION, label: 'animation' },
         { name: 'config', type: SLOT.CONFIG },
@@ -46,9 +58,6 @@ interface ResourceContext {
     width: number
     height: number
     fallback: any
-    hasDepth: boolean
-    hasNormals: boolean
-    hasMaterials: boolean
 }
 
 export class EffectProcessor extends BaseProcessor {
@@ -75,9 +84,6 @@ export class EffectProcessor extends BaseProcessor {
             width: w,
             height: h,
             fallback: Texture.WHITE.source,
-            hasDepth: !!(inputs.depth && inputs.depth_ref),
-            hasNormals: !!inputs.normals,
-            hasMaterials: !!(inputs.albedo && inputs.roughness && inputs.metallic),
         }
 
         const uniforms = this.makeUniformGroup(config, configData, ctx)
@@ -276,17 +282,39 @@ export class EffectProcessor extends BaseProcessor {
             }
         }
 
-        entries.uDepthEnabled = { value: ctx.hasDepth ? 1.0 : 0.0, type: 'f32' }
-        entries.uNormalsEnabled = { value: ctx.hasNormals ? 1.0 : 0.0, type: 'f32' }
-        entries.uMaterialsEnabled = { value: ctx.hasMaterials ? 1.0 : 0.0, type: 'f32' }
+        /* uTxcn{i}Enabled flags expose presence of each generic texture
+           channel to the shader (1.0 if connected, 0.0 otherwise). Shaders
+           that only read a sampler when a flag is on can avoid sampling
+           the white fallback. uTxcn{i}Aspect carries width/height of the
+           connected texture (1.0 if absent) — used by glyph-style shaders
+           that previously read a fixed `uTextAspect` from the atlas slot. */
+        for (let i = 0; i < TEXTURE_CHANNEL_COUNT; i++) {
+            const tex = ctx.inputs[`txcn${i}`] as { width?: number; height?: number } | null | undefined
+            entries[`uTxcn${i}Enabled`] = {
+                value: tex ? 1.0 : 0.0,
+                type: 'f32',
+            }
+            const w = tex?.width
+            const h = tex?.height
+            entries[`uTxcn${i}Aspect`] = {
+                value: (w && h && h > 0) ? w / h : 1.0,
+                type: 'f32',
+            }
+        }
 
         /* Animation channels: the entire pool (size = ANIMATION_CHANNEL_COUNT)
-           is bound as `uChan{i}` uniforms of type `vec4(time_ms, raw, value, state)`.
+           is bound as `uChan{i}` uniforms of type `vec4(drive, raw, value, state)`.
            Every shader can opt into any slot regardless of whether the manifest
            mentions it explicitly — unused slots get an idle ChannelSignal
            (time=0, raw=0, value=slot's defaultMin or 0, state=0).
-           Component contract is fixed: .x = time_ms, .y = raw 0..1,
-           .z = mapped value, .w = state. */
+           Component contract:
+              .x = upstream Signal.value (unclamped — AutoTimer.unbounded grows
+                   linearly, sine/triangle oscillate 0..1, constant is static).
+                   Shaders that need monotonic phase wire AutoTimer in
+                   `unbounded` mode and tune `durationMs` for speed.
+              .y = raw 0..1 driver (clamped value)
+              .z = mapped value (lerp(min, max, raw))
+              .w = state */
         const animation = ctx.inputs.animation as AnimationSignal | null
         const slotByIndex = new Map(config.animation.slots.map(s => [s.slot, s]))
         for (let i = 0; i < ANIMATION_CHANNEL_COUNT; i++) {
@@ -302,15 +330,6 @@ export class EffectProcessor extends BaseProcessor {
                 value: [v.time, v.raw, v.value, v.state],
                 type: 'vec4<f32>',
             }
-        }
-
-        /* Auto-derived: text-strip aspect ratio = atlas.width / atlas.height. */
-        const atlas = ctx.inputs.atlas
-        if (atlas && typeof atlas === 'object' && 'width' in atlas && 'height' in atlas
-            && (atlas as any).height > 0) {
-            entries.uTextAspect = { value: (atlas as any).width / (atlas as any).height, type: 'f32' }
-        } else {
-            entries.uTextAspect = { value: 1.0, type: 'f32' }
         }
 
         /* Per-contour info — used by ribbon-style scrolling shaders. */
@@ -343,15 +362,10 @@ export class EffectProcessor extends BaseProcessor {
         }
 
         bind('uDiffuse', inp.source ?? ctx.fallback)
-        bind('verticalDistanceTexture', inp.sdf ?? ctx.fallback)
         bind('uPointTexture', inp.coords_tex ?? ctx.fallback)
-        bind('depthTexture', ctx.hasDepth ? inp.depth : ctx.fallback)
-        bind('depthRefTexture', ctx.hasDepth ? inp.depth_ref : ctx.fallback)
-        bind('normalsTexture', ctx.hasNormals ? inp.normals : ctx.fallback)
-        bind('albedoTexture', ctx.hasMaterials ? inp.albedo : ctx.fallback)
-        bind('roughnessTexture', ctx.hasMaterials ? inp.roughness : ctx.fallback)
-        bind('metallicTexture', ctx.hasMaterials ? inp.metallic : ctx.fallback)
-        bind('uAtlas', inp.atlas ?? ctx.fallback)
+        for (let i = 0; i < TEXTURE_CHANNEL_COUNT; i++) {
+            bind(`uTxcn${i}`, inp[`txcn${i}`] ?? ctx.fallback)
+        }
 
         return r
     }
@@ -421,13 +435,14 @@ function makeQuadGeo(w: number, h: number): Geometry {
 /* ───────── helpers ───────── */
 
 function passInputsSatisfied(pass: EffectPass, inputs: Record<string, any>): boolean {
-    /* Hard deps that gate the pass entirely. */
-    const hard: EffectInputName[] = ['source', 'sdf', 'contour']
+    /* Hard deps that gate the pass entirely. `txcn{i}` channels can also
+       be listed — passes that *must* sample a particular channel (e.g. a
+       full-screen mask reading SDF from txcn0) opt in here so the pass is
+       elided when the user hasn't wired anything to that slot. */
     for (const dep of pass.requiresInputs ?? []) {
-        if (!hard.includes(dep)) continue
         if (dep === 'source' && !inputs.source) return false
-        if (dep === 'sdf' && !inputs.sdf) return false
         if (dep === 'contour' && !inputs.contour) return false
+        if (dep.startsWith('txcn') && !inputs[dep]) return false
     }
     return true
 }

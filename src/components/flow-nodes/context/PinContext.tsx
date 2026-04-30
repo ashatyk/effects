@@ -6,7 +6,6 @@ export interface PinState {
     pinnedIds: string[]
     isPinned: (id: string) => boolean
     togglePin: (id: string) => void
-    unpin: (id: string) => void
     clear: () => void
     /* Replace the entire pin set wholesale. Used by scene-history to
        restore pins captured in a snapshot. */
@@ -64,10 +63,6 @@ export function usePinState({ liveNodeIds }: { liveNodeIds: Set<string> }): PinS
         setPinnedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
     }, [])
 
-    const unpin = useCallback((id: string) => {
-        setPinnedIds(prev => prev.filter(x => x !== id))
-    }, [])
-
     const clear = useCallback(() => setPinnedIds([]), [])
 
     const setAll = useCallback((ids: string[]) => {
@@ -80,8 +75,8 @@ export function usePinState({ liveNodeIds }: { liveNodeIds: Set<string> }): PinS
         })
     }, [])
 
-    return useMemo<PinState>(() => ({ pinnedIds, isPinned, togglePin, unpin, clear, setAll }),
-        [pinnedIds, isPinned, togglePin, unpin, clear, setAll])
+    return useMemo<PinState>(() => ({ pinnedIds, isPinned, togglePin, clear, setAll }),
+        [pinnedIds, isPinned, togglePin, clear, setAll])
 }
 
 /**

@@ -308,7 +308,6 @@ export const EditableStepEdge = memo(function EditableStepEdge(props: EdgeProps)
        path is wide & invisible and captures hover for the whole edge so the
        midpoint handles surface as soon as the cursor approaches the line. */
     const stroke = (style as any)?.stroke ?? 'rgba(255,255,255,0.55)'
-    const strokeWidth = (style as any)?.strokeWidth ?? 4
 
     return (
         <g
@@ -373,10 +372,6 @@ export const EditableStepEdge = memo(function EditableStepEdge(props: EdgeProps)
                     )
                 })}
             </EdgeLabelRenderer>
-            {/* `strokeWidth` falls through to react-flow CSS — kept outside
-                the inline style so the global selected/hover thickening
-                rules in App.css continue to apply. */}
-            {strokeWidth ? null : null}
         </g>
     )
 })

@@ -7,11 +7,6 @@ import { PolygonProcessor, polygonDef } from './polygon'
 import { SdfFromContourProcessor, sdfFromContourDef } from './sdf-from-contour'
 import { BlurProcessor, blurDef } from './blur'
 import { RemapProcessor, remapDef } from './remap'
-import { DepthEstimateProcessor, depthEstimateDef } from './depth-estimate'
-import { DepthBlitProcessor, depthBlitDef } from './depth-blit'
-import { MaterialEstimateProcessor, materialEstimateDef } from './material-estimate'
-import { MarigoldDepthProcessor, marigoldDepthDef } from './marigold-depth'
-import { MarigoldNormalsProcessor, marigoldNormalsDef } from './marigold-normals'
 import { EffectProcessor, effectDef } from './effect'
 import { PreviewProcessor, previewDef } from './preview'
 import { SegmentationProcessor, segmentationDef } from './segmentation'
@@ -42,11 +37,6 @@ export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
     sdfFromContour:{ def: sdfFromContourDef,create: () => new SdfFromContourProcessor() },
     blur:         { def: blurDef,         create: () => new BlurProcessor() },
     remap:        { def: remapDef,        create: () => new RemapProcessor() },
-    depthEstimate:{ def: depthEstimateDef,create: () => new DepthEstimateProcessor() },
-    depthBlit:    { def: depthBlitDef,    create: () => new DepthBlitProcessor() },
-    materialEstimate: { def: materialEstimateDef, create: () => new MaterialEstimateProcessor() },
-    marigoldDepth: { def: marigoldDepthDef, create: () => new MarigoldDepthProcessor() },
-    marigoldNormals: { def: marigoldNormalsDef, create: () => new MarigoldNormalsProcessor() },
     effect:       { def: effectDef,       create: () => new EffectProcessor() },
     preview:      { def: previewDef,      create: () => new PreviewProcessor() },
     segmentation: { def: segmentationDef, create: () => new SegmentationProcessor() },

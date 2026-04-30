@@ -233,6 +233,5 @@ export function useSceneHistory({
         applySnapshot,
         handleUndo,
         handleRedo,
-        isRestoringRef,
     }
 }

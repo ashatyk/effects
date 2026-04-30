@@ -17,7 +17,6 @@ export const config: PlaygroundConfig = {
             requiresInputs: ['contour'],
             scrolling: {
                 mode: 'ribbon',
-                speedField: 'uSlideSpeed',
                 segmentSizeField: 'uSegmentSize',
                 phaseSlot: 0,
             },
@@ -69,13 +68,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 8,
             slider: { min: 0, max: 80, step: 1 },
-        },
-        {
-            name: 'uSlideSpeed',
-            label: 'March speed (px/sec)',
-            kind: 'f32',
-            default: 30,
-            slider: { min: -300, max: 300, step: 1 },
         },
         {
             name: 'uSegmentSize',

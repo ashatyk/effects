@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { Node } from '@xyflow/react'
 import './styles/pin-sidebar.css'
 import Box from '@mui/material/Box'
@@ -59,8 +59,6 @@ export const NodePinSidebar = memo(function NodePinSidebar({ nodes, visible, onC
     const { pinnedIds } = usePinning()
     const [width, setWidth] = useState<number>(() => readStoredWidth())
     const [resizing, setResizing] = useState(false)
-    const widthRef = useRef(width)
-    widthRef.current = width
 
     /* Persist width — debounced via the natural rhythm of mouseup. */
     useEffect(() => {

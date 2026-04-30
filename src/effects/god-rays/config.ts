@@ -13,21 +13,13 @@ export const config: PlaygroundConfig = {
     canvas: { width: 900, height: 1200 },
     passes: [
         copySourcePass,
-        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['sdf'] },
+        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['txcn0'] },
     ],
     staticUniforms: {
         uJoinSoftness: { type: 'f32', value: 0 },
         uEdgeFeatherPx: { type: 'f32', value: 1 },
-        uEaseCubic: { type: 'vec4<f32>', value: [0.8, 0.0, 0.6, 1.0] },
     },
     fields: [
-        {
-            name: 'uDepthSoftness',
-            label: 'Depth softness',
-            kind: 'f32',
-            default: 0.1,
-            slider: { min: 0.01, max: 0.5, step: 0.01 },
-        },
         {
             name: 'uColor',
             label: 'Цвет луча',
@@ -51,13 +43,6 @@ export const config: PlaygroundConfig = {
             slider: { min: 0, max: 20, step: 1 },
         },
         {
-            name: 'uRaySpeed',
-            label: 'Скорость вращения',
-            kind: 'f32',
-            default: 1.0,
-            slider: { min: 0, max: 2, step: 0.01 },
-        },
-        {
             name: 'uRayFalloff',
             label: 'Угасание',
             kind: 'f32',
@@ -77,6 +62,11 @@ export const config: PlaygroundConfig = {
             { slot: 0, label: 'Progress',             defaultMin: 0, defaultMax: 1 },
             { slot: 1, label: 'Phase (rad)',          defaultMin: 0, defaultMax: 6.2831853 },
             { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
+        ],
+    },
+    textures: {
+        slots: [
+            { slot: 0, label: 'SDF (signed distance)' },
         ],
     },
 }

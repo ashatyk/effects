@@ -5,14 +5,18 @@ precision highp float;
 in vec2 vUV;
 out vec4 fragColor;
 
-uniform sampler2D uAtlas;     // text strip texture (white text on black)
+/* Text strip atlas wired through generic texture channel 1 (white text
+   on black). uTxcn1Aspect = atlas.width / atlas.height, populated by the
+   Effect processor from the connected texture's dimensions; replaces the
+   old typed 'uTextAspect' uniform. */
+uniform sampler2D uTxcn1;
+uniform float uTxcn1Aspect;
 
 uniform vec4 uTextColor;
 uniform vec4 uGlowColor;
 uniform float uGlowIntensity;
 
 uniform float uContourLen;    // total arc length of the contour (px)
-uniform float uTextAspect;    // strip width / strip height
 uniform float uTextHeight;    // height of text strip on canvas (px, baseline)
 uniform float uTextRepeats;   // how many phrase copies per contour (baseline)
 uniform float uTextRepeatPadding; // px gap between phrase repeats along contour
@@ -28,7 +32,7 @@ void main() {
     /* Phrase arc length used for UV mapping.
        If repeats > 0, fit "repeats" phrases around the entire contour.
        Otherwise use the natural aspect-driven length (1 phrase). */
-    float natural = max(1.0, uTextHeight * uTextAspect);
+    float natural = max(1.0, uTextHeight * uTxcn1Aspect);
     float repeats = max(1.0, uTextRepeats);
     float phraseArc = (uContourLen / repeats) * uChan3.z;
     if (phraseArc <= 1.0) phraseArc = natural;
@@ -42,7 +46,7 @@ void main() {
     float uTex = u / max(1.0 - padFrac, 1e-3);
 
     float v = clamp(vUV.y, 0.0, 1.0);
-    float lum = texture(uAtlas, vec2(uTex, v)).r;
+    float lum = texture(uTxcn1, vec2(uTex, v)).r;
 
     /* Soft alpha cutoff. uTextEdgeAA sets the width (in lum-units) of the
        transition where the glyph fades to transparent. 0 = hard threshold. */

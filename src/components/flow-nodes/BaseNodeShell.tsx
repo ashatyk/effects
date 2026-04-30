@@ -19,11 +19,12 @@ import { categoryColor } from './categoryColors'
    off-grid by `(ROW_H - GRID_SIZE) * N` per port. */
 const ROW_H = 20
 /* Top inset of the first port row inside `.pn-handles`. Combined with the
-   fixed `.pn-header` height (36 px in App.css) and the 4 px `.pn` top
-   border, this puts the centre of the FIRST port at exactly Y = 60 px
-   from the node's top edge — i.e. 3 grid cells down — so every port's
-   midpoint lands on a dot of the editor grid. Subsequent ports inherit
-   this alignment because ROW_H is also a multiple of GRID_SIZE. */
+   fixed `.pn-header` height (36 px in `styles/node-card.css`) and the
+   4 px `.pn` top border, this puts the centre of the FIRST port at
+   exactly Y = 60 px from the node's top edge — i.e. 3 grid cells down —
+   so every port's midpoint lands on a dot of the editor grid. Subsequent
+   ports inherit this alignment because ROW_H is also a multiple of
+   GRID_SIZE. */
 const ROW_TOP_PAD = 10
 const DEFAULT_MIN_WIDTH = 160
 const DEFAULT_MIN_HEIGHT = 40
@@ -100,39 +101,46 @@ export function BaseNodeShell({ title, category, inputs, outputs, children, minW
                     <span className="pn-header-title">{title}</span>
                     {nodeId && <PinToggle nodeId={nodeId} headless={headless} />}
                 </div>
-                {!headless && (
-                    <div className="pn-handles" style={{ minHeight: handlesH }}>
-                        {inputs.map((h, i) => (
-                            <React.Fragment key={h.name}>
-                                <Handle
-                                    type="target"
-                                    position={Position.Left}
-                                    id={h.name}
-                                    style={{ top: ROW_TOP_PAD + i * ROW_H + ROW_H / 2 }}
-                                    className="pn-handle"
-                                />
-                                <div className="pn-label pn-label-in" style={{ top: ROW_TOP_PAD + i * ROW_H }}>
-                                    {h.label ?? h.name}
-                                </div>
-                            </React.Fragment>
-                        ))}
-                        {outputs.map((h, i) => (
-                            <React.Fragment key={h.name}>
-                                <Handle
-                                    type="source"
-                                    position={Position.Right}
-                                    id={h.name}
-                                    style={{ top: ROW_TOP_PAD + i * ROW_H + ROW_H / 2 }}
-                                    className="pn-handle"
-                                />
-                                <div className="pn-label pn-label-out" style={{ top: ROW_TOP_PAD + i * ROW_H }}>
-                                    {h.label ?? h.name}
-                                </div>
-                            </React.Fragment>
-                        ))}
+                {/* Everything below the header lives inside `.pn-body` — its
+                    rounded top corners "arch" against the accent backdrop
+                    on `.pn`, replacing the previous flat header underline. */}
+                {(!headless || children) && (
+                    <div className="pn-body">
+                        {!headless && (
+                            <div className="pn-handles" style={{ minHeight: handlesH }}>
+                                {inputs.map((h, i) => (
+                                    <React.Fragment key={h.name}>
+                                        <Handle
+                                            type="target"
+                                            position={Position.Left}
+                                            id={h.name}
+                                            style={{ top: ROW_TOP_PAD + i * ROW_H + ROW_H / 2 }}
+                                            className="pn-handle"
+                                        />
+                                        <div className="pn-label pn-label-in" style={{ top: ROW_TOP_PAD + i * ROW_H }}>
+                                            {h.label ?? h.name}
+                                        </div>
+                                    </React.Fragment>
+                                ))}
+                                {outputs.map((h, i) => (
+                                    <React.Fragment key={h.name}>
+                                        <Handle
+                                            type="source"
+                                            position={Position.Right}
+                                            id={h.name}
+                                            style={{ top: ROW_TOP_PAD + i * ROW_H + ROW_H / 2 }}
+                                            className="pn-handle"
+                                        />
+                                        <div className="pn-label pn-label-out" style={{ top: ROW_TOP_PAD + i * ROW_H }}>
+                                            {h.label ?? h.name}
+                                        </div>
+                                    </React.Fragment>
+                                ))}
+                            </div>
+                        )}
+                        {children && <div className="pn-widgets">{children}</div>}
                     </div>
                 )}
-                {children && <div className="pn-widgets">{children}</div>}
             </div>
         </>
     )

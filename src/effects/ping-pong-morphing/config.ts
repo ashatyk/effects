@@ -8,16 +8,9 @@ export const config: PlaygroundConfig = {
     staticUniforms: {},
     passes: [
         copySourcePass,
-        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['sdf'] },
+        { id: 'main', kind: 'fullscreen', blend: 'normal', fragment, requiresInputs: ['txcn0'] },
     ],
     fields: [
-        {
-            name: 'uDepthSoftness',
-            label: 'Depth softness',
-            kind: 'f32',
-            default: 0.1,
-            slider: { min: 0.01, max: 0.5, step: 0.01 },
-        },
         {
             name: 'uCenterTranslation',
             label: 'Смещение к центру (0..1)',
@@ -31,13 +24,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 0,
             slider: { min: 0, max: 5, step: 1 },
-        },
-        {
-            name: 'uEaseCubic',
-            label: 'Bezier (x1, y1, x2, y2)',
-            kind: 'vec4<f32>',
-            default: [0.8, 0.00, 0.6, 1.00],
-            slider: { min: 0, max: 1, step: 0.01 },
         },
         {
             name: 'uWaveBasePx',
@@ -59,20 +45,6 @@ export const config: PlaygroundConfig = {
             kind: 'f32',
             default: 10.0,
             slider: { min: 0, max: 150, step: 0.5 },
-        },
-        {
-            name: 'uWaveSpeed',
-            label: 'Скорость анимации',
-            kind: 'f32',
-            default: 0.35,
-            slider: { min: 0, max: 5, step: 0.01 },
-        },
-        {
-            name: 'uAnimationSpeed',
-            label: 'Скорость появления',
-            kind: 'f32',
-            default: 0.35,
-            slider: { min: 0, max: 5, step: 0.01 },
         },
         {
             name: 'uColor',
@@ -101,13 +73,6 @@ export const config: PlaygroundConfig = {
             label: 'Амплитуда шума (px)',
             kind: 'f32',
             default: 4.0,
-            slider: { min: 0, max: 100, step: 1 },
-        },
-        {
-            name: 'uNoiseSpeed',
-            label: 'Скорость шума',
-            kind: 'f32',
-            default: 10.0,
             slider: { min: 0, max: 100, step: 1 },
         },
         {
@@ -170,9 +135,14 @@ export const config: PlaygroundConfig = {
     animation: {
         slots: [
             { slot: 0, label: 'Progress',             defaultMin: 0, defaultMax: 1 },
-            { slot: 1, label: 'Wave phase (ms)',      defaultMin: 0, defaultMax: 1 },
+            { slot: 1, label: 'Ping-pong (0..1)',     defaultMin: 0, defaultMax: 1 },
             { slot: 4, label: 'Intensity multiplier', defaultMin: 1, defaultMax: 1 },
-            { slot: 5, label: 'Noise time (ms)',      defaultMin: 0, defaultMax: 1 },
+            { slot: 5, label: 'Noise drift',          defaultMin: 0, defaultMax: 1 },
+        ],
+    },
+    textures: {
+        slots: [
+            { slot: 0, label: 'SDF (signed distance)' },
         ],
     },
 }

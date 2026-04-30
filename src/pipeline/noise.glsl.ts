@@ -6,9 +6,10 @@
  *   valueNoise2D(vec2)  — bilinearly-interpolated 2D value noise, smoothstep weights
  *   fbm2D(vec2)         — 3-octave fbm sum on top of valueNoise2D, range ~0..1
  *
- * Time-driven shaders feed `xy + uChan5.x * 0.001 * uNoiseSpeed * driftDir`
- * into these functions — uChan5 is the dedicated "noise time" slot in the
- * animation pool (see `src/pipeline/types.ts`).
+ * Time-driven shaders feed `xy + uChan5.x * 0.001 * driftDir` into these
+ * functions — uChan5 is the dedicated "noise time" slot in the animation
+ * pool (see `src/pipeline/types.ts`). Drift speed is controlled upstream
+ * by the AutoTimer driving slot 5, not by a per-effect speed uniform.
  *
  * The string is appended into each fragment/vertex shader between
  * `#version 300 es; precision ...` and `void main()`. Keeping the chunk in

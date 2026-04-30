@@ -2,15 +2,17 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import Box from '@mui/material/Box'
-import Stack from '@mui/material/Stack'
 import IconButton from '@mui/material/IconButton'
 import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
+import CircularProgress from '@mui/material/CircularProgress'
 import Typography from '@mui/material/Typography'
+import AddIcon from '@mui/icons-material/Add'
+import RemoveIcon from '@mui/icons-material/Remove'
 import CloseIcon from '@mui/icons-material/Close'
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
-import { ActionButton, StatusLine } from '../widgets'
 import { segmentationDef } from '../../../node-engine/processors/segmentation'
 import { SegmentationProcessor } from '../../../node-engine/processors/segmentation'
 import type { SamPoint } from '../../../engine/sam/types'
@@ -19,6 +21,9 @@ import type { PipelineNodeData } from '../types'
 const CANVAS_W = 280
 const HOVER_DEBOUNCE = 150
 
+const COL_INCLUDE = '#10b981'
+const COL_EXCLUDE = '#ef4444'
+
 export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -26,6 +31,7 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
     const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     const [status, setStatus] = useState('Waiting for image...')
+    const [statusKind, setStatusKind] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
     const [points, setPoints] = useState<SamPoint[]>([])
     const [activeLabel, setActiveLabel] = useState<0 | 1>(1)
     const [ready, setReady] = useState(false)
@@ -45,6 +51,11 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
         }
         p.onChange = () => {
             setStatus(p.statusText)
+            setStatusKind(
+                p.status === 'error' ? 'error'
+                    : p.status === 'loading-model' || p.status === 'encoding' || p.status === 'decoding' ? 'busy'
+                        : p.embeddingsReady ? 'ready' : 'idle',
+            )
             setReady(p.embeddingsReady)
             forceUpdate(n => n + 1)
         }
@@ -90,10 +101,10 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                 const imgData = octx.createImageData(mw, mh)
                 for (let i = 0; i < mask.length; i++) {
                     if (mask[i] > 0) {
-                        imgData.data[i * 4] = 0
-                        imgData.data[i * 4 + 1] = 114
-                        imgData.data[i * 4 + 2] = 189
-                        imgData.data[i * 4 + 3] = 128
+                        imgData.data[i * 4] = 16
+                        imgData.data[i * 4 + 1] = 185
+                        imgData.data[i * 4 + 2] = 129
+                        imgData.data[i * 4 + 3] = 110
                     }
                 }
                 octx.putImageData(imgData, 0, 0)
@@ -105,16 +116,21 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                 const px = pt.point[0] * cw
                 const py = pt.point[1] * ch
                 const isHl = highlightIdx === i
-                const r = isHl ? 8 : 5
-                ctx.lineWidth = 2
+                const r = isHl ? 7 : 5
+                ctx.lineWidth = isHl ? 3 : 2
+                ctx.strokeStyle = pt.label === 1
+                    ? (isHl ? '#34d399' : COL_INCLUDE)
+                    : (isHl ? '#fb7185' : COL_EXCLUDE)
+                ctx.fillStyle = 'rgba(0,0,0,0.55)'
+                ctx.beginPath()
+                ctx.arc(px, py, r + 1.5, 0, Math.PI * 2)
+                ctx.fill()
                 if (pt.label === 1) {
-                    ctx.strokeStyle = isHl ? '#0f0' : '#4f4'
                     ctx.beginPath()
                     ctx.moveTo(px - r, py); ctx.lineTo(px + r, py)
                     ctx.moveTo(px, py - r); ctx.lineTo(px, py + r)
                     ctx.stroke()
                 } else {
-                    ctx.strokeStyle = isHl ? '#f00' : '#f44'
                     ctx.beginPath()
                     ctx.moveTo(px - r, py - r); ctx.lineTo(px + r, py + r)
                     ctx.moveTo(px + r, py - r); ctx.lineTo(px - r, py + r)
@@ -200,26 +216,103 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
         engine.markDirty(id)
     }, [proc, engine, id])
 
-    return (
-        <BaseNodeShell title={segmentationDef.title} category={segmentationDef.category} inputs={segmentationDef.inputs} outputs={segmentationDef.outputs}>
-            <Box
-                component="canvas"
-                ref={canvasRef}
-                className="nodrag nopan"
-                onClick={handleClick}
-                onContextMenu={handleContextMenu}
-                onMouseMove={handleMouseMove}
-                onMouseLeave={handleMouseLeave}
-                sx={{
-                    width: '100%',
-                    display: 'block',
-                    borderRadius: 1,
-                    bgcolor: '#000',
-                    cursor: ready ? 'crosshair' : 'default',
-                }}
-            />
-            <StatusLine>{status}</StatusLine>
+    const statusColor =
+        statusKind === 'error' ? COL_EXCLUDE
+            : statusKind === 'ready' ? COL_INCLUDE
+                : 'var(--pn-text-secondary)'
 
+    return (
+        <BaseNodeShell
+            title={segmentationDef.title}
+            category={segmentationDef.category}
+            inputs={segmentationDef.inputs}
+            outputs={segmentationDef.outputs}
+        >
+            {/* Image canvas. The dark backdrop frames the photo and makes
+                point markers + the green mask overlay readable. A 1 px
+                inset ring matches other dark surfaces in the editor. */}
+            <Box
+                sx={{
+                    position: 'relative',
+                    borderRadius: 1,
+                    overflow: 'hidden',
+                    bgcolor: '#0a0a0a',
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.06)',
+                }}
+            >
+                <Box
+                    component="canvas"
+                    ref={canvasRef}
+                    className="nodrag nopan"
+                    onClick={handleClick}
+                    onContextMenu={handleContextMenu}
+                    onMouseMove={handleMouseMove}
+                    onMouseLeave={handleMouseLeave}
+                    sx={{
+                        width: '100%',
+                        display: 'block',
+                        cursor: ready ? 'crosshair' : 'default',
+                    }}
+                />
+            </Box>
+
+            {/* Status row — white input surface with mono text, mirrors the
+                contrast language of the rest of the editor (input fields
+                + the black Load-image button). The leading dot/spinner
+                still carries the colour signal. */}
+            <Box
+                sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.75,
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 1,
+                    bgcolor: 'var(--pn-bg-input)',
+                    border: '1px solid var(--pn-divider-strong)',
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)',
+                    minHeight: 22,
+                    boxSizing: 'border-box',
+                }}
+            >
+                {statusKind === 'busy' ? (
+                    <CircularProgress
+                        size={10}
+                        thickness={6}
+                        sx={{ color: 'var(--pn-text)', flexShrink: 0 }}
+                    />
+                ) : (
+                    <Box
+                        sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            flexShrink: 0,
+                            bgcolor: statusColor,
+                        }}
+                    />
+                )}
+                <Typography
+                    sx={{
+                        fontSize: 11,
+                        lineHeight: 1.3,
+                        flex: 1,
+                        minWidth: 0,
+                        fontWeight: 600,
+                        color: 'var(--pn-text)',
+                        wordBreak: 'break-word',
+                    }}
+                >
+                    {status}
+                </Typography>
+            </Box>
+
+            {/* Mode toggle — same visual language as the black "primary"
+                ActionButton: the active segment fills with `--pn-text`
+                (near-black) and prints white, the inactive segment stays
+                on the input surface with an outlined dark border. The
+                colour-coded icon keeps the +/− legend without sacrificing
+                the high-contrast button look. */}
             <ToggleButtonGroup
                 value={activeLabel}
                 exclusive
@@ -230,69 +323,175 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                 sx={{
                     '& .MuiToggleButton-root': {
                         py: 0.5,
-                        fontSize: 14,
+                        gap: 0.5,
+                        fontSize: 12,
                         fontWeight: 700,
-                        color: 'var(--pn-text-secondary)',
+                        textTransform: 'none',
+                        bgcolor: 'var(--pn-bg-input)',
+                        color: 'var(--pn-text)',
                         borderColor: 'var(--pn-divider-strong)',
+                        transition: 'background-color 0.12s, color 0.12s',
                     },
-                    '& .MuiToggleButton-root.Mui-selected[value="1"]': {
-                        backgroundColor: 'rgba(16,185,129,0.18)',
-                        color: '#0e8a64',
+                    '& .MuiToggleButton-root:hover': {
+                        bgcolor: 'rgba(0, 0, 0, 0.06)',
                     },
-                    '& .MuiToggleButton-root.Mui-selected[value="0"]': {
-                        backgroundColor: 'rgba(229,72,77,0.18)',
-                        color: '#c4201d',
+                    '& .MuiToggleButton-root.Mui-selected': {
+                        bgcolor: 'var(--pn-text)',
+                        color: 'var(--pn-bg-input)',
+                        borderColor: 'var(--pn-text)',
+                        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.20)',
+                    },
+                    '& .MuiToggleButton-root.Mui-selected:hover': {
+                        bgcolor: '#000',
+                    },
+                    '& .MuiToggleButton-root.Mui-selected[value="1"] .seg-icon': {
+                        color: COL_INCLUDE,
+                    },
+                    '& .MuiToggleButton-root.Mui-selected[value="0"] .seg-icon': {
+                        color: COL_EXCLUDE,
                     },
                 }}
             >
-                <ToggleButton value={1}>+</ToggleButton>
-                <ToggleButton value={0}>−</ToggleButton>
+                <ToggleButton value={1}>
+                    <AddIcon className="seg-icon" sx={{ fontSize: 16, color: COL_INCLUDE }} />
+                    Include
+                </ToggleButton>
+                <ToggleButton value={0}>
+                    <RemoveIcon className="seg-icon" sx={{ fontSize: 16, color: COL_EXCLUDE }} />
+                    Exclude
+                </ToggleButton>
             </ToggleButtonGroup>
 
+            {/* Points list — uppercase section header with count + a
+                pill-shaped trash button on the right. Each row sits on
+                a white input surface to maximise contrast against the
+                gray card surface; the colour chip on the left keeps the
+                include/exclude legend without diluting the row. */}
             {points.length > 0 && (
-                <Stack>
-                    {points.map((pt, i) => (
-                        <Stack
-                            key={i}
-                            direction="row"
-                            onMouseEnter={() => setHoveredIdx(i)}
-                            onMouseLeave={() => setHoveredIdx(null)}
+                <Box>
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            px: 0.5,
+                            mb: 0.5,
+                        }}
+                    >
+                        <Typography
                             sx={{
-                                px: 0.5,
-                                py: 0.25,
-                                borderRadius: 0.5,
                                 fontSize: 10,
-                                bgcolor: hoveredIdx === i ? 'rgba(0,0,0,0.05)' : 'transparent',
+                                fontWeight: 700,
+                                letterSpacing: 0.5,
+                                textTransform: 'uppercase',
+                                color: 'var(--pn-text)',
                             }}
                         >
-                            <Typography
-                                component="span"
-                                sx={{
-                                    width: 12,
-                                    fontWeight: 700,
-                                    color: pt.label === 1 ? '#0e8a64' : '#c4201d',
-                                }}
-                            >
-                                {pt.label === 1 ? '+' : '−'}
-                            </Typography>
-                            <Typography
-                                component="span"
-                                sx={{
-                                    flex: 1,
-                                    fontFamily: 'ui-monospace, Menlo, monospace',
-                                    color: 'var(--pn-text-secondary)',
-                                    fontSize: 10,
-                                }}
-                            >
-                                ({pt.point[0].toFixed(2)}, {pt.point[1].toFixed(2)})
-                            </Typography>
-                            <IconButton size="small" onClick={() => removePoint(i)} sx={{ p: 0.25 }}>
-                                <CloseIcon sx={{ fontSize: 12 }} />
-                            </IconButton>
-                        </Stack>
-                    ))}
-                    <ActionButton onClick={clearAll}>Clear all</ActionButton>
-                </Stack>
+                            Points ({points.length})
+                        </Typography>
+                        <IconButton
+                            size="small"
+                            onClick={clearAll}
+                            className="nodrag"
+                            title="Clear all"
+                            sx={{
+                                p: 0.25,
+                                color: 'var(--pn-text)',
+                                borderRadius: 0.75,
+                                '&:hover': {
+                                    color: 'var(--pn-bg-input)',
+                                    bgcolor: 'var(--pn-text)',
+                                },
+                            }}
+                        >
+                            <DeleteSweepIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                    </Box>
+
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 0.5,
+                        }}
+                    >
+                        {points.map((pt, i) => {
+                            const isInclude = pt.label === 1
+                            const tint = isInclude ? COL_INCLUDE : COL_EXCLUDE
+                            return (
+                                <Box
+                                    key={i}
+                                    onMouseEnter={() => setHoveredIdx(i)}
+                                    onMouseLeave={() => setHoveredIdx(null)}
+                                    sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 0.75,
+                                        px: 0.75,
+                                        py: 0.375,
+                                        borderRadius: 1,
+                                        minHeight: 22,
+                                        boxSizing: 'border-box',
+                                        bgcolor: 'var(--pn-bg-input)',
+                                        border: '1px solid var(--pn-divider-strong)',
+                                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.06)',
+                                        transition: 'border-color 0.12s',
+                                        '&:hover': { borderColor: 'var(--pn-text)' },
+                                        '& .point-delete': {
+                                            opacity: hoveredIdx === i ? 1 : 0,
+                                            transition: 'opacity 0.1s',
+                                        },
+                                    }}
+                                >
+                                    <Box
+                                        sx={{
+                                            width: 14,
+                                            height: 14,
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            borderRadius: '50%',
+                                            bgcolor: tint,
+                                            color: '#fff',
+                                            flexShrink: 0,
+                                        }}
+                                    >
+                                        {isInclude
+                                            ? <AddIcon sx={{ fontSize: 11 }} />
+                                            : <RemoveIcon sx={{ fontSize: 11 }} />}
+                                    </Box>
+                                    <Typography
+                                        component="span"
+                                        sx={{
+                                            flex: 1,
+                                            fontFamily: 'ui-monospace, Menlo, monospace',
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            color: 'var(--pn-text)',
+                                        }}
+                                    >
+                                        {pt.point[0].toFixed(2)}, {pt.point[1].toFixed(2)}
+                                    </Typography>
+                                    <IconButton
+                                        size="small"
+                                        className="nodrag point-delete"
+                                        onClick={() => removePoint(i)}
+                                        sx={{
+                                            p: 0.125,
+                                            color: 'var(--pn-text)',
+                                            '&:hover': {
+                                                color: '#fff',
+                                                bgcolor: COL_EXCLUDE,
+                                            },
+                                        }}
+                                    >
+                                        <CloseIcon sx={{ fontSize: 13 }} />
+                                    </IconButton>
+                                </Box>
+                            )
+                        })}
+                    </Box>
+                </Box>
             )}
         </BaseNodeShell>
     )

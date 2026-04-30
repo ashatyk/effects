@@ -1,11 +1,5 @@
 export type SamPoint = { point: [number, number]; label: number }
 
-export type SamWorkerRequest =
-    | { type: 'load_model' }
-    | { type: 'encode_image'; data: { dataURL: string } }
-    | { type: 'decode'; data: SamPoint[] }
-    | { type: 'reset' }
-
 export type SamWorkerResponse =
     | { type: 'model_loading'; data: { progress: number; status: string } }
     | { type: 'model_ready' }

@@ -72,10 +72,22 @@
     line-height: 1.45;
 }
 
-/* Select arrow needs a bit more right padding so the chevron doesn't
-   crowd the value text at our reduced horizontal padding. */
+/* MUI v9 ships an internal `min-height: 1.4375em` on `.MuiSelect-select`
+   plus its own vertical padding that the generic `.MuiOutlinedInput-input`
+   override doesn't fully neutralise — the trigger ends up taller than the
+   NumberField row and the value text sits in the top portion of the box.
+   Force the same compact 22px chrome and use an inner flex so the value
+   is vertically centered regardless of how MUI sizes the container. The
+   asymmetric right padding leaves room for the chevron at our reduced
+   horizontal padding. */
 .pn .MuiOutlinedInput-root .MuiSelect-select {
-    padding-right: 26px !important;
+    min-height: 0 !important;
+    height: auto !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 26px 0 8px !important;
+    line-height: 1.2 !important;
 }
 
 .pn .MuiInputBase-input::placeholder {

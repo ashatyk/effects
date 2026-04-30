@@ -16,7 +16,14 @@
     --pn-divider-strong:   rgba(0, 0, 0, 0.32);
 
     position: relative;
-    background: var(--pn-bg);
+    /* Card chrome bg = accent so the body's rounded top corners reveal
+       the header colour beneath (the "arch" effect). The actual content
+       surface lives in `.pn-body`, which paints `--pn-bg` on top with a
+       rounded top edge that cuts into this accent backdrop. We DON'T
+       set `overflow: hidden` on `.pn` because port handles render with
+       `transform: translate(-50%)` and intentionally hang off the left
+       / right edges of the card. */
+    background: var(--pn-accent, var(--pn-bg-alt));
     border: 4px solid var(--pn-accent, rgba(0, 0, 0, 0.30));
     border-radius: 10px;
     font-family: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -53,8 +60,10 @@
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    background: var(--pn-accent, var(--pn-bg-alt));
-    border-bottom: 1px solid color-mix(in srgb, var(--pn-accent, #000) 50%, rgba(0, 0, 0, 0.25));
+    /* Header bg is transparent — the .pn parent already paints the
+       accent backdrop, and the body's rounded-top arch flows naturally
+       out of it. No bottom divider here: the arch IS the separator. */
+    background: transparent;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
 }
@@ -65,6 +74,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ── Body (handles + widgets surface) ── */
+
+/* Painted slab that sits below the header. Its rounded top corners cut
+   into the accent backdrop, producing the header arch. Bottom corners
+   are rounded to match the inner edge of the 4 px accent border
+   (`.pn` border-radius 10 px − 4 px border = 6 px inner curve), so the
+   gray surface sits flush inside the rounded accent ring without
+   needing `overflow: hidden` on `.pn` (which would clip port dots). */
+.pn-body {
+    background: var(--pn-bg);
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
 }
 
 /* ── Handles ── */
@@ -101,6 +126,19 @@
     transition: background 0.12s, border-color 0.12s;
 }
 
+/* Centre the port dot on the MIDDLE of the 4 px accent border (i.e.
+   2 px inside the outer edge), not on the inner edge of `.pn-handles`
+   where React Flow places it by default and not on the outer perimeter
+   either. The dot then sits visually nested inside the coloured border
+   ring, fully readable, with no part hanging off into the canvas. */
+.pn-handle.react-flow__handle-left {
+    left: -2px !important;
+}
+
+.pn-handle.react-flow__handle-right {
+    right: -2px !important;
+}
+
 .pn-handle:hover {
     background: var(--pn-accent, #0a0a0a) !important;
     border-color: var(--pn-accent, #0a0a0a) !important;
@@ -114,6 +152,11 @@
     flex-direction: column;
     overflow: hidden;
     gap: 6px;
+}
+
+/* Divider between handles and widgets — only shown when both exist; in
+   headless mode (no handles) the widgets sit flush against the arch. */
+.pn-handles + .pn-widgets {
     border-top: 1px solid var(--pn-divider);
 }
 

@@ -8,32 +8,28 @@ export default `
 
     uniform vec2  uResolution;
 
-    /* Animation channels — vec4(time_ms, raw, value, state).
-       Slot 0: appearance progress (0..1).
-       Slot 1: ray rotation phase — uChan1.x is monotonic ms.
+    /* Animation channels — vec4(drive, raw, value, state).
+       Slot 0: appearance progress (0..1) — multiplied into beam intensity.
+       Slot 1: ray rotation phase — uChan1.x carries the upstream signal
+               value (radians). Wire AutoTimer in 'unbounded' mode for
+               continuous rotation.
        Slot 4: intensity multiplier on final alpha. */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan4;
 
     uniform vec4  uPointAABB;
-    uniform sampler2D verticalDistanceTexture;
-    uniform sampler2D depthTexture;
-    uniform sampler2D depthRefTexture;
+    /* SDF wired through generic texture channel 0 (manifest labels it). */
+    uniform sampler2D uTxcn0;
 
-    uniform float uDepthSoftness;
-    uniform float uDepthEnabled;
     uniform float uEdgeFeatherPx;
 
     uniform vec4 uColor;
     uniform float uRayStrength;
     uniform float uRayDensity;
-    uniform float uRaySpeed;
     uniform float uRayFalloff;
     uniform float uJoinSoftness;
     uniform float uRayPhaseOffsetFrac;
-
-    uniform vec4  uEaseCubic;
 
     const float TWO_PI    = 6.28318530718;
     const float EPS_ATTEN = 1e-3;
@@ -47,7 +43,7 @@ export default `
     }
 
     float signedDistancePx(vec2 uv){
-        vec4 t = texture(verticalDistanceTexture, uv);
+        vec4 t = texture(uTxcn0, uv);
         float d = unpackFloat24(t.xyz, 1200.0);
         return (t.w > 0.5) ? -d : d;
     }
@@ -58,27 +54,6 @@ export default `
 
     float reachPx(float falloff, float feather){
         return (falloff > 0.0) ? (log(1.0 / EPS_ATTEN) / falloff + feather) : INF_F;
-    }
-
-    float bez3(float t, float p0, float p1, float p2, float p3){
-        float u=1.0-t; return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3;
-    }
-
-    float dBez3(float t, float p0, float p1, float p2, float p3){
-        float u=1.0-t;
-        return 3.0*u*u*(p1-p0) + 6.0*u*t*(p2-p1) + 3.0*t*t*(p3-p2);
-    }
-
-    float cubicBezierEase(float x, vec2 p1, vec2 p2){
-        float t = x;
-        for(int i=0;i<5;i++){
-            float x_t = bez3(t,0.0,p1.x,p2.x,1.0);
-            float dx  = dBez3(t,0.0,p1.x,p2.x,1.0);
-            float diff = x_t - x;
-            if(abs(diff) < 1e-5) break;
-            t = clamp(t - diff / max(dx,1e-5), 0.0, 1.0);
-        }
-        return bez3(t,0.0,p1.y,p2.y,1.0);
     }
 
     void main(){
@@ -92,10 +67,9 @@ export default `
 
         float sdist = signedDistancePx(vUV);
 
-        vec2 c1 = uEaseCubic.xy, c2 = uEaseCubic.zw;
-        float startS = uChan0.z;
-        float apearInter = cubicBezierEase(startS * 2.0, c1, c2);
-
+        /* Appearance multiplier = slot 0 mapped value, used as-is. The
+           upstream Envelope / AutoTimer easing decides the curve — the
+           shader no longer applies a cubic Bezier intro of its own. */
         float ax = uResolution.y / uResolution.x;
         vec2  va = vec2((p.x - ctr.x) * ax, (p.y - ctr.y));
         float theta = atan(va.x, va.y);
@@ -105,19 +79,14 @@ export default `
         float f = max(0.0001, uEdgeFeatherPx);
         float startRamp   = smoothstep(0.0, f, d);
         float radialAtten = exp(-uRayFalloff * d);
-        float phase = (uChan1.x * 0.001) * uRaySpeed + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
-        float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * apearInter;
+        /* Rotation phase = upstream signal value in radians. AutoTimer
+           in 'unbounded' mode + slot-1 controller min/max set the rate. */
+        float phase = uChan1.x + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
+        float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * uChan0.z;
         float m = uRayStrength * startRamp * radialAtten * beam;
 
         vec3 rgb = uColor.rgb * uColor.a * m;
         vec4 acc = vec4(rgb, uColor.a * m);
-
-        if (sdist > 0.0 && uDepthEnabled > 0.5) {
-            float depthHere = texture(depthTexture, vUV).r;
-            float depthRef  = texture(depthRefTexture, vUV).r;
-            float depthMask = smoothstep(depthRef - uDepthSoftness, depthRef, depthHere);
-            acc *= depthMask;
-        }
         acc *= uChan4.z;
 
         fragColor = clamp(acc, 0.0, 1.0);

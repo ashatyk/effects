@@ -19,7 +19,6 @@ uniform vec2 uResolution;
 uniform float uDotMinRadius;
 uniform float uDotMaxRadius;
 uniform float uWaveFrequency;   // cycles per 100 px of arc length
-uniform float uWaveSpeed;       // rad/sec phase advance
 uniform float uNoiseAmount;     // 0..1 — fraction of (max-min) replaced by noise
 uniform float uNoiseScale;      // spatial frequency of noise (per 100 px)
 uniform float uGlowSize;        // quad must be expanded by glow corona radius
@@ -53,7 +52,7 @@ void main() {
     float tWaveSec  = uChan0.x * 0.001;
     float tNoiseSec = uChan5.x * 0.001;
     float arc01 = aArcS * 0.01;
-    float wave  = sin(arc01 * uWaveFrequency + tWaveSec * uWaveSpeed);                                 // -1..1
+    float wave  = sin(arc01 * uWaveFrequency + tWaveSec);                                              // -1..1
     float noise = valueNoise2D(vec2(arc01 * uNoiseScale, tNoiseSec * 0.3)) * 2.0 - 1.0;                // -1..1
     float mixT  = mix(wave, noise, clamp(uNoiseAmount, 0.0, 1.0));                                     // -1..1
     float t01   = 0.5 + 0.5 * mixT;                                                                    // 0..1
