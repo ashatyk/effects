@@ -169,5 +169,11 @@ export function createSamWorker(): Worker {
     `
 
     const blob = new Blob([code], { type: 'application/javascript' })
-    return new Worker(URL.createObjectURL(blob), { type: 'module' })
+    const url = URL.createObjectURL(blob)
+    const worker = new Worker(url, { type: 'module' })
+    /* Workers latch onto the object URL synchronously, so we can revoke
+       it right after construction — keeping the URL alive would just be
+       a per-worker memory entry in the document URL store. */
+    URL.revokeObjectURL(url)
+    return worker
 }

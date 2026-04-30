@@ -38,7 +38,7 @@ export const Field = memo(function Field({ label, children, column }: FieldProps
                 gridTemplateColumns: `${LABEL_W}px 1fr`,
                 alignItems: 'center',
                 columnGap: 1.25,
-                minHeight: 28,
+                minHeight: 22,
             }}
         >
             <Typography

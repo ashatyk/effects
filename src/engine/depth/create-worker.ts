@@ -51,5 +51,8 @@ export function createDepthWorker(): Worker {
     `
 
     const blob = new Blob([code], { type: 'application/javascript' })
-    return new Worker(URL.createObjectURL(blob), { type: 'module' })
+    const url = URL.createObjectURL(blob)
+    const worker = new Worker(url, { type: 'module' })
+    URL.revokeObjectURL(url)
+    return worker
 }

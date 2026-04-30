@@ -71,7 +71,7 @@ export class SegmentationProcessor extends BaseProcessor {
                 this.status = 'ready'
                 this.statusText = `Mask (score: ${msg.data.score.toFixed(2)})`
                 this.polygon = msg.data.polygon
-                this.maskData = { mask: msg.data.mask, width: msg.data.width, height: msg.data.height }
+                this.maskData = { mask: msg.data.mask as unknown as number[], width: msg.data.width, height: msg.data.height }
                 this.engineRef?.markDirty(this.nodeId)
                 break
             case 'error':
@@ -110,6 +110,9 @@ export class SegmentationProcessor extends BaseProcessor {
 
             this.initSam()
 
+            /* The wrapper is one-shot: extract reads from the upstream
+               source then we drop the wrapper so it doesn't accumulate
+               across image changes. Source itself is owned upstream. */
             const texture = new Texture({ source: src })
             const renderer = engine.app.renderer as any
             Promise.resolve()
@@ -126,6 +129,7 @@ export class SegmentationProcessor extends BaseProcessor {
                     this.statusText = 'Failed to extract image'
                     this.onChange?.()
                 })
+                .finally(() => { texture.destroy() })
         } else if (src == null) {
             this.lastImageSrc = null
         }

@@ -304,5 +304,17 @@ export class DataflowEngine implements IDataflowEngine {
         this.outputCache.clear()
         for (const geo of this.geoCache.values()) geo.destroy()
         this.geoCache.clear()
+        /* Drop every other piece of graph state too. Without this, late
+           `subscribeNode` unsubscribes still reach into stale `Set<cb>`
+           closures, and React-side `setState` callbacks pinned by
+           subscribers keep node output objects alive long after the
+           engine has been torn down (HMR / route remount scenarios). */
+        this.nodeListeners.clear()
+        this.nodeParams.clear()
+        this.adjacency.clear()
+        this.targetEdges.clear()
+        this.dirtySet.clear()
+        this.edges = []
+        this.topoOrder = []
     }
 }

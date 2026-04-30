@@ -2,14 +2,26 @@
    Remap the dark theme controls to the light card palette. Outside of
    `.pn` the global dark MUI theme still applies. */
 
-.pn .MuiOutlinedInput-root {
+.pn .MuiOutlinedInput-root.MuiInputBase-root {
     background: var(--pn-bg-input);
     color: var(--pn-text);
-    min-height: 28px;
+    /* Compact input chrome matched across every widget (NumberField,
+       TextFieldRow, SelectField, …). 22px keeps multi-row nodes vertically
+       dense without sacrificing hit-area. `!important` on the size-critical
+       rules is necessary because MUI's own outlined-input defaults
+       (`padding: 8.5px 14px` and friends) come in via emotion's runtime
+       <style> injection AFTER our static stylesheet — at equal selector
+       specificity emotion would otherwise win every cascade. The `.pn`
+       scope means we never affect the dark toolbar/sidebar inputs. */
+    min-height: 22px !important;
     box-sizing: border-box;
     display: flex;
     align-items: center;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.pn .MuiInputBase-root.MuiInputBase-sizeSmall {
+    min-height: 22px !important;
 }
 
 .pn .MuiOutlinedInput-root.MuiInputBase-multiline {
@@ -37,24 +49,33 @@
     border-width: 1px;
 }
 
-.pn .MuiInputBase-input,
-.pn .MuiSelect-select {
+.pn .MuiInputBase-root .MuiInputBase-input,
+.pn .MuiInputBase-root .MuiSelect-select {
     color: var(--pn-text);
-    font-size: 13px;
+    font-size: 11px;
 }
 
-.pn .MuiOutlinedInput-input.MuiInputBase-inputSizeSmall {
-    padding: 0 14px;
+/* MUI v9 dropped the `inputSizeSmall` / `inputMultiline` utility classes
+   from the inner <input> — size/multiline modifiers now live on the root
+   wrapper only, and the inner element just carries `MuiOutlinedInput-input`
+   plus an emotion-generated class with the size variant baked in. So we
+   target the input through the wrapper instead. `!important` keeps us
+   ahead of MUI's runtime-injected `padding: 8.5px 14px` size=small variant
+   (specificities tie, source order is non-deterministic with HMR). */
+.pn .MuiOutlinedInput-root .MuiOutlinedInput-input {
+    padding: 2px 8px !important;
     line-height: 1.2;
 }
 
-.pn .MuiOutlinedInput-input.MuiInputBase-inputMultiline {
-    padding: 8px 12px !important;
+.pn .MuiOutlinedInput-root.MuiInputBase-multiline .MuiOutlinedInput-input {
+    padding: 6px 10px !important;
     line-height: 1.45;
 }
 
-.pn .MuiInputBase-sizeSmall {
-    min-height: 28px;
+/* Select arrow needs a bit more right padding so the chevron doesn't
+   crowd the value text at our reduced horizontal padding. */
+.pn .MuiOutlinedInput-root .MuiSelect-select {
+    padding-right: 26px !important;
 }
 
 .pn .MuiInputBase-input::placeholder {

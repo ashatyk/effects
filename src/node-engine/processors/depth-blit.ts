@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BufferImageSource, Texture } from 'pixi.js'
+import { BufferImageSource } from 'pixi.js'
 import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type IDataflowEngine, type DepthRawData } from '../types'
 
@@ -49,9 +49,18 @@ export class DepthBlitProcessor extends BaseProcessor {
             this._uploadSrc.update()
         }
 
-        const uploadTex = new Texture({ source: this._uploadSrc })
+        /* `renderPassInto` only needs the `TextureSource` to wire as a
+           uniform sampler — wrapping it in a fresh `Texture` per execute
+           was leaking one Pixi Texture per frame under any always-dirty
+           upstream (the Effect → DepthBlit chain hits this every tick). */
         const rt = this.ensureRT(w, h)
-        engine.renderPassInto(rt, DEPTH_BLIT_FRAG, { depthRawTex: uploadTex.source })
+        engine.renderPassInto(rt, DEPTH_BLIT_FRAG, { depthRawTex: this._uploadSrc })
         return { texture: rt.source }
+    }
+
+    destroy(): void {
+        super.destroy()
+        this._uploadSrc?.destroy()
+        this._uploadSrc = null
     }
 }

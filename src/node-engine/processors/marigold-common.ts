@@ -70,6 +70,8 @@ export abstract class MarigoldProcessor extends BaseProcessor {
         if (src !== this.lastImageSrc && src != null) {
             this.lastImageSrc = src
 
+            /* One-shot wrapper for extract; dropped in the `finally` so
+               we don't leak one Texture per image change. */
             const texture = new Texture({ source: src })
             const renderer = engine.app.renderer as any
             Promise.resolve()
@@ -83,6 +85,7 @@ export abstract class MarigoldProcessor extends BaseProcessor {
                     this.status = 'error'
                     this.onChange?.()
                 })
+                .finally(() => { texture.destroy() })
         } else if (src == null) {
             this.lastImageSrc = null
         }

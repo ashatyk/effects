@@ -26,9 +26,19 @@ export class MaterialEstimateProcessor extends MarigoldProcessor {
     private metallicSrc: TextureSource | null = null
 
     protected async handleResult(json: any): Promise<void> {
-        this.albedoSrc = await b64ToTextureSource(json.albedo)
-        this.roughnessSrc = await b64ToTextureSource(json.roughness)
-        this.metallicSrc = await b64ToTextureSource(json.metallic)
+        /* Decode all three first, THEN swap and dispose the previous
+           generation atomically — failing halfway through (e.g. one of
+           the b64 strings is malformed) shouldn't leave the node with a
+           mismatched mix of new + old maps. */
+        const nextAlbedo = await b64ToTextureSource(json.albedo)
+        const nextRoughness = await b64ToTextureSource(json.roughness)
+        const nextMetallic = await b64ToTextureSource(json.metallic)
+        this.albedoSrc?.destroy()
+        this.roughnessSrc?.destroy()
+        this.metallicSrc?.destroy()
+        this.albedoSrc = nextAlbedo
+        this.roughnessSrc = nextRoughness
+        this.metallicSrc = nextMetallic
         this.statusText = `Material maps ${this.albedoSrc.width}x${this.albedoSrc.height}`
     }
 
@@ -39,5 +49,15 @@ export class MaterialEstimateProcessor extends MarigoldProcessor {
             roughness: this.roughnessSrc,
             metallic: this.metallicSrc,
         }
+    }
+
+    destroy(): void {
+        super.destroy()
+        this.albedoSrc?.destroy()
+        this.roughnessSrc?.destroy()
+        this.metallicSrc?.destroy()
+        this.albedoSrc = null
+        this.roughnessSrc = null
+        this.metallicSrc = null
     }
 }

@@ -83,6 +83,8 @@ export class DepthEstimateProcessor extends BaseProcessor {
             this.lastImageSrc = src
             this.initWorker()
 
+            /* One-shot wrapper for extract; dropped after the readback so
+               we don't leak one Texture per image change. */
             const texture = new Texture({ source: src })
             const renderer = engine.app.renderer as any
             Promise.resolve()
@@ -94,6 +96,7 @@ export class DepthEstimateProcessor extends BaseProcessor {
                     this.statusText = 'Failed to extract image'
                     this.onChange?.()
                 })
+                .finally(() => { texture.destroy() })
         } else if (src == null) {
             this.lastImageSrc = null
         }

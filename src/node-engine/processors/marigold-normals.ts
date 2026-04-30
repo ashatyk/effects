@@ -20,12 +20,20 @@ export class MarigoldNormalsProcessor extends MarigoldProcessor {
     private normalsSrc: TextureSource | null = null
 
     protected async handleResult(json: any): Promise<void> {
-        this.normalsSrc = await b64ToTextureSource(json.normals)
+        const next = await b64ToTextureSource(json.normals)
+        this.normalsSrc?.destroy()
+        this.normalsSrc = next
         this.statusText = `Normals ${this.normalsSrc.width}x${this.normalsSrc.height}`
     }
 
     execute(inputs: Record<string, any>, _params: Record<string, any>, engine: IDataflowEngine): Record<string, any> {
         this.triggerFromInput(inputs, engine)
         return { texture: this.normalsSrc }
+    }
+
+    destroy(): void {
+        super.destroy()
+        this.normalsSrc?.destroy()
+        this.normalsSrc = null
     }
 }
