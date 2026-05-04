@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Texture } from 'pixi.js'
 import { BaseProcessor } from './base-processor'
-import { SLOT, type ProcessorDef, type IDataflowEngine } from '../types'
+import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples } from '../types'
 import { createSamWorker } from '../../engine/sam/create-worker'
 import type { SamPoint, SamWorkerResponse } from '../../engine/sam/types'
 
@@ -10,9 +10,9 @@ type Status = 'idle' | 'loading-model' | 'encoding' | 'ready' | 'decoding' | 'er
 export const segmentationDef: ProcessorDef = {
     type: 'segmentation',
     title: 'Segmentation',
-    category: 'input',
+    category: 'contour',
     inputs: [{ name: 'image', type: SLOT.TEXTURE }],
-    outputs: [{ name: 'polygon', type: SLOT.POLYGON }],
+    outputs: [{ name: 'contour', type: SLOT.CONTOUR }],
     defaultParams: {},
 }
 
@@ -31,6 +31,8 @@ export class SegmentationProcessor extends BaseProcessor {
 
     private engineRef: IDataflowEngine | null = null
     private lastImageSrc: any = null
+    private cachedContour: ContourSamples | null = null
+    private cachedPolygonRef: number[] | null = null
 
     private initSam(): void {
         if (this.worker) return
@@ -134,7 +136,100 @@ export class SegmentationProcessor extends BaseProcessor {
             this.lastImageSrc = null
         }
 
-        return { polygon: this.polygon.length >= 6 ? this.polygon : null }
+        return { contour: this.buildContour() }
+    }
+
+    /**
+     * Build a `ContourSamples` packet directly from the SAM-derived polygon
+     * point list. The output is the platform-agnostic shape every downstream
+     * consumer (`contourPreview`, `contourResample`, `sdfFromContour`,
+     * `effect.contour`) expects, so the segmentation node now plugs straight
+     * into them without an intermediate adapter. Cached by reference so we
+     * don't recompute the buffers when SAM hasn't fired a new mask.
+     */
+    private buildContour(): ContourSamples | null {
+        const poly = this.polygon
+        if (poly.length < 6) {
+            this.cachedContour = null
+            this.cachedPolygonRef = null
+            return null
+        }
+        if (this.cachedContour && this.cachedPolygonRef === poly) return this.cachedContour
+
+        /* SAM emits a closed loop with the first point repeated as the last.
+           Drop the duplicate so downstream consumers see a clean ring whose
+           closing edge is implicit (i ↔ (i+1) % count). */
+        let M = poly.length >> 1
+        if (
+            M >= 2 &&
+            Math.abs(poly[0] - poly[(M - 1) * 2]) < 1e-6 &&
+            Math.abs(poly[1] - poly[(M - 1) * 2 + 1]) < 1e-6
+        ) {
+            M--
+        }
+        if (M < 3) {
+            this.cachedContour = null
+            this.cachedPolygonRef = null
+            return null
+        }
+
+        const positions = new Float32Array(M * 2)
+        for (let i = 0; i < M; i++) {
+            positions[i * 2] = poly[i * 2]
+            positions[i * 2 + 1] = poly[i * 2 + 1]
+        }
+
+        const arcS = new Float32Array(M)
+        let total = 0
+        arcS[0] = 0
+        for (let i = 1; i < M; i++) {
+            const dx = positions[i * 2] - positions[(i - 1) * 2]
+            const dy = positions[i * 2 + 1] - positions[(i - 1) * 2 + 1]
+            total += Math.hypot(dx, dy)
+            arcS[i] = total
+        }
+        /* Closing edge: only contributes to totalLength, not to arcS (whose
+           last entry stays at the last raw vertex's distance — same convention
+           as ContourResample's output). */
+        {
+            const dx = positions[0] - positions[(M - 1) * 2]
+            const dy = positions[1] - positions[(M - 1) * 2 + 1]
+            total += Math.hypot(dx, dy)
+        }
+
+        const tangents = new Float32Array(M * 2)
+        for (let i = 0; i < M; i++) {
+            const ip = (i - 1 + M) % M
+            const inext = (i + 1) % M
+            let tx = positions[inext * 2] - positions[ip * 2]
+            let ty = positions[inext * 2 + 1] - positions[ip * 2 + 1]
+            const len = Math.hypot(tx, ty) || 1
+            tangents[i * 2] = tx / len
+            tangents[i * 2 + 1] = ty / len
+        }
+
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (let i = 0; i < M; i++) {
+            const x = positions[i * 2]
+            const y = positions[i * 2 + 1]
+            if (x < minX) minX = x
+            if (y < minY) minY = y
+            if (x > maxX) maxX = x
+            if (y > maxY) maxY = y
+        }
+
+        this.cachedContour = {
+            version: 1,
+            closed: true,
+            count: M,
+            totalLength: total,
+            aabb: [minX, minY, maxX, maxY],
+            positions,
+            tangents,
+            arcS,
+        }
+        this.cachedPolygonRef = poly
+        return this.cachedContour
     }
 
     destroy(): void {

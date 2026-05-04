@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Container, Sprite, Texture } from 'pixi.js'
 import { BaseProcessor } from './base-processor'
-import { SLOT, type ProcessorDef, type IDataflowEngine } from '../types'
+import { SLOT, type ProcessorDef, type IDataflowEngine, type TextStyle } from '../types'
 
-const DEFAULT_TEXT = 'Купи в комплекте'
 const DEFAULT_FONT = '"Inter", "Helvetica Neue", "Arial", "Noto Sans", sans-serif'
+const DEFAULT_STYLE: TextStyle = { font: DEFAULT_FONT, letterSpacing: 0, weight: 'bold', transform: 'none' }
 const STRIP_HEIGHT = 128 // px — internal canvas height; final on-canvas size driven by uTextHeight uniform.
 const FONT_FRAC = 0.78   // glyph height / strip height
 const PADDING = 24       // px padding on each side for glow tails
@@ -13,52 +13,61 @@ export const textStripDef: ProcessorDef = {
     type: 'textStrip',
     title: 'Text Strip',
     category: 'input',
-    inputs: [],
+    inputs: [
+        { name: 'text', type: SLOT.TEXT, label: 'text' },
+        { name: 'style', type: SLOT.TEXT_STYLE, label: 'style (optional)' },
+    ],
     outputs: [
         { name: 'texture', type: SLOT.TEXTURE },
-        { name: 'aspect', type: SLOT.NUMBER },
     ],
-    defaultParams: {
-        text: DEFAULT_TEXT,
-        font: DEFAULT_FONT,
-        letterSpacing: 0,
-    },
+    defaultParams: {},
 }
 
 /**
  * Renders a phrase as a single horizontal raster strip into a RenderTexture.
  * Downstream effects can stretch this strip along a contour as a ribbon.
  *
- * Outputs:
- *   - `texture`: TextureSource of the strip
- *   - `aspect`:  width / height of the strip; consumers use it to compute the
- *                natural arc length for one phrase repetition.
+ * Inputs:
+ *   - `text`:  TEXT — required. When missing or empty, the node holds its
+ *              previous frame and reports an idle status.
+ *   - `style`: TEXT_STYLE — optional; falls back to a sensible default
+ *              (Inter, regular spacing, bold, no case transform).
+ *
+ * Output:
+ *   - `texture`: TextureSource of the strip. Downstream consumers can
+ *                derive the aspect ratio from `texture.width / texture.height`
+ *                (Effect node already does this for every `uTxcn{i}` slot
+ *                via the auto-generated `uTxcn{i}Aspect` uniform).
  */
 export class TextStripProcessor extends BaseProcessor {
     readonly def = textStripDef
 
     private cacheKey: string | null = null
-    private cachedAspect = 1
     private generating = false
 
-    execute(_inputs: Record<string, any>, params: Record<string, any>, engine: IDataflowEngine): Record<string, any> {
-        const text = String(params.text ?? DEFAULT_TEXT)
-        const font = String(params.font ?? DEFAULT_FONT)
-        const letterSpacing = Math.max(-50, Math.min(200, Number(params.letterSpacing ?? 0) || 0))
-        const key = `${text}::${font}::${letterSpacing}`
+    execute(inputs: Record<string, any>, _params: Record<string, any>, engine: IDataflowEngine): Record<string, any> {
+        const rawText = typeof inputs.text === 'string' ? inputs.text : ''
+        const style: TextStyle = sanitiseStyle(inputs.style)
+        const text = applyTransform(rawText, style.transform)
+        if (text.length === 0) {
+            this.cacheKey = null
+            return { texture: null }
+        }
+        const key = `${text}::${style.font}::${style.letterSpacing}::${style.weight}`
         if (this.cacheKey === key && this._outputRT) {
-            return { texture: this._outputRT.source, aspect: this.cachedAspect }
+            return { texture: this._outputRT.source }
         }
         if (!this.generating) {
             this.generating = true
-            this.buildStrip(text, font, letterSpacing, key, engine)
+            this.buildStrip(text, style, key, engine)
         }
-        return { texture: null, aspect: this.cachedAspect }
+        return { texture: null }
     }
 
-    private buildStrip(text: string, font: string, letterSpacing: number, key: string, engine: IDataflowEngine): void {
+    private buildStrip(text: string, style: TextStyle, key: string, engine: IDataflowEngine): void {
         const fontSize = STRIP_HEIGHT * FONT_FRAC
-        const cssFont = `bold ${fontSize}px ${font}`
+        const weightToken = style.weight === 'bold' ? 'bold ' : ''
+        const cssFont = `${weightToken}${fontSize}px ${style.font}`
 
         /* Web fonts (Google Fonts, @font-face etc.) load asynchronously. If we
            rasterise the strip before the typeface is available, Canvas2D
@@ -71,7 +80,7 @@ export class TextStripProcessor extends BaseProcessor {
             ? document.fonts.load(cssFont).catch(() => undefined)
             : Promise.resolve()
 
-        fontReady.then(() => this.rasteriseStrip(text, cssFont, letterSpacing, key, engine))
+        fontReady.then(() => this.rasteriseStrip(text, cssFont, style.letterSpacing, key, engine))
     }
 
     private rasteriseStrip(text: string, cssFont: string, letterSpacing: number, key: string, engine: IDataflowEngine): void {
@@ -142,13 +151,29 @@ export class TextStripProcessor extends BaseProcessor {
                 engine.app.renderer.render({ container, target: rt, clear: true })
                 container.destroy({ children: true })
                 this.cacheKey = key
-                this.cachedAspect = stripW / STRIP_HEIGHT
                 this.generating = false
                 engine.markDirty(this.nodeId)
             }
             img.src = url
         }, 'image/png')
     }
+}
+
+function sanitiseStyle(input: unknown): TextStyle {
+    if (!input || typeof input !== 'object') return DEFAULT_STYLE
+    const s = input as Partial<TextStyle>
+    return {
+        font: typeof s.font === 'string' && s.font.length > 0 ? s.font : DEFAULT_STYLE.font,
+        letterSpacing: Number.isFinite(s.letterSpacing) ? Number(s.letterSpacing) : DEFAULT_STYLE.letterSpacing,
+        weight: s.weight === 'regular' ? 'regular' : 'bold',
+        transform: s.transform === 'upper' || s.transform === 'lower' ? s.transform : 'none',
+    }
+}
+
+function applyTransform(text: string, transform: TextStyle['transform']): string {
+    if (transform === 'upper') return text.toUpperCase()
+    if (transform === 'lower') return text.toLowerCase()
+    return text
 }
 
 function measureGlyphsManual(ctx: CanvasRenderingContext2D, text: string, letterSpacing: number): number {

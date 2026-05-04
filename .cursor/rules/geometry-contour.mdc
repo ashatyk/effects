@@ -1,0 +1,196 @@
+---
+description: Geometry pipeline — segmentation → contourResample → sdfFromContour / contourPreview / instanced effects, ContourSamples format, orientation, smoothing, offsetting, curvature-adaptive resampling. Read before changing any contour/SDF/instanced pass.
+alwaysApply: true
+---
+
+# Geometry & contour pipeline
+
+All polygon-shaped data flows as **`CONTOUR`** (`ContourSamples` SoA). There is no `POLYGON` slot in the live engine. The legacy `polygon` processor and the `coords_tex` route through the SDF stage have been deleted; SDF generation now goes through `sdfFromContour`, which builds the coords texture from `ContourSamples` internally.
+
+## `ContourSamples` (the wire format)
+
+```ts
+ContourSamples {
+  version: 1
+  closed: boolean        // true everywhere in the live pipeline
+  count: number          // N sample points
+  totalLength: number    // pixel length of the whole closed loop (incl. closing edge)
+  aabb: [minX, minY, maxX, maxY]
+  positions: Float32Array  // length = N*2, [x0,y0, x1,y1, ...]
+  tangents:  Float32Array  // length = N*2, unit-length, [tx0,ty0, ...]
+  arcS:      Float32Array  // length = N,   physical arc length at each sample
+}
+```
+
+Conventions:
+
+- The ring is closed implicitly: edge `i ↔ (i+1) % N`. Producers must NOT duplicate the first vertex at the end (segmentation strips the SAM-supplied duplicate).
+- `arcS` values are monotonically increasing in `[0, totalLength)`. They are **physical** arc lengths even when the producer redistributed vertices non-uniformly (curvature-adaptive mode).
+- `tangents[i]` is the unit derivative of the closed ring (computed from `positions[(i-1) % N]` and `positions[(i+1) % N]`).
+- `positions` are in pixel space matching the canvas the upstream processor was sized to (typically the source image resolution from `image` or `segmentation`).
+- `aabb` stays in the same pixel space.
+- `closed = true` is assumed by every downstream consumer in the current catalogue. Open-curve support would need new producers and consumers.
+
+## Pipeline
+
+```
+image (TEXTURE) ──► segmentation (image → CONTOUR + internal mask + UI markers)
+                              │
+                              ├──────────────────► contourPreview (debug)
+                              │
+                              ├──────────────────► contourResample (CONTOUR → CONTOUR)  [optional]
+                              │                            │
+                              │                            └──► (smoother / curvature-adaptive / offset)
+                              │
+                              ├──────────────────► sdfFromContour (CONTOUR → TEXTURE: SDF)
+                              │
+                              └──────────────────► effect (CONTOUR + SDF + animation + ...)
+```
+
+The Effect node's `contour` input is required by every instanced pass (those that declare `requiresInputs: ['contour']`) and by some fullscreen passes. `contourResample` is **optional** — `segmentation` already emits a usable `ContourSamples` packet. Insert it when you need:
+
+- Smoothing the SAM polygon before SDF generation.
+- Uniform arc-length distribution (constant `dN`) for predictable instanced step.
+- Curvature-adaptive distribution for tighter mesh on bends.
+- An outward offset (shift the contour onto a parallel curve before rendering).
+
+## Segmentation (`segmentationProcessor`)
+
+Web-worker driven SAM (Segment Anything). The processor owns:
+
+- `worker: Worker | null` (lazy-initialised on first `image` input change).
+- Status machine: `idle | loading-model | encoding | ready | decoding | error`.
+- `points: SamPoint[]` — user-placed positive/negative markers.
+- `polygon: number[]` — flat `[x0, y0, x1, y1, ...]` returned by SAM after `decode`.
+- `maskData: { mask: number[], width, height } | null` — binary mask (1/0 per pixel).
+- `cachedContour` / `cachedPolygonRef` — internal caches keyed by polygon array reference.
+
+Flow on a fresh `image` input:
+
+1. `init SAM worker` (`load_model`).
+2. Extract the input texture as PNG data URL via `renderer.extract.canvas`.
+3. Send `encode_image` to the worker → embeddings.
+4. After the user clicks points, send `decode` → polygon + mask.
+5. Each successful `decode` writes `polygon` and `maskData`, marks the node dirty.
+
+Output:
+
+- `contour: CONTOUR` — built by `buildContour()` from `polygon`. Cached by polygon array reference, so re-execution on every frame is essentially free.
+
+`buildContour()` does:
+
+- Drop the duplicate first/last vertex if SAM closed the ring.
+- Reject polygons with `< 3` distinct vertices (returns `null`).
+- Compute per-vertex `arcS` (cumulative chord length up to vertex i, **excluding** the closing edge — by convention `arcS[N-1]` is the distance to the last raw vertex).
+- Compute closing-edge contribution into `totalLength` (so `totalLength > arcS[N-1]`).
+- Compute unit tangents from `positions[i-1]` and `positions[i+1]` modulo N.
+- Compute AABB.
+- Mark `closed = true`.
+
+The `points`, `polygon`, and `maskData` fields are read by the SegmentationNodeView (point editor + status text) and by the snapshot serializer (`useSceneHistory.serializeScene` writes them under `segPoints` / `segPolygon` / `segMaskKey`).
+
+## ContourResample (`contourResampleProcessor`)
+
+`category: 'contour'`. Inputs: `contour: CONTOUR`. Outputs: `contour: CONTOUR`. Pure computation — no GPU resources, no `alwaysDirty`.
+
+### Pipeline (in order)
+
+1. `contourToPairs` — unpack to `[number, number][]`.
+2. `ensureOrientation(pts, force)` — by signed-area; force = `'auto' | 'cw' | 'ccw'`. `auto` normalises to CCW.
+3. Smoothing:
+   - `chaikin` — corner cutting, 4× resolution per iteration.
+   - `laplacian` — Taubin-style with `lambda ∈ [0, 1]` (no shrink correction; `0.5` is the sweet spot).
+   - `chaikin+laplacian` — Chaikin first, then Laplacian.
+4. Edge lengths → `totalLength`. If `totalLength ≤ 1e-3` bail.
+5. Uniform arc-length resampling onto `N = sampleCount` points (8..2048).
+6. Recompute unit tangents on the resampled ring.
+7. **Optional outward offset** (`offsetPx ≠ 0`):
+   - Shift each sample by `±tangent_perp * offsetPx` (CCW outward = `(-ty, +tx)`).
+   - `removeSelfIntersections(shifted)` — find segment pairs that cross, drop the shorter loop, replace with the intersection point. Up to 64 passes; O(M²) per pass, fine for M ≤ 2048.
+   - Re-resample the cleaned ring back to N points (`resampleClosedRing`).
+8. **Optional curvature-adaptive redistribution** (`adaptive && adaptiveStrength > 0`):
+   - Discrete Menger curvature `κ_i = 2|cross| / (|v1|·|v2|·|chord|)`.
+   - 3-tap box smooth on κ to suppress single-vertex spikes.
+   - Per-vertex density `1 + boost·κ̂` with `boost = 8`, `strength` interpolates between uniform and full curvature-weighted.
+   - Resample in **weighted** arc length, decode back to physical positions.
+   - Emit physical `arcS` (UV-mapped consumers see the same arc-length parameterisation as in uniform mode — only the geometry vertex distribution changes).
+9. Recompute AABB from final positions.
+
+Caching:
+
+- `CacheKey { contourRef, smoothMethod, chaikinIters, laplacianIters, laplacianLambda, sampleCount, offsetPx, forceOrientation, adaptive, adaptiveStrength }`.
+- `contourRef` is the upstream `ContourSamples` reference; cache hits when the same packet flows in unchanged (segmentation caches by polygon ref → resample sees the same object across frames). Recomputes on parameter edit.
+
+### Param ranges
+
+| Param | Range | Default |
+|-------|-------|---------|
+| `smoothMethod` | `'none' \| 'chaikin' \| 'laplacian' \| 'chaikin+laplacian'` | `'chaikin+laplacian'` |
+| `chaikinIters` | `0..4` | `2` |
+| `laplacianIters` | `0..16` | `4` |
+| `laplacianLambda` | `0..1` | `0.5` |
+| `sampleCount` | `8..2048` | `256` |
+| `offsetPx` | float | `0` |
+| `forceOrientation` | `'auto' \| 'cw' \| 'ccw'` | `'auto'` |
+| `adaptive` | bool | `false` |
+| `adaptiveStrength` | `0..1` | `0.5` |
+
+## SDF generation (`sdfFromContourProcessor`)
+
+`category: 'imageOp'`. Input: `contour: CONTOUR`. Output: `sdf: TEXTURE`. Renders an unsigned distance map directly from `ContourSamples`.
+
+Internals:
+
+1. `buildCoordsTextureFromContour(contour, w, h)` (`pipeline/coords.ts`):
+   - Normalise positions to `[0, 1]` against `(canvasW, canvasH)`.
+   - Pack into an RGBA8 image of size `⌈√N⌉ × ⌈N / w⌉` (R = X·255, G = Y·255).
+   - `Texture.from(canvas)`, `scaleMode = 'nearest'`. Owned by the processor; destroyed when the contour reference or canvas size changes.
+2. `engine.renderPassInto(rt, SdfFragment, { uniforms, uPointTexture: cachedCoords.tex.source })` with `uPointTexelCount` = N and `uPointTextureDim` = `[w, h]` of the coords texture.
+
+The fragment lives in `pipeline/passes/sdf-pure.ts`. It computes the Euclidean distance from each output pixel to the nearest segment of the closed ring, packs the unsigned 24-bit distance into RGB, and writes `inside`-flag in A.
+
+Caching:
+
+- `cachedContour` (reference equality), `cachedW`/`cachedH` (canvas resolution), `cachedCoords`/`cachedTexDim`. Recomputes on contour or resolution change.
+
+Resolution:
+
+- `resolveRes` falls back to `defaultWidth × defaultHeight` (900×1200) unless an upstream texture provides dimensions. There is no source image input, so the SDF resolution is independent of the input texture and matches the engine's canvas defaults.
+
+## Contour preview (`contourPreviewProcessor`)
+
+`category: 'output'`. Input: `contour: CONTOUR`. No outputs. The view reads `proc.contour` directly via `engine.getProcessor(id)` and draws an outline + sample dots on a Canvas2D inside the node card. Headless and graph modes both render.
+
+## Effect node — instanced passes
+
+Effect manifests with `kind: 'instanced'` consume `contour: CONTOUR` via `EffectProcessor.buildInstancedMesh`. Two scrolling modes (declared in `pass.scrolling.mode`):
+
+### `'glyph'` (one instance per glyph anchored at one point)
+
+- Resampled by `resampleContourScrolling(contour, spacingPx, phasePx)`.
+- `spacingPx`: explicit (`pass.scrolling.spacingField`) or auto = `totalLength / (phraseLen * repeats)` from `phraseLenField` / `repeatsField`. Falls back to 1 if not configured.
+- Streams: `positions`, `tangents`, `arcS`. Each instance is a single point on the curve at multiple of `spacing` plus `phase`.
+- Geometry: a centred unit quad in `[-1, 1]²`; the vertex shader scales it by per-instance radius / dot size.
+
+### `'ribbon'` (one instance per arc segment forming a tilted strip)
+
+- Resampled by `resampleContourRibbon(contour, segmentSizePx, phasePx)`.
+- `N = max(8, round(totalLength / segmentSizePx))`, then `segSize = totalLength / N` (so segments tile exactly).
+- Streams: `positions`, `tangents`, `arcS` for **start** of each segment, plus `positionsNext`, `tangentsNext`, `arcSNext` for the end.
+- Segment positions are anchored to fixed points on the contour and **do NOT move with phase** — only `arcS` / `arcSNext` carries the phase offset (`s + phasePx`). This is what makes text scroll *through* the static ribbon instead of the ribbon dragging text along (the two motions otherwise cancel out and the text looks frozen).
+- Geometry: a unit quad with `aLocal.x ∈ {0,1}` (start/end along curve) and `aLocal.y ∈ {0,1}` (inner/outer side of strip). Vertex shader builds a quad per segment from `aPosition`/`aPositionNext`/`aTangent`/`aTangentNext`.
+
+### Phase slot
+
+`pass.scrolling.phaseSlot` (default 0) selects which channel's `.value` drives the contour scroll phase in pixels. Speed is upstream (the Timer driving that slot). There is no `speedField`.
+
+`uContourLen = contour.totalLength` is bound as a uniform on every Effect frame; ribbon shaders use it to compute UV.x in arc-length space.
+
+## Common pitfalls
+
+- **Importing `ContourSamples` from `pipeline/types.ts`** — the type lives in `node-engine/types.ts`. `pipeline/coords.ts` already imports it from there.
+- **Returning unnormalised positions from a custom contour producer** — every consumer assumes pixel-space coordinates aligned to the same canvas. If you produce in `[0,1]` UV space, multiply by canvas dimensions before publishing.
+- **Forgetting to mark `closed = true`** — the open-curve case is unimplemented; consumers will misbehave.
+- **Mutating `positions` / `tangents` / `arcS` in-place across frames** — caches all use reference equality. If you need to update a contour, publish a fresh `ContourSamples` packet.
+- **Consuming `arcS` as if it includes the closing edge** — by convention `arcS[N-1] < totalLength`. Use `totalLength - arcS[N-1]` if you need the closing edge length explicitly.
+- **Passing a `ContourSamples` with `count < 3`** — every consumer rejects it (`return null` / fail-closed). Producers must guard at the source.

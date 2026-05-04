@@ -20,7 +20,7 @@ import type { CoordsTexture } from '../../pipeline/types'
 export const sdfFromContourDef: ProcessorDef = {
     type: 'sdfFromContour',
     title: 'SDF from Contour',
-    category: 'imageOp',
+    category: 'contour',
     inputs: [
         { name: 'contour', type: SLOT.CONTOUR, label: 'contour' },
     ],

@@ -1,0 +1,463 @@
+---
+description: Complete reference for every shipped processor (27 nodes) — type, category, inputs, outputs, params, behaviour, caches, edge cases. Read before editing or wiring any processor.
+alwaysApply: true
+---
+
+# Processor catalogue
+
+One section per processor in `PROCESSOR_CATALOG`. Each section has a uniform shape:
+
+- **Type / Category / `alwaysDirty`**.
+- **Inputs / Outputs** (handle name → SLOT, label).
+- **Params** (default → range / allowed values).
+- **Behaviour** (what `execute` does, in 2–6 bullets).
+- **State / caches** (instance fields that survive across frames).
+- **Notes** (non-obvious gotchas, pitfalls, dependencies).
+
+For deeper subsystem context see the dedicated rules:
+
+- `node-engine.mdc` — engine + BaseProcessor.
+- `animation-system.mdc` — event/signal/channel chain.
+- `geometry-contour.mdc` — segmentation/contour/SDF chain.
+- `text-composition.mdc` — text + textStyle + textStrip chain.
+- `effects-and-shaders.mdc` — Effect runtime, manifest format.
+
+Categories: `input`, `animTrigger`, `animMod`, `animCtrl`, `imageOp`, `contour`, `output`, `util`. Legacy `depth`/`ai`/`source`/`process`/`marigold`/`dnf` aliases are tolerated for snapshot back-compat (mapped to fallback colours, no live processors use them).
+
+---
+
+## INPUT (6)
+
+### `number`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `value: NUMBER`.
+- **Params**: `value: 0` (any finite).
+- **Behaviour**: returns `{ value: params.value ?? 0 }`. Pure constant source.
+- **State**: none.
+- **Notes**: useful as a static knob fanning into multiple consumers (e.g. `radius` of two Blur passes). Re-execution only on param edit.
+
+### `constantSignal`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `signal: SIGNAL`.
+- **Params**: `value: 0` (any finite), `state: false` (boolean).
+- **Behaviour**: emits a fixed `Signal { value, time: 0, age: 0, state: state ? 1 : 0, lastTimestampMs: 0 }`. No internal clock — `time / age` are zero by design (the value is constant, not driven). The optional `state` toggle simulates "clip in flight" so shaders that gate on `uChan{i}.w` can be exercised without wiring a real `eventEmitter → envelope` chain.
+- **State**: none.
+- **Notes**:
+    - SIGNAL counterpart of `number` (which emits NUMBER). Use to pin a single AnimationController channel to a static value without a Timer + Interpolator pair, to deliberately disable a channel by feeding `0` (vs leaving it unwired, which already yields 0 — but a wired Constant makes the intent explicit on the canvas), or for quick A/B compares in shader debugging.
+    - Pure function of params → re-execution only on param edit. Downstream `alwaysDirty` consumers (controller, switch) keep ticking regardless.
+
+### `image`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `texture: TEXTURE`.
+- **Params**: empty by default; URL is set imperatively via `proc.setImageUrl(url, engine)`.
+- **Behaviour**:
+  - On URL change: destroys previous Sprite, calls `Assets.unload(prevUrl)` (fire-and-forget) so the previous bitmap doesn't pin in Pixi's global `Assets` cache, then asks engine to mark dirty.
+  - On `execute`, lazily loads the image into a Sprite, sizes the Sprite to the texture's intrinsic dimensions, renders into a recycled RT.
+  - Returns `{ texture: rt.source, width, height }` (last two help downstream `resolveRes`).
+  - While loading, returns `{ texture: null, width: 0, height: 0 }` and re-queues a dirty mark on completion.
+- **State**: `loadedUrl`, `sprite`, `imgW`/`imgH`, `loading` flag.
+- **Notes**:
+  - Persistence (`useSceneHistory`) reads `proc.loadedUrl` and stores image data URLs to a Dexie blob keyed `img:<nodeId>`. Restoration calls `setImageUrl` with the rehydrated data URL.
+  - `destroy()` unloads the asset and destroys the sprite without destroying the texture (Assets owns it).
+
+### `text`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `text: TEXT`.
+- **Params**: `value: 'Купи в комплекте'` (any string).
+- **Behaviour**: emits `{ text: String(params.value ?? '') }`. Empty string is legal.
+- **State**: none.
+- **Notes**: pure source, no connection hints in the view (input nodes don't lecture about wiring).
+
+### `textStyle`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `style: TEXT_STYLE`.
+- **Params**: `font: '"Inter", "Helvetica Neue", "Arial", "Noto Sans", sans-serif'`, `letterSpacing: 0`, `weight: 'bold'`, `transform: 'none'`.
+- **Behaviour**: `execute()` sanitises every field — font falls back to default if empty, `letterSpacing` clamped to `[-50, 200]`, `weight` strict allowlist, `transform` strict allowlist.
+- **State**: none.
+- **Notes**: kept distinct from `CONFIG` so users can't wire it into `effect.config`. See `text-composition.mdc`.
+
+### `textStrip`
+
+- **Category**: `input`. Not `alwaysDirty`.
+- **Inputs**: `text: TEXT` (required), `style: TEXT_STYLE` (optional, falls back to a sensible default).
+- **Outputs**: `texture: TEXTURE` (TextureSource of the rasterised strip).
+- **Params**: `{}`.
+- **Behaviour**:
+  - Empty text → `{ texture: null }`, cache cleared.
+  - Cache key = `text :: font :: letterSpacing :: weight`. Cache hit returns `_outputRT.source` immediately.
+  - Cache miss kicks off `buildStrip`: `document.fonts.load(cssFont)` → measure → render Canvas2D → blob → image → upload to `RenderTexture` → `engine.markDirty(this.nodeId)`.
+  - Internal canvas height = 128 px, glyph height = 78%, padding = 24 px each side.
+  - Letter spacing uses native `ctx.letterSpacing` when supported, falls back to glyph-by-glyph layout otherwise.
+- **State**: `cacheKey`, `generating: boolean`.
+- **Notes**:
+  - View shows a single StatusLine with the live aspect ratio (`texture.width / texture.height`) or "idle".
+  - Downstream effects derive the strip aspect from `uTxcn{i}Aspect` automatically.
+
+---
+
+## ANIMATION TRIGGERS (2)
+
+### `eventEmitter`
+
+- **Category**: `animTrigger`. **`alwaysDirty = true`**.
+- **Inputs**: —
+- **Outputs**: `event: EVENT`.
+- **Params**: `throttleMs: 0` (≥ 0). Set > 0 to reject emits that arrive faster than the configured interval (useful when bound to a hotkey or an external loop).
+- **Behaviour**:
+    - On-demand discrete event source. Bumps `count` and sets `lastTimestampMs` on every accepted `emit(x?, y?)` call. No DOM / canvas listener — the Emit button on the NodeView, a future hotkey, or any external bridge calls `emit` directly.
+    - Always dirty so downstream Envelopes / Combines / SignalSwitches see the freshest event-count.
+- **State**: `state: EventSignal`, `lastEmitTime`, `throttleMs`.
+- **Notes**:
+    - Decoupled from the canvas so it works equally from a node-card button (labelled **EMIT**), a future hotkey, or programmatic dispatch.
+    - If you need canvas-tap behaviour, build it in a sibling processor — keep this node as the pure on-demand event emitter.
+
+### `timer`
+
+- **Category**: `animTrigger`. **`alwaysDirty = true`**.
+- **Inputs**: —
+- **Outputs**: `signal: SIGNAL`.
+- **Params**:
+  - `mode: 'looped'` — `'looped' | 'unbounded'`.
+  - `durationMs: 2000` — period (ms), ≥ 1.
+  - `phaseOffsetMs: 0` — initial offset added to elapsed ms.
+  - `paused: false` — when true, freezes the elapsed-ms accumulator.
+- **Behaviour**:
+  - Accumulates per-frame `dt` only while `!paused`. Pause/resume is seamless — the phase picks up from where it left off.
+  - `value`: `looped` → `frac(elapsed / durationMs)` ∈ [0, 1); `unbounded` → `elapsed / durationMs` ∈ [0, ∞).
+  - `time = age = elapsed`. `state = paused ? 0 : 1`.
+- **State**: `accumulatedMs`, `lastTickMs`, `lastSignal` (exposed for live UI preview).
+- **Notes**:
+  - Replaces the legacy monolithic `autoTimer`. To restore the old shaped-waveform behaviour wire `Timer → Interpolator` and pick the matching profile (`sine`, `triangle`, etc.).
+  - `unbounded` mode is the canonical scroll-phase source. `paused` freezes any channel without resetting; combine with `phaseOffsetMs` to dial a static phase.
+  - Old snapshots referencing `autoTimer` log `Unknown processor type: autoTimer` and skip — the editor does not auto-migrate. Rebuild the chain manually.
+
+---
+
+## ANIMATION MODULATORS (3)
+
+### `envelope`
+
+- **Category**: `animMod`. **`alwaysDirty = true`**.
+- **Inputs**: `event: EVENT`.
+- **Outputs**: `signal: SIGNAL`.
+- **Params**:
+  - `shape: 'bell'` — one of `bell | rise | fall | plateau | gaussian | triangle`.
+  - `durationMs: 600`.
+  - `peakTime: 0.5` (`[0,1]`).
+  - `plateauHold: 0.4` (`[0,1]`).
+  - `attackEasing: 'linear'` / `decayEasing: 'linear'` — `linear | easeIn | easeOut | easeInOut`.
+  - `retriggerMode: 'restart'` — `restart | add | max`.
+- **Behaviour**:
+  - New event (count > lastSeen) spawns an `EnvelopeClip { startMs }`. `restart` keeps only the newest; `add`/`max` accumulate.
+  - Per-frame: drop expired clips, sample each via `sampleShape`, fold per `retriggerMode`, clamp final value to 0..1.
+  - `state = 1` while at least one clip is active.
+- **State**: `clips`, `lastSeenPulseCount`, `lastPulseTs`, `snapshot: EnvelopeSnapshot` (exposed for view's curve preview).
+- **Notes**: `getSnapshot()` returns `{ clips, value, durationMs, shape, peakTime, plateauHold, attackEasing, decayEasing }` — the view draws the live curve and play-head from this.
+
+### `interpolator`
+
+- **Category**: `animMod`. Not `alwaysDirty`.
+- **Inputs**: `signal: SIGNAL`.
+- **Outputs**: `signal: SIGNAL`.
+- **Params**:
+  - `profile: 'sine'` — one of `linear | sine | triangle | bell | gaussian | pulse | steps | square | sawTeeth`.
+  - `peakTime: 0.5` (`[0, 1]`) — used by `triangle | bell | gaussian | pulse`.
+  - `plateauHold: 0.4` (`[0, 1]`) — used by `pulse`.
+  - `easing: 'easeInOut'` — `linear | easeIn | easeOut | easeInOut`. Applied to attack/decay arms of continuous shaped profiles. Discrete profiles ignore it.
+  - `reverse: false` — mirrors output (`v → 1 − v`) across every profile.
+  - `stepCount: 4` (`[2, 64]`) — number of staircase levels for `steps`.
+  - `teethCount: 4` (`[1, 64]`) — pulse-train cycle count per period for `square` and `sawTeeth`.
+  - `dutyCycle: 0.5` (`[0, 1]`) — high-time fraction of each `square` cycle.
+  - `smoothness: 0` (`[0, 1]`) — fades discrete profiles between hard edges (`0`) and a fully smoothed equivalent (`1`).
+- **Behaviour**:
+  - With no input → emits idle signal `{ value: 0, state: 0, … }`.
+  - `linear` profile passes `input.value` through unchanged (preserves unbounded inputs).
+  - Every other profile takes `phase = input.value − floor(input.value)`. So `Timer mode=unbounded → Interpolator profile=sine` yields the same oscillation `Timer mode=looped → Interpolator profile=sine` would. Same applies to discrete profiles — `teethCount`/`stepCount` count cycles **per Timer period**.
+  - Discrete profiles: `steps` is a staircase quantizer with `smoothness`-controlled smoothstep transitions between levels (1 → linear ramp). `square` is a pulse train with `dutyCycle`/`smoothness` controlling the pulse width and edge feathering. `sawTeeth` is a sawtooth pulse train where `smoothness` widens the falling slope (1 → triangle).
+  - Output `time / age / state / lastTimestampMs` are passed through from the input; only `value` is reshaped.
+- **State**: `lastInput`, `lastSignal` (exposed for view's live curve + play-head).
+- **Notes**:
+  - Pure function of input → not `alwaysDirty`. Re-execution is driven by upstream propagation (Timer / Envelope / Combine are all `alwaysDirty`).
+  - Replaces the waveform half of the old `autoTimer`. The combination `Timer → Interpolator` is the new canonical "self-running shaped signal". For discrete animation (sprite frame counters, blink cycles, dashed scrolls), use `steps`/`square`/`sawTeeth` and dial `smoothness` to taste — speed still lives upstream on `Timer.durationMs`.
+  - `applyProfile` exported for the NodeView takes a single `ProfileParams` bag (`{ peakTime, plateauHold, easing, reverse, stepCount, teethCount, dutyCycle, smoothness }`) — keep callers in sync if you add a new param.
+
+### `combineSignals`
+
+- **Category**: `animMod`. **`alwaysDirty = true`**.
+- **Inputs**: `signal_a: SIGNAL`, `signal_b: SIGNAL`.
+- **Outputs**: `signal: SIGNAL`.
+- **Params**:
+    - `mode: 'a_overrides_b'` — `add | max | min | multiply | a_overrides_b | b_overrides_a | mix`.
+    - `mixFactor: 0.5` (`[0,1]`) — only for `mix`.
+- **Behaviour**: idle inputs default to `{ value: 0, state: 0, ... }`. `value` per mode (no clamping in `add`). `state = 1` if either input is active. `lastTimestampMs = max`. `time = max`. `age = min` (the more recent activity wins).
+- **State**: `lastSignal`, `lastA`, `lastB` (exposed for live preview).
+- **Notes**: canonical pattern — `Timer → Interpolator` + `Envelope` → `Combine(a_overrides_b)` → `AnimationController slot N` lets the user "interrupt" idle drift with event-driven envelopes (Emit button → Envelope).
+
+### `signalSwitch`
+
+- **Category**: `animMod`. **`alwaysDirty = true`**.
+- **Inputs**: `signal_a: SIGNAL` (`a`), `signal_b: SIGNAL` (`b`), `event: EVENT`.
+- **Outputs**: `signal: SIGNAL`.
+- **Params**:
+    - `initialSide: 'a'` — `'a' | 'b'`. Side held on first execute, before any event can flip it. The processor also bootstraps `lastSeenEventCount` from the wired control on first execute, so a saved-and-restored graph (or one connected to a long-running EventEmitter with a non-zero count) doesn't trigger a phantom flip on mount.
+    - `transitionAbMs: 500` (`≥ 0`) — duration of the A→B cross-fade.
+    - `transitionBaMs: 500` (`≥ 0`) — duration of the B→A cross-fade.
+    - `profileAb: 'easeInOut'` — easing applied to A→B alpha. One of `instant | linear | easeIn | easeOut | easeInOut | smoothstep | sine`. `instant` snaps with no morph regardless of duration.
+    - `profileBa: 'easeInOut'` — easing applied to B→A alpha. Same set as `profileAb`.
+- **Behaviour**:
+    - Each new event on `event` (`event.count` increments past the last seen value) toggles the side A↔B and starts a fresh transition with the matching direction's `transitionMs` + `profile`. Multiple events queued up between executes still count as a single flip (we only react to the net `count` increment, not its magnitude — visual continuity matters more than parity bookkeeping).
+    - Without an event source wired, holds the current side (no spontaneous flips).
+    - Re-emitting mid-morph immediately starts a fresh transition that crossfades from a *captured* output value (the value visible at the moment of the second event), so a rapid double-emit stays visually continuous instead of snapping to a stale upstream value.
+    - When the morph is *not* a re-flip (i.e. the previous transition had settled), the from-side is the live upstream value — both inputs continue to evolve through the cross-fade.
+    - Once `t ≥ 1` the output equals `to.value` and the transition resets.
+    - `state = 1` if either upstream signal is active OR a transition is in flight (the latter keeps downstream nodes ticking through the morph even when both sides are momentarily quiet).
+    - Output `time = max(a.time, b.time)`, `age = min(a.age, b.age)`, `lastTimestampMs = max(a, b, control)`.
+- **State**: `currentSide`, `transitionStartMs`, `transitionFromSide`, `transitionToSide`, `transitionDurationMs`, `transitionProfile`, `transitionFromValue`, `transitionFromCaptured`, `lastSeenEventCount`, `lastA`, `lastB`, `lastControl`, `lastSignal`, `snapshot: SwitchSnapshot` (exposed for the view's live oscilloscope, event-spike markers, and play-head on the profile preview).
+- **Notes**:
+    - Works as a generic toggle mux driven by any `EVENT` source: Emit button via `eventEmitter`, or future event sources. Typical uses: hot-swap a "calm" Timer for an "intense" Timer when the user emits; pick between two Interpolator profiles on demand; gate idle drift vs envelope-driven activity.
+    - Both inputs continue to compute every frame even when unselected — the switch is non-destructive and doesn't disable the unselected branch.
+    - `applyEasing` is exported so the NodeView can preview both profile curves side-by-side.
+
+---
+
+## ANIMATION CONTROLLERS (2)
+
+### `animationController`
+
+- **Category**: `animCtrl`. **`alwaysDirty = true`**.
+- **Inputs**: `signal_0..signal_7: SIGNAL` (one per pool channel) + `config: CONFIG` (optional, supplies per-effect labels and default min/max).
+- **Outputs**: `animation: ANIMATION` keyed by `'0'..'7'`.
+- **Params**: `min_i / max_i` for each `i ∈ [0, 8)`. Defaults `min_i = 0`, `max_i = 1`.
+- **Behaviour**:
+  - Resolves the active effect via `inputs.config.__effectName` and pulls `effect.animation.slots` for default min/max + labels.
+  - For each `i`: picks `min/max` (priority: param → slot default → 0/1), reads `inputs.signal_i`, builds `ChannelSignal { time: signal.value, raw: clamp01(signal.value), value: lerp(min, max, raw), state }`. See `animation-system.mdc` for the `time` field rationale.
+- **State**: none.
+- **Notes**:
+  - The view labels each `signal_i` handle from the upstream Config's slot definitions.
+  - Every channel is always emitted, even unconnected ones (`value = lerp(min, max, 0)`).
+  - Output handle is named `animation` (not `signal`) so it doesn't collide with the SIGNAL-typed `signal` outputs of Timer / Interpolator / Combine / SignalSwitch in the editor.
+
+### `animationSwitch`
+
+- **Category**: `animCtrl`. **`alwaysDirty = true`**.
+- **Inputs**: `animation_a: ANIMATION` (`a`), `animation_b: ANIMATION` (`b`), `event: EVENT`.
+- **Outputs**: `animation: ANIMATION`.
+- **Params**:
+    - `initialSide: 'a'` — `'a' | 'b'`. Side held on first execute, before any event can flip it. Bootstraps `lastSeenEventCount` from the wired control on first execute, so a saved-and-restored graph (or one connected to a long-running EventEmitter with a non-zero count) doesn't trigger a phantom flip on mount.
+    - `transitionAbMs: 500` (`≥ 0`) — duration of the A→B cross-fade.
+    - `transitionBaMs: 500` (`≥ 0`) — duration of the B→A cross-fade.
+    - `profileAb: 'easeInOut'` — easing applied to A→B alpha. One of `instant | linear | easeIn | easeOut | easeInOut | smoothstep | sine`. `instant` snaps with no morph regardless of duration.
+    - `profileBa: 'easeInOut'` — easing applied to B→A alpha. Same set as `profileAb`.
+- **Behaviour**:
+    - Same event-toggle contract as `signalSwitch`, applied to two `AnimationSignal` packets at once. Each event toggles A↔B and starts a fresh transition with the matching direction's `transitionMs` + `profile`. Multiple events queued up between executes still count as a single flip.
+    - Cross-fade is **per channel** and **per scalar field**: `time`, `raw`, `value` are all lerped between sides; `state` is the OR of the from/to channel state so a clip mid-flight keeps downstream nodes ticking through the morph.
+    - Channel union: the output exposes every channel id that appears on either side (or in the captured re-emit snapshot). Channels missing on one side lerp against an idle channel (`{ time:0, raw:0, value:0, state:0 }`) instead of being dropped — important when wiring an 8-channel controller into A and a partial mock into B.
+    - Re-emitting mid-morph snapshots the entire output `AnimationSignal` and crossfades from that captured packet into the new target side, so a rapid double-emit stays visually continuous on every channel.
+    - Without an event source wired, holds the current side (no spontaneous flips).
+- **State**: `currentSide`, `transitionStartMs`, `transitionFromSide`, `transitionToSide`, `transitionDurationMs`, `transitionProfile`, `transitionFromAnimation` (cloned snapshot for re-emit captures), `transitionFromCaptured`, `lastSeenEventCount`, `lastA`, `lastB`, `lastControl`, `lastAnimation`, `snapshot: AnimationSwitchSnapshot` (exposed for the view's per-channel readout, side-tag, event counter, and play-head on the profile preview; carries the sorted union of channel ids).
+- **Notes**:
+    - Reuses `applyEasing` + `SwitchProfile` + `SwitchSide` from `signal-switch.ts` so the two switches share the easing vocabulary 1:1.
+    - Use to swap whole control surfaces — e.g. cross-fade from a "calm" AnimationController preset to an "intense" one on a single Emit, instead of switching every channel individually with a fan of 8 SignalSwitches.
+    - Both upstream chains keep computing every frame even when unselected — the switch is non-destructive.
+
+---
+
+## IMAGE OPS (4)
+
+### `blur`
+
+- **Category**: `imageOp`. Not `alwaysDirty`.
+- **Inputs**: `texture: TEXTURE`, `radius: NUMBER`, `step_sigma: NUMBER`, `passes: NUMBER`.
+- **Outputs**: `texture: TEXTURE`.
+- **Params**: `mode: 'box'` (`box | gaussian | sdf-packed`), `radius: 8`, `step_sigma: 2.0`, `passes: 1`, `width: 0`, `height: 0`.
+- **Behaviour**:
+  - `box` / `gaussian` — separable horizontal-then-vertical pass via inline GLSL with hard-coded `RADIUS`. `gaussian` weights `exp(-i²/(2σ²))`. `passes` repeats the H+V pair.
+  - `sdf-packed` — uses the canonical `pipeline/passes/sdf-blur-h.ts` + `sdf-blur-v.ts` to blur in 24-bit-packed SDF space (decode → blur → re-encode). Single pass.
+- **State**: ping/pong RTs from `BaseProcessor`.
+- **Notes**: integer `radius`. `step_sigma` doubles as `sigma` for gaussian and as `stride` for SDF.
+
+### `remap`
+
+- **Category**: `imageOp`. Not `alwaysDirty`.
+- **Inputs**: `texture: TEXTURE`, `strength: NUMBER`.
+- **Outputs**: `texture: TEXTURE`.
+- **Params**: `op: 'passthrough'` — `passthrough | grayscale | invert | contrast | unpack_sdf_24bit | channel_r | channel_g | channel_b | channel_a`. `strength: 2.0` (used by `contrast`).
+- **Behaviour**: builds a per-op fragment shader with the formula inlined. Single pass.
+- **Notes**:
+  - `unpack_sdf_24bit` decodes the same RGBA8 packing produced by `sdfFromContour`. Use it to visualise an SDF as a grayscale ramp.
+  - Channel ops emit the channel into RGB with `A = 1.0`.
+
+### `blend`
+
+- **Category**: `imageOp`. Not `alwaysDirty`.
+- **Inputs**: `base: TEXTURE`, `layer: TEXTURE`, `opacity: NUMBER`.
+- **Outputs**: `texture: TEXTURE` (returns `base` when `layer` is absent — fail-soft).
+- **Params**: `mode: 'normal'` — `normal | multiply | screen | overlay | add | subtract | soft-light | hard-light`. `opacity: 1.0`. `width: 0`, `height: 0`.
+- **Behaviour**: `fragColor = vec4(mix(base.rgb, blended, opacity * layer.a), base.a)`. Layer alpha modulates the mix amount.
+- **Notes**: `overlay`, `soft-light`, `hard-light` use per-channel branches in a small loop — branch divergence is fine at fullscreen quad scale.
+
+### `denoise`
+
+- **Category**: `imageOp`. Not `alwaysDirty`.
+- **Inputs**: `texture: TEXTURE`.
+- **Outputs**: `texture: TEXTURE`.
+- **Params**: `radius: 4` (≥ 1), `spatial_sigma: 3.0`, `range_sigma: 0.1`, `passes: 1`, `width: 0`, `height: 0`.
+- **Behaviour**: bilateral filter — Gaussian in spatial AND range domain. `radius²` samples per pixel; cached fragment is re-built only on radius change. `passes` ping-pongs.
+- **State**: `lastRadius`, `cachedFrag`, ping/pong RTs.
+- **Notes**: `radius` of 4 = 81 samples per pixel. Use sparingly at high resolution.
+
+---
+
+## CONTOUR (3)
+
+### `segmentation`
+
+- **Category**: `contour`. Not `alwaysDirty`.
+- **Inputs**: `image: TEXTURE`.
+- **Outputs**: `contour: CONTOUR` (full `ContourSamples`, not raw points).
+- **Params**: empty.
+- **Behaviour**:
+  - Owns a SAM web worker (`engine/sam/create-worker`). Initialised lazily on first non-null `image` input.
+  - On image change: extracts the input texture as a PNG data URL via `renderer.extract.canvas`, sends `encode_image` to the worker, drops the temporary `Texture` wrapper.
+  - When user adds/removes points (via the view), calls `decode(points)` on the worker; on `decode_result`, stores `polygon` (flat x/y pairs) and `maskData` (binary mask).
+  - `buildContour()` converts `polygon: number[]` to `ContourSamples` (drops SAM's duplicate first/last vertex, computes arcS / tangents / AABB, marks `closed = true`). Cached by polygon array reference.
+- **State**: `worker`, `status` machine (`idle | loading-model | encoding | ready | decoding | error`), `statusText`, `embeddingsReady`, `polygon`, `maskData`, `imageDataUrl`, `points: SamPoint[]`, `onChange` callback (NodeView wires this), `lastImageSrc`, `cachedContour`/`cachedPolygonRef`.
+- **Notes**:
+  - Persistence saves `points`, `polygon`, `maskData` (the mask becomes a `seg:<nodeId>` blob).
+  - Polygons with fewer than 3 distinct vertices yield `null` contour.
+  - Categorised as `contour` (not `input`) because it produces geometry from a TEXTURE input — the canvas accent and the picker accent both read teal so the contour pipeline (Segmentation → Contour Resample → SDF From Contour) is one cohesive colour band.
+
+### `contourResample`
+
+- **Category**: `contour`. Not `alwaysDirty`.
+- **Inputs**: `contour: CONTOUR`.
+- **Outputs**: `contour: CONTOUR` (smoothed / resampled / offset).
+- **Params**:
+  - `smoothMethod: 'chaikin+laplacian'` — `none | chaikin | laplacian | chaikin+laplacian`.
+  - `chaikinIters: 2` (`0..4`).
+  - `laplacianIters: 4` (`0..16`).
+  - `laplacianLambda: 0.5` (`0..1`).
+  - `sampleCount: 256` (`8..2048`).
+  - `offsetPx: 0` (any) — outward offset (with self-intersection cleanup + re-resample).
+  - `forceOrientation: 'auto'` — `auto | cw | ccw` (auto normalises to CCW).
+  - `adaptive: false`.
+  - `adaptiveStrength: 0.5` (`0..1`).
+- **Behaviour**: see `geometry-contour.mdc → ContourResample` for the full pipeline (orientation → smooth → resample → optional offset → optional curvature-adaptive).
+- **State**: `cachedKey: CacheKey`, `cachedContour`. Cache hit on identical key (input ref + every param).
+- **Notes**: pure CPU work; no GPU resources allocated.
+
+### `sdfFromContour`
+
+- **Category**: `contour`. Not `alwaysDirty`.
+- **Inputs**: `contour: CONTOUR`.
+- **Outputs**: `sdf: TEXTURE` (24-bit unsigned distance in RGB + inside flag in A).
+- **Params**: `width: 0`, `height: 0`.
+- **Behaviour**: builds a coords texture (`buildCoordsTextureFromContour`), runs `pipeline/passes/sdf-pure.ts` once. Cached by contour reference + canvas resolution.
+- **State**: `cachedContour`, `cachedW/H`, `cachedCoords`, `cachedTexDim`. `releaseCoords()` destroys the texture on cache invalidate.
+- **Notes**:
+  - See `geometry-contour.mdc`. There is no source texture input — resolution defaults to the engine canvas (900×1200) unless explicitly overridden.
+  - Categorised as `contour` (not `imageOp`) because the *input* is a contour and the texture is generated from it. The picker's Geometry section reads teal end-to-end as a result.
+
+---
+
+## OUTPUT (3)
+
+### `effect`
+
+- **Category**: `output`. **`alwaysDirty = true`**.
+- **Inputs**: `source: TEXTURE`, `txcn0..txcn7: TEXTURE` (8 generic channels), `contour: CONTOUR`, `animation: ANIMATION`, `config: CONFIG`.
+- **Outputs**: `texture: TEXTURE`, `metrics: METRICS`.
+- **Params**: `{}` (uniforms come from upstream Config and animation slots).
+- **Behaviour**: see `effects-and-shaders.mdc → Runtime: EffectProcessor`. Compiles passes on demand, builds `UniformGroup` from fields + animation pool + texture pool, renders all passes into a single output RT in one `renderer.render` call, emits per-pass CPU metrics + total GPU dispatch.
+- **State**: `cachedEffectName`, `warnedConfigs` (for once-per-effect channel-reference warnings). Per-pass meshes / geometries are NOT cached — rebuilt every frame.
+- **Notes**:
+  - Skipped passes show as `skipped: true` in metrics.
+  - The view re-labels `txcn{i}` handles from the upstream Config's `textures.slots`.
+  - Per-frame uniform overrides come from `inputs.config[uName]`; missing keys fall back to `FieldDef.default`.
+
+### `preview`
+
+- **Category**: `output`. Not `alwaysDirty`.
+- **Inputs**: `texture: TEXTURE`.
+- **Outputs**: `texture: TEXTURE`, `_canvas: HTMLCanvasElement | null` (consumed by the view).
+- **Params**: empty.
+- **Behaviour**:
+  - Pass-through: `texture` propagates downstream every tick (so a Preview placed mid-graph never drops data).
+  - Throttled extract (33 ms): extract pixels via `renderer.extract.pixels`, build/update a Canvas2D, force `A = 255` so transparent regions read as opaque previews. Marks dirty when ready.
+- **State**: single reused `Texture` wrapper (`extractTex` / `extractTexSrc`) — only re-created when upstream source identity changes. `imgCanvas`, `extracting`, `lastExtractTime`.
+- **Notes**:
+  - The single-wrapper rule was the dominant memory leak fix. If you copy this pattern, never allocate a fresh `Texture({ source })` per frame.
+  - `destroy()` releases the wrapper but never the upstream source.
+
+### `contourPreview`
+
+- **Category**: `output`. Not `alwaysDirty`.
+- **Inputs**: `contour: CONTOUR`.
+- **Outputs**: —
+- **Params**: empty.
+- **Behaviour**: stores the latest `contour` on `proc.contour`. The view reads it directly (`engine.getProcessor(id).contour`) and draws an outline + sample dots on a Canvas2D.
+- **State**: `contour: ContourSamples | null`.
+- **Notes**: serves as a debug surface for segmentation / contourResample; cheap to leave wired.
+
+---
+
+## UTILITY (3)
+
+### `config`
+
+- **Category**: `util`. Not `alwaysDirty`.
+- **Inputs**: —
+- **Outputs**: `config: CONFIG`.
+- **Params**: `effect: <first effect name>` plus per-field params (mirroring the active effect's `FieldDef` defaults).
+- **Behaviour**:
+  - Resolves the chosen effect; falls back to `effects[0]` if name is unknown.
+  - Builds `{ __effectName, [uniformName]: paramValue, ... }`. For vector fields, reads `params[`${uName}_${ci}`]` per component.
+- **State**: none.
+- **Notes**:
+  - The view shows a dropdown of effect names + sliders / colour pickers / number inputs per `FieldDef`.
+  - Chaining: a single Config can fan out to several Effect nodes (each Effect node clamps its own input independently). Different Configs for different Effect copies enable multi-instance compositions (e.g. 3 GodRays with different colours).
+
+### `noiseVisualizer`
+
+- **Category**: `util`. Not `alwaysDirty`.
+- **Inputs**: `signal: SIGNAL`.
+- **Outputs**: `texture: TEXTURE`.
+- **Params**: `mode: 'chess'` (`chess | stripes`), `scale: 4`, `amp: 0.08`, `cells: 12`, `stripes: 24`, `speed: 0.5`, `width: 384`, `height: 384`.
+- **Behaviour**:
+  - Renders a chess / stripes pattern with UVs warped by two decorrelated `fbm2D` samples. Drift driver = `signal.value * speed` (NOT `signal.time`).
+  - Without an upstream Signal, drift = 0 — the field is intentionally frozen.
+- **State**: output RT.
+- **Notes**: the visualiser uses the same `pipeline/noise.glsl.ts` chunk as effect shaders, so what you see is what they sample. Useful for tuning noise scale before plugging into a real shader.
+
+### `log`
+
+- **Category**: `util`. Not `alwaysDirty` (relies on dirty propagation from upstream Effect, which is alwaysDirty).
+- **Inputs**: `metrics: METRICS`.
+- **Outputs**: —
+- **Params**: `smoothing: 0.85` (clamped to `[0, 0.99]`).
+- **Behaviour**:
+  - On each upstream metrics frame: stores `last = m` (raw); merges into `lastSmoothed` via EMA (per-pass and totals).
+  - Effect change (different `effectName` or `passes.length` mismatch) resets the EMA to the new frame.
+  - Unwired input → `last = lastSmoothed = null`.
+- **State**: `last`, `lastSmoothed`.
+- **Notes**:
+  - The view shows `total / cpu / gpu dispatch / fps cap`, then a per-pass list with id, kind tag, `cpuMs`, and a horizontal bar proportional to the heaviest pass. Skipped passes show "skipped" with no bar.
+  - React commits are throttled to 100 ms regardless of upstream tick rate — the smoothed numbers don't update visibly faster than that.
+
+---
+
+## Cross-cutting reminders
+
+- **Adding a new processor** — see the checklist in `node-engine.mdc → Adding a new processor`. Update this catalogue with a new section in the right group.
+- **Removing a processor** — keep the catalogue entry for one release with a "Removed" note if old snapshots may still encode it; the engine logs `Unknown processor type: <type>` and skips. Auto-migration would live in `useSceneHistory.applySnapshot`.
+- **Renaming a slot type** — touches `SLOT` enum, `SLOT_COMPAT`, every processor's `def`, every shader that reads it. Don't do this casually.

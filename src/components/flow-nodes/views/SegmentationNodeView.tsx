@@ -21,8 +21,16 @@ import type { PipelineNodeData } from '../types'
 const CANVAS_W = 280
 const HOVER_DEBOUNCE = 150
 
-const COL_INCLUDE = '#10b981'
-const COL_EXCLUDE = '#ef4444'
+const COL_INCLUDE = '#14b8a6'
+const COL_INCLUDE_HL = '#2dd4bf'
+const COL_EXCLUDE = '#f87171'
+const COL_EXCLUDE_HL = '#fb7185'
+/** Same hue as `COL_EXCLUDE` but at low alpha — used as the wash under
+ *  destructive icon-button hovers (Clear all, remove-point) so the
+ *  affordance reads "this will delete" without painting a hard, opaque
+ *  red disc against the pale node body. */
+const COL_EXCLUDE_HOVER_BG = 'rgba(248, 113, 113, 0.16)'
+const COL_EXCLUDE_ACTIVE_BG = 'rgba(248, 113, 113, 0.26)'
 
 export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
@@ -99,11 +107,14 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                 off.height = mh
                 const octx = off.getContext('2d')!
                 const imgData = octx.createImageData(mw, mh)
+                /* RGBA matching `COL_INCLUDE` (#14b8a6 = teal-500) so the
+                   mask tint reads as the same hue as the include points and
+                   the node accent (category 'contour'). */
                 for (let i = 0; i < mask.length; i++) {
                     if (mask[i] > 0) {
-                        imgData.data[i * 4] = 16
-                        imgData.data[i * 4 + 1] = 185
-                        imgData.data[i * 4 + 2] = 129
+                        imgData.data[i * 4] = 20
+                        imgData.data[i * 4 + 1] = 184
+                        imgData.data[i * 4 + 2] = 166
                         imgData.data[i * 4 + 3] = 110
                     }
                 }
@@ -119,8 +130,8 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                 const r = isHl ? 7 : 5
                 ctx.lineWidth = isHl ? 3 : 2
                 ctx.strokeStyle = pt.label === 1
-                    ? (isHl ? '#34d399' : COL_INCLUDE)
-                    : (isHl ? '#fb7185' : COL_EXCLUDE)
+                    ? (isHl ? COL_INCLUDE_HL : COL_INCLUDE)
+                    : (isHl ? COL_EXCLUDE_HL : COL_EXCLUDE)
                 ctx.fillStyle = 'rgba(0,0,0,0.55)'
                 ctx.beginPath()
                 ctx.arc(px, py, r + 1.5, 0, Math.PI * 2)
@@ -229,7 +240,7 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
             outputs={segmentationDef.outputs}
         >
             {/* Image canvas. The dark backdrop frames the photo and makes
-                point markers + the green mask overlay readable. A 1 px
+                point markers + the teal mask overlay readable. A 1 px
                 inset ring matches other dark surfaces in the editor. */}
             <Box
                 sx={{
@@ -395,12 +406,22 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                             className="nodrag"
                             title="Clear all"
                             sx={{
+                                /* Destructive-action affordance: muted in
+                                   rest state, tints to the same red the
+                                   Exclude button uses (`COL_EXCLUDE`) on
+                                   hover with a very light wash so the
+                                   icon doesn't sit inside a heavy black
+                                   square against the pale node body. */
                                 p: 0.25,
-                                color: 'var(--pn-text)',
+                                color: 'var(--pn-text-muted)',
                                 borderRadius: 0.75,
+                                transition: 'color 120ms, background-color 120ms',
                                 '&:hover': {
-                                    color: 'var(--pn-bg-input)',
-                                    bgcolor: 'var(--pn-text)',
+                                    color: COL_EXCLUDE,
+                                    bgcolor: COL_EXCLUDE_HOVER_BG,
+                                },
+                                '&:active': {
+                                    bgcolor: COL_EXCLUDE_ACTIVE_BG,
                                 },
                             }}
                         >
@@ -477,11 +498,20 @@ export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNo
                                         className="nodrag point-delete"
                                         onClick={() => removePoint(i)}
                                         sx={{
+                                            /* Same destructive-affordance
+                                               pattern as Clear all — tints
+                                               red on hover with a light
+                                               wash, never paints a solid
+                                               opaque disc. */
                                             p: 0.125,
-                                            color: 'var(--pn-text)',
+                                            color: 'var(--pn-text-muted)',
+                                            transition: 'color 120ms, background-color 120ms',
                                             '&:hover': {
-                                                color: '#fff',
-                                                bgcolor: COL_EXCLUDE,
+                                                color: COL_EXCLUDE,
+                                                bgcolor: COL_EXCLUDE_HOVER_BG,
+                                            },
+                                            '&:active': {
+                                                bgcolor: COL_EXCLUDE_ACTIVE_BG,
                                             },
                                         }}
                                     >

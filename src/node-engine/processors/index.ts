@@ -2,8 +2,8 @@ import type { ProcessorDef } from '../types'
 import type { BaseProcessor } from './base-processor'
 
 import { NumberProcessor, numberDef } from './number'
+import { ConstantSignalProcessor, constantSignalDef } from './constant-signal'
 import { ImageProcessor, imageDef } from './image'
-import { PolygonProcessor, polygonDef } from './polygon'
 import { SdfFromContourProcessor, sdfFromContourDef } from './sdf-from-contour'
 import { BlurProcessor, blurDef } from './blur'
 import { RemapProcessor, remapDef } from './remap'
@@ -13,15 +13,19 @@ import { SegmentationProcessor, segmentationDef } from './segmentation'
 import { DenoiseProcessor, denoiseDef } from './denoise'
 import { BlendProcessor, blendDef } from './blend'
 import { ConfigProcessor, configDef } from './config'
-import { SdfTextAtlasProcessor, sdfTextAtlasDef } from './sdf-text-atlas'
 import { ContourResampleProcessor, contourResampleDef } from './contour-resample'
 import { ContourPreviewProcessor, contourPreviewDef } from './contour-preview'
+import { TextProcessor, textDef } from './text'
+import { TextStyleProcessor, textStyleDef } from './text-style'
 import { TextStripProcessor, textStripDef } from './text-strip'
-import { TapProcessor, tapDef } from './tap'
+import { EventEmitterProcessor, eventEmitterDef } from './event-emitter'
 import { EnvelopeProcessor, envelopeDef } from './envelope'
-import { AutoTimerProcessor, autoTimerDef } from './auto-timer'
+import { TimerProcessor, timerDef } from './timer'
+import { InterpolatorProcessor, interpolatorDef } from './interpolator'
 import { CombineSignalsProcessor, combineSignalsDef } from './combine-signals'
+import { SignalSwitchProcessor, signalSwitchDef } from './signal-switch'
 import { AnimationControllerProcessor, animationControllerDef } from './animation-controller'
+import { AnimationSwitchProcessor, animationSwitchDef } from './animation-switch'
 import { NoiseVisualizerProcessor, noiseVisualizerDef } from './noise-visualizer'
 import { LogProcessor, logDef } from './log'
 
@@ -31,9 +35,9 @@ export interface ProcessorEntry {
 }
 
 export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
-    number:       { def: numberDef,       create: () => new NumberProcessor() },
+    number:         { def: numberDef,         create: () => new NumberProcessor() },
+    constantSignal: { def: constantSignalDef, create: () => new ConstantSignalProcessor() },
     image:        { def: imageDef,        create: () => new ImageProcessor() },
-    polygon:      { def: polygonDef,      create: () => new PolygonProcessor() },
     sdfFromContour:{ def: sdfFromContourDef,create: () => new SdfFromContourProcessor() },
     blur:         { def: blurDef,         create: () => new BlurProcessor() },
     remap:        { def: remapDef,        create: () => new RemapProcessor() },
@@ -43,15 +47,19 @@ export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
     denoise:      { def: denoiseDef,      create: () => new DenoiseProcessor() },
     blend:        { def: blendDef,        create: () => new BlendProcessor() },
     config:       { def: configDef,       create: () => new ConfigProcessor() },
-    sdfTextAtlas: { def: sdfTextAtlasDef, create: () => new SdfTextAtlasProcessor() },
     contourResample: { def: contourResampleDef, create: () => new ContourResampleProcessor() },
     contourPreview:  { def: contourPreviewDef,  create: () => new ContourPreviewProcessor() },
+    text:            { def: textDef,            create: () => new TextProcessor() },
+    textStyle:       { def: textStyleDef,       create: () => new TextStyleProcessor() },
     textStrip:       { def: textStripDef,       create: () => new TextStripProcessor() },
-    tap:             { def: tapDef,             create: () => new TapProcessor() },
+    eventEmitter:    { def: eventEmitterDef,    create: () => new EventEmitterProcessor() },
     envelope:        { def: envelopeDef,        create: () => new EnvelopeProcessor() },
-    autoTimer:       { def: autoTimerDef,       create: () => new AutoTimerProcessor() },
+    timer:           { def: timerDef,           create: () => new TimerProcessor() },
+    interpolator:    { def: interpolatorDef,    create: () => new InterpolatorProcessor() },
     combineSignals:  { def: combineSignalsDef,  create: () => new CombineSignalsProcessor() },
+    signalSwitch:    { def: signalSwitchDef,    create: () => new SignalSwitchProcessor() },
     animationController: { def: animationControllerDef, create: () => new AnimationControllerProcessor() },
+    animationSwitch:     { def: animationSwitchDef,     create: () => new AnimationSwitchProcessor() },
     noiseVisualizer: { def: noiseVisualizerDef, create: () => new NoiseVisualizerProcessor() },
     log:             { def: logDef,             create: () => new LogProcessor() },
 }

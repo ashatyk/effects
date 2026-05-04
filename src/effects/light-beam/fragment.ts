@@ -11,7 +11,7 @@ export default `
     /* Animation channels — vec4(drive, raw, value, state).
        Slot 0: appearance progress (0..1) — multiplied into beam intensity.
        Slot 1: ray rotation phase — uChan1.x carries the upstream signal
-               value (radians). Wire AutoTimer in 'unbounded' mode for
+               value (radians). Wire a Timer in 'unbounded' mode for
                continuous rotation.
        Slot 4: intensity multiplier on final alpha. */
     uniform vec4 uChan0;
@@ -68,8 +68,8 @@ export default `
         float sdist = signedDistancePx(vUV);
 
         /* Appearance multiplier = slot 0 mapped value, used as-is. The
-           upstream Envelope / AutoTimer easing decides the curve — the
-           shader no longer applies a cubic Bezier intro of its own. */
+           upstream Envelope / Interpolator easing decides the curve —
+           the shader no longer applies a cubic Bezier intro of its own. */
         float ax = uResolution.y / uResolution.x;
         vec2  va = vec2((p.x - ctr.x) * ax, (p.y - ctr.y));
         float theta = atan(va.x, va.y);
@@ -79,8 +79,8 @@ export default `
         float f = max(0.0001, uEdgeFeatherPx);
         float startRamp   = smoothstep(0.0, f, d);
         float radialAtten = exp(-uRayFalloff * d);
-        /* Rotation phase = upstream signal value in radians. AutoTimer
-           in 'unbounded' mode + slot-1 controller min/max set the rate. */
+        /* Rotation phase = upstream signal value in radians. A Timer in
+           'unbounded' mode + slot-1 controller min/max set the rate. */
         float phase = uChan1.x + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
         float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * uChan0.z;
         float m = uRayStrength * startRamp * radialAtten * beam;

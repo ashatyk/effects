@@ -33,7 +33,6 @@ export type EffectInputName =
     | 'source'
     | 'txcn0' | 'txcn1' | 'txcn2' | 'txcn3'
     | 'txcn4' | 'txcn5' | 'txcn6' | 'txcn7'
-    | 'coords_tex'
     | 'contour'
 
 export type EffectPass = FullscreenPass | InstancedPass
@@ -81,7 +80,7 @@ export type InstancedPass = {
         /** Animation channel slot whose `value` drives the contour scroll
          *  phase (px). Defaults to slot 0 — the canonical "phase / scroll"
          *  position in the standard slot layout. Speed is governed by the
-         *  upstream signal (AutoTimer durationMs / Controller min/max) — the
+         *  upstream signal (Timer durationMs / Controller min/max) — the
          *  manifest no longer exposes a per-effect speed field. */
         phaseSlot?: number
     }
@@ -120,9 +119,10 @@ export const ANIMATION_CHANNEL_COUNT = 8
 /**
  * One animation channel declaration. The runtime turns each declared slot
  * into a shader uniform `uChan{slot}` of type `vec4(drive, raw, value, state)`,
- * where `.x` is the upstream `Signal.value` (unclamped — AutoTimer.unbounded
- * grows linearly, sine/triangle oscillate 0..1, constant is static), `.y` is
- * the clamped 0..1 form of that drive, `.z` is the controller-mapped value
+ * where `.x` is the upstream `Signal.value` (unclamped — Timer.unbounded
+ * grows linearly, an Interpolator with sine/triangle profile oscillates
+ * 0..1, a paused Timer holds a static phase), `.y` is the clamped 0..1
+ * form of that drive, `.z` is the controller-mapped value
  * (`lerp(min, max, raw)`), and `.w` is the upstream state flag.
  *
  * Indices 0..ANIMATION_CHANNEL_COUNT-1 not present in the array still bind

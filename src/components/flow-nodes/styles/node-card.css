@@ -170,13 +170,14 @@
 /* ── Resize handles ── */
 
 .pn-resize-line {
-    border-color: rgba(0, 0, 0, 0.30) !important;
+    border-color: transparent !important;
 }
 
 .pn-resize-handle {
     width: 8px !important;
     height: 8px !important;
-    background: #0a0a0a !important;
+    background: #ededed !important;
     border: none !important;
     border-radius: 2px !important;
+    opacity: 1 !important;
 }

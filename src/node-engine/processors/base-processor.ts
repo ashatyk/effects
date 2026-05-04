@@ -29,7 +29,7 @@ export abstract class BaseProcessor {
      * Priority order (most specific first):
      *   1. explicit `width`/`height` NUMBER inputs (or params)
      *   2. dimensions of the `source` input (background image — the canvas of the effect)
-     *   3. dimensions of `sdf` / `coords_tex` inputs (size of the segmentation field)
+     *   3. dimensions of the `sdf` input (size of the segmentation field)
      *   4. dimensions of any other texture-like input (last resort)
      *   5. engine defaults
      *
@@ -41,7 +41,7 @@ export abstract class BaseProcessor {
         const h = this.val(inputs, params, 'height', 0)
         if (w > 0 && h > 0) return [w, h]
 
-        for (const key of ['source', 'sdf', 'coords_tex']) {
+        for (const key of ['source', 'sdf']) {
             const v = inputs[key]
             if (v && typeof v === 'object' && (v as any).width > 0 && (v as any).height > 0) {
                 return [(v as any).width, (v as any).height]

@@ -2,17 +2,16 @@ import type { Application, RenderTexture } from 'pixi.js'
 
 export const SLOT = {
     TEXTURE: 'TEXTURE',
-    POLYGON: 'POLYGON',
     NUMBER: 'NUMBER',
     VEC: 'VEC',
     CONFIG: 'CONFIG',
     CONTOUR: 'CONTOUR',
-    /** Discrete event source (tap, programmatic fire). Carries a monotonically
-     *  growing `count`; downstream nodes detect new pulses by comparing it
-     *  against their last seen value. */
-    PULSE: 'PULSE',
+    /** Discrete event source (programmatic emit / button). Carries a
+     *  monotonically growing `count`; downstream nodes detect new events
+     *  by comparing it against their last seen value. */
+    EVENT: 'EVENT',
     /** Continuous 0..1 driver for one animation channel (typically produced by
-     *  EnvelopeNode from a PULSE source, or by future timer / constant nodes). */
+     *  EnvelopeNode from an EVENT source, or by future timer / constant nodes). */
     SIGNAL: 'SIGNAL',
     /** Multi-channel animation packet consumed by Effect: per-channel
      *  ChannelSignal indexed by channel id (declared in the effect manifest). */
@@ -21,36 +20,46 @@ export const SLOT = {
      *  per-pass CPU build timing + total GPU dispatch time so a Log
      *  node can show where the budget goes. */
     METRICS: 'METRICS',
+    /** Plain UTF-8 text payload. Emitted by the `text` input node and
+     *  consumed by typography-aware nodes (e.g. `textStrip`). Always a
+     *  string at the wire level — downstream nodes are free to coerce or
+     *  truncate it. */
+    TEXT: 'TEXT',
+    /** Typography descriptor packet emitted by the `textStyle` node.
+     *  Carries `TextStyle` ({ font, letterSpacing, weight, transform }).
+     *  Kept distinct from `CONFIG` so users can't accidentally wire a
+     *  text style into an `effect.config` slot. */
+    TEXT_STYLE: 'TEXT_STYLE',
     ANY: '*',
 } as const
 
 export type SlotType = (typeof SLOT)[keyof typeof SLOT]
 
-/** Discrete pulse source (e.g. user tap). */
-export interface PulseSignal {
-    /** Monotonically increasing impulse counter. Increases by 1 per fired pulse. */
+/** Discrete event source (e.g. EventEmitter button, programmatic dispatch). */
+export interface EventSignal {
+    /** Monotonically increasing event counter. Increases by 1 per emitted event. */
     count: number
-    /** `performance.now()` timestamp of the last pulse, or 0 if no pulse fired yet. */
+    /** `performance.now()` timestamp of the last event, or 0 if no event has fired yet. */
     lastTimestampMs: number
-    /** Last pulse coordinate in canvas pixels (optional, for hit-test). */
+    /** Last event coordinate in canvas pixels (optional, for hit-test). */
     lastX?: number
     lastY?: number
 }
 
-/** Continuous signal — output of EnvelopeNode, AutoTimer, Combine, etc. */
+/** Continuous signal — output of EnvelopeNode, Timer, Interpolator, Combine, etc. */
 export interface Signal {
-    /** Current value. Typically 0..1 but unbounded sources (e.g. AutoTimer
+    /** Current value. Typically 0..1 but unbounded sources (e.g. Timer
      *  in 'unbounded' mode driving a scroll phase) are allowed to return
      *  values outside that range — downstream nodes are responsible for
      *  interpreting them. */
     value: number
     /** Time in ms since the current clip started (0 if idle). */
     time: number
-    /** Time in ms since the most recent pulse (regardless of clip state). */
+    /** Time in ms since the most recent event (regardless of clip state). */
     age: number
     /** 0 = idle (value at rest), 1 = playing (clip in progress). */
     state: 0 | 1
-    /** Mirror of the originating PulseSignal timestamp; useful when chained nodes
+    /** Mirror of the originating EventSignal timestamp; useful when chained nodes
      *  need to sync to the same wall-clock. */
     lastTimestampMs: number
 }
@@ -60,9 +69,9 @@ export interface ChannelSignal {
     /** Upstream `Signal.value` (unclamped). Bound to `uChan{i}.x` in shaders.
      *  Note: this is intentionally the user-controlled drive (waveform output),
      *  NOT the upstream `Signal.time` ms — keeping it as drive is what makes
-     *  AutoTimer `constant 0` actually freeze the channel and `unbounded` mode
-     *  grow it linearly forever. Speed is therefore controlled upstream by
-     *  `AutoTimer.durationMs`. */
+     *  a paused Timer actually freeze the channel and `unbounded` mode grow
+     *  it linearly forever. Speed is therefore controlled upstream by
+     *  `Timer.durationMs`. */
     time: number
     /** Raw upstream signal value clamped to 0..1. Bound to `uChan{i}.y`. */
     raw: number
@@ -75,6 +84,22 @@ export interface ChannelSignal {
 /** Multi-channel signal flowing from AnimationController -> Effect. */
 export interface AnimationSignal {
     channels: Record<string, ChannelSignal>
+}
+
+/** Typography descriptor flowing from `textStyle` to text-consuming nodes. */
+export interface TextStyle {
+    /** CSS font-family stack (e.g. `'"Inter", "Helvetica Neue", sans-serif'`). */
+    font: string
+    /** Extra space between glyphs in px. Negative tightens the tracking. */
+    letterSpacing: number
+    /** Font weight switch — kept binary on purpose; effects/runtimes only need
+     *  to know whether to ask Canvas2D for a bold face. */
+    weight: 'regular' | 'bold'
+    /** Case transform applied before measuring/painting the string. `none`
+     *  leaves it as-is, `upper`/`lower` use the locale-agnostic JS toUpperCase/
+     *  toLowerCase. Cyrillic is handled correctly because both methods call
+     *  the Unicode-aware default mappings. */
+    transform: 'none' | 'upper' | 'lower'
 }
 
 /** Single-pass timing slice produced by EffectProcessor. */

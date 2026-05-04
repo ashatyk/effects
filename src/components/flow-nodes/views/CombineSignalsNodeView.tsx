@@ -113,7 +113,7 @@ function drawScope(ctx: CanvasRenderingContext2D, w: number, h: number, r: RingB
     ctx.clearRect(0, 0, w, h)
 
     /* Find the displayable range: clamp lower bound to 0, but allow the upper
-       to expand if any trace exceeds 1 (combine 'add' or unbounded auto-timer
+       to expand if any trace exceeds 1 (combine 'add' or an unbounded Timer
        can produce values > 1). */
     let hi = 1
     for (const arr of [r.a, r.b, r.out]) {

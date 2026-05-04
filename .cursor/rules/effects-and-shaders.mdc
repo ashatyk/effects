@@ -1,0 +1,292 @@
+---
+description: Effect manifest format, EffectProcessor runtime, fullscreen vs instanced passes, ribbon scrolling, texture pool, animation pool, canonical noise, shader conventions. Read before adding/editing effects, passes, or any GLSL.
+alwaysApply: true
+---
+
+# Effects, manifests, and shaders
+
+An effect is a declarative manifest (`PlaygroundConfig`) plus shader sources. The runtime (`EffectProcessor`) compiles passes on demand and binds uniforms from a fixed pool of typed slots — animation channels, texture channels, contour, source. Manifests are intentionally **renderer-agnostic** (no Pixi types) so the same JSON can drive the future Tier 3 Metal/Vulkan runtimes.
+
+For a per-effect reference (uniforms, slots used, manifest specifics), see `effects-catalogue.mdc`.
+
+## Manifest shape (`pipeline/types.ts`)
+
+```ts
+PlaygroundConfig {
+  name: string                                  // unique key; stored in CONFIG.__effectName
+  canvas: { width, height }                     // logical size; resolved via BaseProcessor.resolveRes
+  fields: FieldDef[]                            // user-tunable uniforms
+  staticUniforms?: Record<string, { value, type }>  // baked-in uniforms not exposed to UI
+  passes: EffectPass[]                          // executed in order into a single RT
+  animation: { slots: SlotDef[] }               // declared animation channels (subset of pool)
+  textures?: { slots: TextureSlotDef[] }        // declared texture channels (subset of pool)
+}
+```
+
+### `FieldDef`
+
+```ts
+{
+  name: string                  // uniform name (or use uniformName to override)
+  label: string                 // UI label
+  kind: 'f32' | 'i32' | 'vec2<f32>' | 'vec3<f32>' | 'vec4<f32>'
+  default: number | number[]
+  slider?: { min, max, step? }
+  uniformName?: string          // override if uniform name differs from field name
+  color?: boolean               // render as ColorField widget
+}
+```
+
+`fields` are exposed in the `Config` node UI. The Config processor packages them into `{ __effectName, [uName]: value, ... }` and ships through `CONFIG`. The Effect processor reads them out and overrides `entries[uName].value` in its `UniformGroup`.
+
+### `EffectPass`
+
+Two flavours:
+
+```ts
+FullscreenPass {
+  id: string
+  kind: 'fullscreen'
+  blend: 'normal' | 'add'
+  fragment: string
+  vertex?: string                       // defaults to DEFAULT_VERTEX
+  requiresInputs?: EffectInputName[]    // 'source' | 'contour' | 'txcn0..7'
+}
+
+InstancedPass {
+  id: string
+  kind: 'instanced'
+  blend: 'normal' | 'add'
+  vertex: string
+  fragment: string
+  geometry: InstancedGeometryDef
+  requiresInputs?: EffectInputName[]
+  scrolling?: {
+    mode?: 'glyph' | 'ribbon'
+    spacingField?: string
+    phraseLenField?: string
+    repeatsField?: string
+    segmentSizeField?: string             // ribbon only
+    phaseSlot?: number                    // animation slot driving scroll phase, default 0
+  }
+}
+```
+
+`requiresInputs` declares hard dependencies. If any listed input is unconnected, the pass is **elided** (`passInputsSatisfied → false`) and shows up in metrics as `skipped: true`. Unused channels still bind a 1×1 white texture so shaders that reference them don't crash.
+
+### `InstancedGeometryDef`
+
+```ts
+{
+  perVertex: { aLocal: [number, number][] }   // per-vertex local coords
+  indexBuffer: number[]                        // triangle list
+  perInstance: {
+    source: 'inputs.contour'                   // currently the only source
+    map: PerInstanceAttr[]                     // names + sources
+  }
+}
+
+PerInstanceAttr.from = 'positions' | 'tangents' | 'arcS' | 'index'
+                     | 'positionsNext' | 'tangentsNext' | 'arcSNext'  // ribbon mode only
+```
+
+Per-instance attributes are streamed from `ContourSamples` (`streamsFromContour` for static, `resampleContourScrolling`/`resampleContourRibbon` for scrolling). See `geometry-contour.mdc` for the resampling details.
+
+### Animation pool — `SlotDef`
+
+```ts
+{
+  slot: number          // 0..ANIMATION_CHANNEL_COUNT-1
+  label: string         // shown by AnimationController next to its signal_i input
+  defaultMin: number    // controller's lerp(min, max, raw) lower bound
+  defaultMax: number    // upper bound
+}
+```
+
+`ANIMATION_CHANNEL_COUNT = 8`. See `animation-system.mdc` for how channels become `uChan{i}` uniforms and which slots are conventionally used for what.
+
+### Texture pool — `TextureSlotDef`
+
+```ts
+{
+  slot: number          // 0..TEXTURE_CHANNEL_COUNT-1
+  label: string         // surfaces in the Effect node UI as 'txcn{i} · {label}'
+}
+```
+
+`TEXTURE_CHANNEL_COUNT = 8`. Effects opt-in via `textures.slots`; missing slots still exist on the Effect node (the user may wire any texture, and shaders may opt into any pool index) but render with no caption. Unconnected `txcn{i}` referenced by a shader fall back to `Texture.WHITE.source` (1×1 white).
+
+## Runtime: `EffectProcessor`
+
+`category: 'output'`, `alwaysDirty = true`. Inputs:
+
+- `source: TEXTURE` — bitmap the effect modulates (binds to `uDiffuse`).
+- `txcn0..txcn7: TEXTURE` — eight generic texture channels.
+- `contour: CONTOUR` — required by every instanced pass.
+- `animation: ANIMATION` — multi-channel signal.
+- `config: CONFIG` — picks the active manifest (via `__effectName`) and supplies field overrides.
+
+Outputs:
+
+- `texture: TEXTURE` — composited result.
+- `metrics: METRICS` — per-frame profiler payload (per-pass CPU build time + total GPU dispatch).
+
+### Per-frame flow (`execute`)
+
+1. Resolve effect from `config.__effectName`, fall back to `effects[0]`.
+2. `resolveRes` → `[w, h]`. Ensure output RT.
+3. Build `UniformGroup`:
+   - Start with `buildUniformEntries(fields, w, h, staticUniforms)`. Always includes `uResolution = [w, h]`.
+   - Apply per-effect `configData` overrides (skip `__effectName`).
+   - For each `i ∈ [0, TEXTURE_CHANNEL_COUNT)`, bind `uTxcn{i}Enabled` (1.0 / 0.0) and `uTxcn{i}Aspect` (`width/height` of connected, else 1.0).
+   - For each `i ∈ [0, ANIMATION_CHANNEL_COUNT)`, bind `uChan{i} = vec4(time, raw, value, state)`. Unconnected slots get `time=0, raw=0, value=slot.defaultMin ?? 0, state=0`.
+   - `uContourLen = contour.totalLength` (or 0 if no contour).
+4. `warnUndeclaredChannels(config)` — once per effect, log warnings for `uChan{i}` references that fall outside the pool or aren't declared in `animation.slots`.
+5. For each pass in order:
+   - `passInputsSatisfied(pass, inputs)`. If not, push `skipped: true` to metrics, continue.
+   - Build mesh:
+     - `fullscreen` → `makeQuadGeo(w, h)` + `Shader.from({ gl: { vertex: pass.vertex || DEFAULT_VERTEX, fragment }, resources })`.
+     - `instanced` → `streamsFromContour` or `resampleContourRibbon`/`Scrolling`, then `buildInstancedMesh`.
+   - `mesh.blendMode = pass.blend === 'add' ? 'add' : 'normal'`.
+   - Add to `stage` (a single `Container`).
+   - Record `cpuMs = performance.now() - tPass`.
+6. `engine.app.renderer.render({ container: stage, target: rt, clear: true })` — single dispatch for the whole stage.
+7. Record `gpuDispatchMs`.
+8. Tear down: `stage.destroy({ children: true })` + destroy every `ephemeral` Geometry. Per-pass meshes are NOT cached — we re-build every frame because uniforms / streams change every frame anyway.
+
+### Sampler binding
+
+`makeResources(pass, ctx, uniforms)` only binds samplers the pass shaders actually declare. Why: Pixi v8 routes "extra" sampler resources to texture units that the fragment shader didn't reserve, which manifested as one pass sampling a sibling pass's texture (the bug the comment in `effect.ts` calls out). The runtime uses `collectSamplers(pass.fragment, wanted)` (regex over GLSL declarations) and `bind(name, value)` only when `wanted.has(name)`.
+
+Auto-bound samplers:
+
+- `uDiffuse` ← `inputs.source ?? Texture.WHITE.source`.
+- `uTxcn{i}` ← `inputs.txcn{i} ?? Texture.WHITE.source` for each `i`.
+
+## Pass authoring conventions
+
+### Fragment shader skeleton
+
+```glsl
+#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform vec2 uResolution;
+uniform sampler2D uDiffuse;            // declare what you need; the runtime only binds declared samplers
+uniform sampler2D uTxcn0;              // example: SDF in slot 0
+uniform float uTxcn0Enabled;
+uniform float uTxcn0Aspect;            // for atlas-style shaders that need it
+
+uniform vec4 uChan0;                   // .x drive, .y raw, .z value, .w state
+uniform vec4 uChan5;                   // noise time
+
+// effect-specific uniforms from `fields` / `staticUniforms`
+uniform float uMyParam;
+
+void main() {
+    vec2 uv = vUV;
+    // ...
+    fragColor = vec4(rgb, 1.0);
+}
+```
+
+### Vertex shader (instanced)
+
+Vertex shaders for instanced passes consume per-vertex `aLocal` plus per-instance attributes the manifest declared:
+
+```glsl
+in vec2 aLocal;
+in vec2 aPosition;
+in vec2 aTangent;
+in float aArcS;
+// optional, ribbon mode only:
+in vec2 aPositionNext;
+in vec2 aTangentNext;
+in float aArcSNext;
+
+uniform vec2 uResolution;
+uniform mat3 uProjectionMatrix;
+uniform mat3 uWorldTransformMatrix;
+uniform mat3 uTransformMatrix;
+```
+
+The runtime sets `aLocal` from the manifest's `perVertex.aLocal`. Per-instance attributes are wired through `perInstanceAttribute(m, streams, count)` in `node-engine/render/instanced-mesh.ts`.
+
+### Canonical noise (`pipeline/noise.glsl.ts`)
+
+Three primitives, **do not redefine locally** in any shader:
+
+```glsl
+float hash21(vec2 p);         // per-cell 0..1 hash, no time
+float valueNoise2D(vec2 p);   // bilinear value noise, smoothstep weights
+float fbm2D(vec2 p);          // 3-octave fbm, range ~0..1
+```
+
+Authored once in TS, concatenated into every shader that needs them via `${NOISE_GLSL}`. Time-driven shaders sample as `fbm2D(uv * uScale + uChan5.x * driftDir)` — slot 5 is the dedicated noise time channel. Drift speed is upstream (`Timer durationMs` driving slot 5). When porting to WGSL/Metal, port this chunk and every effect follows automatically.
+
+The `noiseVisualizer` processor renders this exact contract on a known surface (chess / stripes) so designers can preview a noise field independently of any effect.
+
+### Reusable passes
+
+`pipeline/passes/`:
+
+- `copy-source.ts` — `copySourcePass: FullscreenPass` that paints `uDiffuse` to the canvas. `requiresInputs: ['source']` so it auto-elides when `source` isn't wired. Every effect manifest should start with this when it expects a background bitmap.
+- `sdf-pure.ts` — fragment computing unsigned distance from a contour-coords texture (`uPointTexture`) into RGBA8 (24-bit RGB + inside flag in A). Used by `sdfFromContour`.
+- `sdf-blur-h.ts`, `sdf-blur-v.ts` — separable SDF-space blur. Used by `blur` in `sdf-packed` mode.
+
+### `staticUniforms`
+
+Use for uniforms the user must NOT touch (calibration constants, internal soft-edge feathering). Don't expose them via `fields`. Listed pairs:
+
+```ts
+staticUniforms: {
+  uJoinSoftness:  { type: 'f32', value: 0 },
+  uEdgeFeatherPx: { type: 'f32', value: 1 },
+}
+```
+
+### Speed contract
+
+Manifests **do not** expose `uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. All animation rate lives upstream in `Timer.durationMs` + `AnimationController.min/max`. Adding a new speed field would break this contract — instead, expose a slot in `animation.slots` and let the user wire a Timer (and optionally an Interpolator) into it.
+
+### Multi-instance compositions
+
+Compose by **chaining Effect nodes** through `source` with `blend: 'add'`, one node per ray/wave/copy with its own colour/density/phase offset. Don't bake fixed-count loops into shaders — that hardcodes a count, defeats per-instance tuning, and is harder to port to other GPUs. The single shipped example of this is `god-rays` (single ray); to render 3 colourful rays you instantiate 3 Effect nodes, each with its own Config.
+
+## Shipped effects
+
+8 manifests, exported in order from `src/effects/index.ts`:
+
+```
+ping-pong-morphing, god-rays, light-beam,
+dot-grid-orbit, text-grid-orbit, text-orbit,
+dot-orbit, marching-ants
+```
+
+Per-effect reference (uniforms, slots, idiosyncrasies) lives in `effects-catalogue.mdc`.
+
+## Adding a new effect — checklist
+
+1. Create `src/effects/<name>/`:
+   - `config.ts` — exports `config: PlaygroundConfig`.
+   - `fragment.ts` (and `vertex.ts` if instanced) — exports the GLSL string.
+   - For multi-pass effects, name shaders by pass id (e.g. `dot.vert.ts`, `dot.frag.ts`, `dot.glow.frag.ts`).
+2. Author the shaders against the conventions above. Use `${NOISE_GLSL}` for noise.
+3. Declare every animation slot the shader reads in `animation.slots`. The runtime warns once when shaders reference undeclared slots (still works, but defaults are surprising).
+4. Declare every texture slot the shader reads in `textures.slots` so the Effect node UI surfaces helpful captions.
+5. Register the manifest in `src/effects/index.ts`.
+6. Smoke-test: open the editor, drop `Config` + `Effect`, set `Config.effect = 'YourEffectName'`, wire a source image, animate slots, watch `Log` to confirm passes aren't being elided unexpectedly.
+7. Update `effects-catalogue.mdc` with a new section.
+8. Bump the count in `product-vision.mdc` and `project-overview.mdc` per the maintenance contract.
+
+## Common pitfalls
+
+- **Forgetting `requiresInputs`** → shader runs against `Texture.WHITE.source` (or undefined contour) and produces garbage. Declare every dependency.
+- **Adding a new uniform without a `FieldDef`** and expecting the Config node to expose it → won't appear in UI. Either add a `FieldDef` or fold it into `staticUniforms` (calibration only).
+- **Reading `Signal.time` on a channel** → see `animation-system.mdc`. Use `uChan{i}.x` (= `Signal.value`) instead.
+- **Sampling `txcn0` directly without checking `uTxcn0Enabled`** → if the user hasn't wired anything, you sample white. For SDF-based gates, branching on the enable flag is cheaper and clearer.
+- **Caching the `Mesh` between frames** → uniforms and per-instance buffers change every frame; the runtime intentionally rebuilds and adds to `ephemeralGeometries` for tear-down. Don't try to keep a Mesh around.
+- **Using `RAY_COUNT = 3` in a shader** → composition is the contract. One shader = one instance. Stack Effect nodes.
+- **Importing Pixi types in `pipeline/types.ts` or `effects/*`** → manifests must stay renderer-agnostic for Tier 3. The single existing leak (`CoordsTexture` re-exporting `Texture`) is acknowledged in `product-vision.mdc → Architectural invariants → Known leak to clean up`. Do not add new ones.

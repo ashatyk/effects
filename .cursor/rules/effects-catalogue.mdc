@@ -1,0 +1,352 @@
+---
+description: Complete reference for every shipped effect (8 manifests) — passes, fields, animation slots, texture slots, dependencies, composition tricks. Read before tuning, debugging, or extending an effect.
+alwaysApply: true
+---
+
+# Effects catalogue
+
+One section per effect in `src/effects/index.ts`. Each section has a uniform shape:
+
+- **Manifest** (`name`, file path, canvas).
+- **Passes** (id → kind, blend, requiresInputs).
+- **Fields** (uniform name → kind / default / range / what it does).
+- **Static uniforms** (calibration constants the user cannot tune).
+- **Animation slots** (which channels the shaders read, with `defaultMin`/`defaultMax`).
+- **Texture slots** (`txcn{i}` channels declared by the manifest).
+- **Composition** (notes on multi-instance stacking, source dependencies, typical wiring).
+
+For format reference (manifest schema, runtime, scrolling modes, ribbon math) see `effects-and-shaders.mdc`.
+
+For the canonical animation/texture pool layout see `animation-system.mdc` and `effects-and-shaders.mdc`.
+
+> **Speed contract**. None of the effects here expose a speed field. Animation rate is fully owned upstream by `Timer.durationMs` + `AnimationController.min/max`. To pause: `Timer.paused = true` (the channel freezes at its current phase). To slow/fast-forward: tune `durationMs`.
+
+---
+
+## `WavePingPong` (`ping-pong-morphing`)
+
+**File**: `src/effects/ping-pong-morphing/`. Canvas 900×1200. Single-pass fullscreen wave that morphs between two contour offsets driven by two animation channels (progress + ping-pong). Optional toothed envelope.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `main` (fullscreen, normal) — wave shader. `requiresInputs: ['txcn0']` (SDF in slot 0).
+
+**Fields** (`uniformName: default → range, role`):
+
+- `uCenterTranslation: 0.0 → [0, 1]` — biases the wave toward the contour centre.
+- `uEdgeFeatherPx: 0 → [0, 5]` — soft outer edge in pixels.
+- `uWaveBasePx: 24 → [0, 300]` — base distance from contour.
+- `uWaveAmpPx: 12 → [0, 300]` — peak amplitude of the wave excursion.
+- `uWaveWidthPx: 10 → [0, 150]` — wave thickness.
+- `uColor: vec3 [1,1,1]` — wave colour.
+- `uOpacity: 1.0 → [0, 1]`.
+- `uNoiseScalePx: 100 → [1, 100]` — noise frequency in pixels.
+- `uNoiseAmpPx: 4 → [0, 100]` — noise amplitude in pixels.
+- `uToothShape: 0 → [0, 2]` — `0=tri, 1=saw, 2=square`.
+- `uToothMix: 0.2 → [0, 1]` — gradient between smooth wave and toothed wave.
+- `uToothAmpPx: 0 → [0, 200]` — extra tooth amplitude on top of the wave.
+- `uToothCount: 20 → [1, 64]`.
+- `uToothPhase: 0.0 → [0, 1]` — extra tooth phase offset (NOT a speed).
+- `uToothSharp: 1.5 → [1, 8]` — saw-mode sharpness.
+- `uToothDuty: 0.5 → [0, 1]` — square-mode duty cycle.
+- `uToothSmooth: 0.02 → [0, 0.49]` — square-mode edge softness.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Progress (`[0, 1]`) — primary phase driver.
+- `1` Ping-pong (`[0, 1]`) — second phase driver, allows a 2-axis morph.
+- `4` Intensity multiplier (`[1, 1]`) — tied to alpha.
+- `5` Noise drift (`[0, 1]`) — feeds canonical `fbm2D`.
+
+**Texture slots**:
+
+- `0` SDF (signed distance) — required.
+
+**Composition**: typical wiring — `image → segmentation → contourResample → sdfFromContour → effect.txcn0` plus `image → effect.source`. Animate slots 0+1 with two `Timer → Interpolator` chains — slot 0 progress as `Timer mode=looped → Interpolator profile=linear` for a saw scroll, slot 1 ping-pong as `Timer → Interpolator profile=triangle` (or `bell`) for the morph.
+
+---
+
+## `GodRays` (`god-rays`)
+
+**File**: `src/effects/god-rays/`. Canvas 900×1200. **Single-ray** god-rays effect — multi-ray pinwheels are composed by chaining multiple Effect nodes (one per ray, `blend: 'add'`).
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `main` (fullscreen, normal) — ray shader. `requiresInputs: ['txcn0']`.
+
+**Fields**:
+
+- `uColor: vec4 [0.1, 1, 1, 1]` — ray colour.
+- `uRayStrength: 1.0 → [0, 1]`.
+- `uRayDensity: 2 → [0, 20]` — number of bright spokes around the contour.
+- `uRayFalloff: 0.035 → [0.01, 0.1]` — radial decay rate.
+- `uRayPhaseOffsetFrac: 0 → [0, 1]` — static phase offset (use to phase-lock multiple rays).
+
+**Static uniforms**:
+
+- `uJoinSoftness: 0` — corner softness.
+- `uEdgeFeatherPx: 1` — outer edge softness.
+
+**Animation slots**:
+
+- `0` Progress (`[0, 1]`).
+- `1` Phase rad (`[0, 2π]`) — the ray's rotational phase.
+- `4` Intensity multiplier (`[1, 1]`).
+
+**Texture slots**:
+
+- `0` SDF (signed distance) — required.
+
+**Composition**: stack 3 GodRays nodes through `source` for a 3-colour pinwheel. Each node has its own Config with different `uColor`, `uRayDensity`, and (if you want them rotating in sync but offset) different `uRayPhaseOffsetFrac`. Driving slot 1 with a shared `Timer` (mode `unbounded`) makes them rotate together; per-Effect Timers with different `durationMs` make them drift apart.
+
+---
+
+## `LightBeam` (`light-beam`)
+
+**File**: `src/effects/light-beam/`. Canvas 900×1200. Single-ray light-beam — a wider, softer cousin of GodRays. Same multi-ray-via-chaining pattern.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `main` (fullscreen, normal) — beam shader. `requiresInputs: ['txcn0']`.
+
+**Fields**:
+
+- `uColor: vec4 [0.1, 1, 1, 1]`.
+- `uRayStrength: 1.0 → [0, 1]`.
+- `uRayDensity: 2 → [0, 10]` — fewer spokes than GodRays by default.
+- `uRayFalloff: 0.08 → [0.01, 0.1]` — softer falloff than GodRays.
+- `uJoinSoftness: 0.0 → [0, 1]` — exposed to UI here (calibration on GodRays).
+- `uRayPhaseOffsetFrac: 0.0 → [0, 1]`.
+
+**Static uniforms**:
+
+- `uEdgeFeatherPx: 0`.
+
+**Animation slots**: same as GodRays (0, 1, 4).
+
+**Texture slots**:
+
+- `0` SDF (signed distance) — required.
+
+**Composition**: same as GodRays.
+
+---
+
+## `DotGridOrbit` (`dot-grid-orbit`)
+
+**File**: `src/effects/dot-grid-orbit/`. Canvas 900×1200. Fullscreen dot-grid that "orbits" around a contour: the SDF drives a band of brightness, and a stepped time index distributes dots in that band.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `main` (fullscreen, normal) — main shader. `requiresInputs: ['txcn0']` (SDF).
+
+**Fields**:
+
+- `uOrbitCenter: 80 → [10, 400]` — distance from contour to orbit centre (px).
+- `uOrbitAmplitude: 60 → [0, 300]` — amplitude of the orbital wave.
+- `uStepInterval: 0.15 → [0.03, 1.0]` — quantisation step in seconds for the orbit position.
+- `uOrbitWidth: 120 → [10, 500]` — band width.
+- `uGridSize: 24 → [6, 80]` — grid cell size in px.
+- `uDotMaxRadius: 8 → [1, 30]`.
+- `uDotMinRadius: 1.5 → [0.5, 10]`.
+- `uSegmentMargin: 5 → [0, 50]`.
+- `uNoiseAmount: 25 → [0, 100]` — wave-noise amplitude in px.
+- `uNoiseScale: 1.0 → [0.1, 5.0]`.
+- `uDotColor: vec4 [0.2, 0.9, 1, 1]`.
+- `uFalloff: 0.005 → [0, 0.05]` — distance falloff.
+- `uEdgeSoftness: 1.0 → [0, 4.0]` — dot edge AA in px.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Scroll (sec) (`[0, 6]`).
+- `1` Radial offset (px) (`[0, 60]`).
+- `2` Size multiplier (`[1, 2]`).
+- `4` Intensity multiplier (`[1, 1]`).
+
+**Texture slots**:
+
+- `0` SDF (signed distance) — required.
+
+**Composition**: drop-in replacement for GodRays/LightBeam when the design wants a "dot field around the silhouette" instead of streamers. Slot 0 typically driven by Timer in `unbounded` mode for a slow scroll; quantised internally via `uStepInterval`.
+
+---
+
+## `TextGridOrbit` (`text-grid-orbit`)
+
+**File**: `src/effects/text-grid-orbit/`. Canvas 900×1200. Fullscreen text-glyph grid that orbits the contour — same shape as DotGridOrbit but each cell renders a glyph from a 16-cell SDF atlas instead of a dot.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `main` (fullscreen, **add** blend) — glyph shader. `requiresInputs: ['txcn0', 'txcn1']` (SDF + glyph atlas).
+
+**Fields** (orbit/grid params shared with DotGridOrbit):
+
+- `uOrbitCenter: 80`, `uOrbitAmplitude: 60`, `uOrbitWidth: 150`, `uStepInterval: 0.15`, `uGridSize: 40`, `uSegmentMargin: 5`, `uNoiseAmount: 25`, `uNoiseScale: 1.0`, `uFalloff: 0.005`.
+- Glyph-specific:
+  - `uGlyphScale: 0.85 → [0.3, 1.0]` — fraction of the cell occupied by glyph.
+  - `uGlyphCount: 16 → [1, 16]` — atlas variety; clamps the cell hash to N glyphs.
+  - `uDotColor: vec4 [0.1, 1.0, 0.3, 1]` — glyph fill colour.
+  - `uGlowColor: vec4 [0, 0.8, 0.2, 1]`.
+  - `uGlowSpread: 3.0 → [0.5, 10.0]` — glow falloff scale.
+  - `uGlowIntensity: 0.6 → [0, 2.0]`.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Scroll (sec) (`[0, 6]`).
+- `1` Radial offset (px) (`[0, 60]`).
+- `3` Glow multiplier (`[1, 2]`).
+- `4` Intensity multiplier (`[1, 1]`).
+
+**Texture slots**:
+
+- `0` SDF (signed distance) — required.
+- `1` Glyph atlas (SDF) — required. A 4×4 grid of glyph SDFs sampled by per-cell hash.
+
+**Composition**: glyph atlas is wired into `txcn1`. Note this effect uses **add blend** for the glyph pass — works well over a darkened background. Pair with a Blur on `source` for a bloom-ish look.
+
+---
+
+## `TextOrbit` (`text-orbit`)
+
+**File**: `src/effects/text-orbit/`. Canvas 900×1200. Ribbon-style instanced effect — text strip wraps around the contour as a tilted-quad strip.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `text` (instanced, normal) — ribbon vertex + fragment.
+  - `requiresInputs: ['contour', 'txcn1']`.
+  - `scrolling: { mode: 'ribbon', segmentSizeField: 'uSegmentSize', phaseSlot: 0 }`.
+  - Geometry: one quad per segment (`aLocal.x = start/end along curve`, `aLocal.y = inner/outer side of strip`). Per-instance attrs: `aPosition`, `aPositionNext`, `aTangent`, `aTangentNext`, `aArcS`, `aArcSNext`.
+
+**Fields**:
+
+- `uTextHeight: 32 → [6, 120]` — strip height in px.
+- `uTextRepeats: 2 → [1, 8]` — phrase repeats around the contour.
+- `uSegmentSize: 6 → [2, 32]` — ribbon segment size in px (smaller = smoother curve, more instances).
+- `uTextRepeatPadding: 0 → [0, 400]` — padding between repeats in px.
+- `uTextEdgeAA: 0.05 → [0, 2.0]` — edge AA softness.
+- `uTextColor: vec4 [0.95, 1, 0.85, 1]`.
+- `uGlowColor: vec4 [0.55, 0.85, 1, 1]`.
+- `uGlowIntensity: 0.3 → [0, 2.0]`.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Scroll (px) (`[0, 600]`) — drives `uChan0.value`, the phase added to ribbon `arcS`. Speed = upstream Timer.
+- `1` Radial offset (px) (`[0, 20]`).
+- `2` Width multiplier (`[1, 2]`).
+- `3` Spacing multiplier (`[1, 2]`).
+- `4` Intensity multiplier (`[1, 1]`).
+
+**Texture slots**:
+
+- `1` Text strip (atlas) — required. The output of a `textStrip` node; the shader maps ribbon UV.x linearly from arc length and reads `uTxcn1Aspect` to scale into atlas UV.x.
+
+**Composition**: typical wiring — `text → textStrip ← textStyle` plus `image → segmentation → contourResample → effect.contour`. Wire `Timer` (`unbounded` mode) into `AnimationController.signal_0` for continuous scroll. No interpolator needed when you want raw monotonic phase.
+
+---
+
+## `DotOrbit` (`dot-orbit`)
+
+**File**: `src/effects/dot-orbit/`. Canvas 900×1200. Instanced "string of beads" — one quad per dot, glyph-mode scrolling, two-pass core+glow rendering.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `dots-glow` (instanced, **add** blend) — outer corona only. Halos accumulate softly without occluding cores.
+- `dots-core` (instanced, normal) — solid AA disks rendered on top of the merged halo cloud.
+  - Both passes share `dotVertex` and the same geometry. `requiresInputs: ['contour']`. `scrolling: { mode: 'glyph', spacingField: 'uDotSpacing' }`.
+  - Geometry: centred unit quad in `[-1, 1]²`; vertex shader scales by per-instance radius.
+
+**Fields**:
+
+- `uDotSpacing: 22 → [4, 120]` — physical spacing between dots in px.
+- `uDotMinRadius: 4 → [0.5, 60]`.
+- `uDotMaxRadius: 14 → [1, 120]`.
+- `uWaveFrequency: 1.2 → [0, 10]` — cycles per 100 px.
+- `uNoiseAmount: 0.4 → [0, 1]` — radius modulation amount.
+- `uNoiseScale: 0.7 → [0.05, 6]` — per 100 px.
+- `uEdgeSoftness: 2.0 → [0, 8]` — disk edge AA in px.
+- `uGlowSize: 4.5 → [1, 12]` — glow radius as a multiplier of dot radius.
+- `uGlowIntensity: 1.4 → [0, 6]`.
+- `uGradientFrequency: 1.0 → [0, 8]` — colour-gradient cycles around the contour.
+- `uHeightTint: 0.35 → [0, 1]` — Y-driven tint amount.
+- `uColorA: vec4 [0.62, 0.40, 1, 1]`.
+- `uColorB: vec4 [1, 0.45, 0.85, 1]`.
+- `uGlowColor: vec4 [0.85, 0.55, 1, 1]`.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Scroll (px) (`[0, 600]`).
+- `1` Radial offset (px) (`[0, 20]`).
+- `2` Size multiplier (`[1, 2]`).
+- `3` Glow multiplier (`[1, 2]`).
+- `4` Intensity multiplier (`[1, 1]`).
+- `5` Noise time (ms) (`[0, 1]`) — drives shader-side `fbm2D` drift.
+
+**Texture slots**: none declared (the manifest has no `textures.slots`).
+
+**Composition**: typical wiring — segmentation → contourResample → effect.contour, plus `effect.source` for the background. Slot 0 = scroll Timer (`unbounded`). Slot 5 = optional noise-time Timer for breathing radii. Two-pass split is what fixes the "trailing dot's glow over leading dot's body" artefact the original single-pass shader had.
+
+---
+
+## `MarchingAnts` (`marching-ants`)
+
+**File**: `src/effects/marching-ants/`. Canvas 900×1200. Classic dashed band scrolling around the contour, instanced ribbon style.
+
+**Passes**:
+
+- `background` (fullscreen, normal) — `copySourcePass`. `requiresInputs: ['source']`.
+- `ants` (instanced, normal) — ribbon vertex + fragment.
+  - `requiresInputs: ['contour']`.
+  - `scrolling: { mode: 'ribbon', segmentSizeField: 'uSegmentSize', phaseSlot: 0 }`.
+  - Same geometry as `text-orbit` (per-segment quad).
+
+**Fields**:
+
+- `uBandHeight: 6 → [1, 48]` — band thickness in px.
+- `uDashLen: 8 → [1, 80]` — dash length in px.
+- `uGapLen: 8 → [0, 80]` — gap length in px.
+- `uSegmentSize: 4 → [1, 32]` — ribbon segment size; matches `uDashLen`+`uGapLen` granularity for smooth dashes on tight curves.
+- `uCornerRadius: 3 → [0, 32]` — band corner radius in px.
+- `uEdgeAA: 1 → [0, 4]` — dash edge AA.
+- `uCrossAA: 1 → [0, 4]` — band edge AA (perpendicular to scroll).
+- `uColor: vec4 [1, 1, 1, 1]` — dash colour.
+- `uColorAlt: vec4 [0, 0, 0, 1]` — gap colour.
+
+**Static uniforms**: none.
+
+**Animation slots**:
+
+- `0` Scroll (px) (`[0, 600]`).
+- `1` Radial offset (px) (`[0, 20]`).
+- `2` Width multiplier (`[1, 2]`).
+- `3` Spacing multiplier (`[1, 2]`).
+- `4` Intensity multiplier (`[1, 1]`).
+
+**Texture slots**: none declared.
+
+**Composition**: classic outline highlight. Slot 0 = Timer in `unbounded` mode → marching scroll. To stop, set `Timer.paused = true` (the dashes hold their current position) or disconnect the Timer.
+
+---
+
+## Cross-cutting reminders
+
+- **Adding a new effect** — see `effects-and-shaders.mdc → Adding a new effect`. Add a section here.
+- **Removing an effect** — Config nodes that referenced it fall back to `effects[0]`; persisted scenes won't error. Update `src/effects/index.ts`, drop the directory, and remove the section here.
+- **Tuning idle vs active behaviour** — pair `Timer → Interpolator` (idle) + `Envelope` (active on event from `EventEmitter`) into `Combine(a_overrides_b)` then into the controller for any slot. The same pattern works on every effect because every channel obeys the same `lerp(min, max, raw)` mapping.
+- **Mixing multiple effects** — chain Effect nodes through `source`/`blend: 'add'`. There's no `Effect → Effect.input` blend node; the `source` input is the layering primitive.

@@ -35,7 +35,7 @@ function buildControllerDef(): ProcessorDef {
         title: 'Animation Controller',
         category: 'animCtrl',
         inputs,
-        outputs: [{ name: 'signal', type: SLOT.ANIMATION }],
+        outputs: [{ name: 'animation', type: SLOT.ANIMATION }],
         defaultParams,
     }
 }
@@ -91,14 +91,14 @@ export class AnimationControllerProcessor extends BaseProcessor {
             const raw = sig ? clamp01(sig.value) : 0
             const value = lerp(minV, maxV, raw)
             /* `.time` carries the upstream signal *value* (unclamped) rather
-               than the upstream `Signal.time` field. `Signal.time` from
-               AutoTimer keeps growing in every mode (even `constant`), so a
+               than the upstream `Signal.time` field. `Signal.time` from a
+               Timer keeps growing whether the timer is paused or not, so a
                shader reading `uChan{i}.x` would animate regardless of the
                user's chosen waveform. The signal's *value* is what the user
-               actually controls (constant → static, sine → oscillates,
-               unbounded → grows linearly); shaders that need monotonic phase
-               drive AutoTimer in `unbounded` mode and tune `durationMs` to
-               control speed. */
+               actually controls (paused timer → static phase, Interpolator
+               sine → oscillates, Timer unbounded → grows linearly); shaders
+               that need monotonic phase drive a Timer in `unbounded` mode
+               and tune `durationMs` to control speed. */
             const channelSignal: ChannelSignal = {
                 time: sig?.value ?? 0,
                 raw,
@@ -107,6 +107,6 @@ export class AnimationControllerProcessor extends BaseProcessor {
             }
             out.channels[String(i)] = channelSignal
         }
-        return { signal: out }
+        return { animation: out }
     }
 }

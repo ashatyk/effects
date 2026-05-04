@@ -6,11 +6,9 @@ export const contourResampleDef: ProcessorDef = {
     type: 'contourResample',
     title: 'Contour Resample',
     category: 'contour',
-    inputs: [{ name: 'polygon', type: SLOT.POLYGON }],
+    inputs: [{ name: 'contour', type: SLOT.CONTOUR }],
     outputs: [
         { name: 'contour', type: SLOT.CONTOUR },
-        { name: 'smoothed_polygon', type: SLOT.POLYGON },
-        { name: 'total_length', type: SLOT.NUMBER },
     ],
     defaultParams: {
         smoothMethod: 'chaikin+laplacian',
@@ -29,8 +27,7 @@ type SmoothMethod = 'none' | 'chaikin' | 'laplacian' | 'chaikin+laplacian'
 type Orientation = 'auto' | 'cw' | 'ccw'
 
 interface CacheKey {
-    polyHash: number
-    polyLen: number
+    contourRef: ContourSamples
     smoothMethod: SmoothMethod
     chaikinIters: number
     laplacianIters: number
@@ -47,18 +44,15 @@ export class ContourResampleProcessor extends BaseProcessor {
 
     private cachedKey: CacheKey | null = null
     private cachedContour: ContourSamples | null = null
-    private cachedSmoothed: number[] | null = null
-    private cachedTotalLength = 0
 
     execute(inputs: Record<string, any>, params: Record<string, any>): Record<string, any> {
-        const poly = inputs.polygon as number[] | null
-        if (!poly || poly.length < 6) {
-            return { contour: null, smoothed_polygon: null, total_length: 0 }
+        const inContour = inputs.contour as ContourSamples | null
+        if (!inContour || inContour.count < 3) {
+            return { contour: null }
         }
 
         const key: CacheKey = {
-            polyHash: hashPolygon(poly),
-            polyLen: poly.length,
+            contourRef: inContour,
             smoothMethod: (params.smoothMethod ?? 'chaikin+laplacian') as SmoothMethod,
             chaikinIters: clamp(intParam(params.chaikinIters, 2), 0, 4),
             laplacianIters: clamp(intParam(params.laplacianIters, 4), 0, 16),
@@ -71,18 +65,11 @@ export class ContourResampleProcessor extends BaseProcessor {
         }
 
         if (!this.cachedKey || !sameKey(this.cachedKey, key)) {
-            const { contour, smoothed } = buildContour(poly, key)
-            this.cachedContour = contour
-            this.cachedSmoothed = smoothed
-            this.cachedTotalLength = contour?.totalLength ?? 0
+            this.cachedContour = buildContour(inContour, key)
             this.cachedKey = key
         }
 
-        return {
-            contour: this.cachedContour,
-            smoothed_polygon: this.cachedSmoothed,
-            total_length: this.cachedTotalLength,
-        }
+        return { contour: this.cachedContour }
     }
 }
 
@@ -103,8 +90,7 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function sameKey(a: CacheKey, b: CacheKey): boolean {
-    return a.polyHash === b.polyHash
-        && a.polyLen === b.polyLen
+    return a.contourRef === b.contourRef
         && a.smoothMethod === b.smoothMethod
         && a.chaikinIters === b.chaikinIters
         && a.laplacianIters === b.laplacianIters
@@ -116,42 +102,10 @@ function sameKey(a: CacheKey, b: CacheKey): boolean {
         && a.adaptiveStrength === b.adaptiveStrength
 }
 
-/**
- * FNV-1a hash over the polygon vertices, sampled vertex-wise so we always
- * fold in *both* x and y. Previous implementation iterated by element index
- * with a length-derived step, which collapsed to "every even index" (x only)
- * for any polygon whose length divided by 256 was even — a y-only translation
- * then produced no hash delta and the cache happily returned a stale smooth.
- *
- * The vertex count is mixed in at the end so genuine collisions on the sample
- * subset still invalidate when the polygon grows or shrinks.
- */
-function hashPolygon(poly: number[]): number {
-    let h = 2166136261 >>> 0
-    const vertexCount = poly.length >> 1
-    if (vertexCount === 0) return 0
-    const skip = vertexCount > 256 ? Math.floor(vertexCount / 256) : 1
-    for (let v = 0; v < vertexCount; v += skip) {
-        const ix = v * 2
-        h ^= Math.round(poly[ix] * 1000) | 0
-        h = Math.imul(h, 16777619)
-        h ^= Math.round(poly[ix + 1] * 1000) | 0
-        h = Math.imul(h, 16777619)
-    }
-    h ^= vertexCount
-    h = Math.imul(h, 16777619)
-    return h >>> 0
-}
-
 /* ───────── core ───────── */
 
-interface BuildResult {
-    contour: ContourSamples | null
-    smoothed: number[]
-}
-
-function buildContour(poly: number[], key: CacheKey): BuildResult {
-    let pts = polyToPairs(poly)
+function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | null {
+    let pts = contourToPairs(input)
     pts = ensureOrientation(pts, key.forceOrientation)
 
     if (key.smoothMethod === 'chaikin' || key.smoothMethod === 'chaikin+laplacian') {
@@ -161,11 +115,11 @@ function buildContour(poly: number[], key: CacheKey): BuildResult {
         for (let i = 0; i < key.laplacianIters; i++) pts = laplacian(pts, key.laplacianLambda)
     }
 
-    if (pts.length < 3) return { contour: null, smoothed: [] }
+    if (pts.length < 3) return null
 
     const lengths = edgeLengths(pts)
     const totalLength = lengths.reduce((a, b) => a + b, 0)
-    if (totalLength <= 1e-3) return { contour: null, smoothed: pairsToFlat(pts) }
+    if (totalLength <= 1e-3) return null
 
     const N = key.sampleCount
     const ds = totalLength / N
@@ -226,7 +180,7 @@ function buildContour(poly: number[], key: CacheKey): BuildResult {
         }
         const cleaned = removeSelfIntersections(shifted)
         if (cleaned.length < 8) {
-            return { contour: null, smoothed: pairsToFlat(pts) }
+            return null
         }
         const reSampled = resampleClosedRing(cleaned, N)
         finalPositions = reSampled.positions
@@ -262,7 +216,7 @@ function buildContour(poly: number[], key: CacheKey): BuildResult {
         if (y > maxY) maxY = y
     }
 
-    const contour: ContourSamples = {
+    return {
         version: 1,
         closed: true,
         count: N,
@@ -272,27 +226,6 @@ function buildContour(poly: number[], key: CacheKey): BuildResult {
         tangents: finalTangents,
         arcS: finalArcS,
     }
-
-    /* `smoothed_polygon` mirrors the *final* contour geometry (post-offset,
-       post-adaptive) so that downstream consumers — in particular a second
-       Contour Resample fed from this output — operate on exactly the curve
-       shown in this node's preview. Returning a closed flat array (last
-       vertex == first vertex) keeps the convention compatible with the
-       polygon input format. */
-    const smoothed = positionsToClosedFlat(finalPositions, N)
-
-    return { contour, smoothed }
-}
-
-function positionsToClosedFlat(positions: Float32Array, N: number): number[] {
-    const out = new Array<number>(N * 2 + 2)
-    for (let i = 0; i < N; i++) {
-        out[i * 2] = positions[i * 2]
-        out[i * 2 + 1] = positions[i * 2 + 1]
-    }
-    out[N * 2] = positions[0]
-    out[N * 2 + 1] = positions[1]
-    return out
 }
 
 /**
@@ -611,30 +544,12 @@ function segIntersect(
     return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)]
 }
 
-function polyToPairs(poly: number[]): [number, number][] {
-    const out: [number, number][] = []
-    const n = Math.floor(poly.length / 2) * 2
-    for (let i = 0; i < n; i += 2) out.push([poly[i], poly[i + 1]])
-    /* If first == last, drop the duplicate so we work on a ring. */
-    if (out.length >= 2) {
-        const a = out[0]
-        const b = out[out.length - 1]
-        if (Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6) {
-            out.pop()
-        }
+function contourToPairs(c: ContourSamples): [number, number][] {
+    const M = c.count
+    const out: [number, number][] = new Array(M)
+    for (let i = 0; i < M; i++) {
+        out[i] = [c.positions[i * 2], c.positions[i * 2 + 1]]
     }
-    return out
-}
-
-function pairsToFlat(pts: [number, number][]): number[] {
-    const out = new Array<number>(pts.length * 2 + 2)
-    for (let i = 0; i < pts.length; i++) {
-        out[i * 2] = pts[i][0]
-        out[i * 2 + 1] = pts[i][1]
-    }
-    /* Close the loop for downstream consumers (matches input convention). */
-    out[pts.length * 2] = pts[0][0]
-    out[pts.length * 2 + 1] = pts[0][1]
     return out
 }
 

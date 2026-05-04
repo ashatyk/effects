@@ -5,7 +5,7 @@ import {
 import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples, type AnimationSignal, type ChannelSignal, type PassMetric, type EffectMetrics } from '../types'
 import { effects } from '../../effects'
-import { buildUniformEntries, applyCoordsUniforms } from '../../pipeline/uniforms'
+import { buildUniformEntries } from '../../pipeline/uniforms'
 import { DEFAULT_VERTEX } from '../../pipeline/default-vertex'
 import {
     ANIMATION_CHANNEL_COUNT,
@@ -260,21 +260,6 @@ export class EffectProcessor extends BaseProcessor {
     ): UniformGroup {
         const entries = buildUniformEntries(config.fields, ctx.width, ctx.height, config.staticUniforms)
 
-        /* Coords binding (data injected by ConfigProcessor or by upstream Polygon node) */
-        const coordsSrc = ctx.inputs.coords_tex
-        const aabb = ctx.inputs.aabb as number[] | null
-        const pointCount = ctx.inputs.point_count as number | null
-        const texDim = ctx.inputs.tex_dim as number[] | null
-        if (coordsSrc && pointCount && texDim && aabb) {
-            applyCoordsUniforms(entries, {
-                tex: null as any,
-                w: texDim[0], h: texDim[1],
-                count: pointCount,
-                minX: aabb[0], minY: aabb[1],
-                maxX: aabb[2], maxY: aabb[3],
-            })
-        }
-
         /* Per-effect param overrides from Config node. */
         if (configData) {
             for (const [key, val] of Object.entries(configData)) {
@@ -308,9 +293,10 @@ export class EffectProcessor extends BaseProcessor {
            mentions it explicitly — unused slots get an idle ChannelSignal
            (time=0, raw=0, value=slot's defaultMin or 0, state=0).
            Component contract:
-              .x = upstream Signal.value (unclamped — AutoTimer.unbounded grows
-                   linearly, sine/triangle oscillate 0..1, constant is static).
-                   Shaders that need monotonic phase wire AutoTimer in
+              .x = upstream Signal.value (unclamped — Timer.unbounded grows
+                   linearly, Interpolator sine/triangle oscillate 0..1, a
+                   paused Timer holds a static phase).
+                   Shaders that need monotonic phase wire a Timer in
                    `unbounded` mode and tune `durationMs` for speed.
               .y = raw 0..1 driver (clamped value)
               .z = mapped value (lerp(min, max, raw))
@@ -362,7 +348,6 @@ export class EffectProcessor extends BaseProcessor {
         }
 
         bind('uDiffuse', inp.source ?? ctx.fallback)
-        bind('uPointTexture', inp.coords_tex ?? ctx.fallback)
         for (let i = 0; i < TEXTURE_CHANNEL_COUNT; i++) {
             bind(`uTxcn${i}`, inp[`txcn${i}`] ?? ctx.fallback)
         }

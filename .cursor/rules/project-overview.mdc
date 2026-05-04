@@ -7,9 +7,30 @@ alwaysApply: true
 
 ## What This Is
 
-A browser-based visual node editor for building GPU image-effect pipelines. Users create processing graphs by wiring nodes on a React Flow canvas; each node is backed by a **processor** that runs shader / compute logic via PixiJS (WebGL2) and publishes typed outputs downstream. The engine executes the entire graph every frame in topological order, enabling real-time preview of multi-pass shader effects, depth estimation, segmentation, contour extraction, and animation.
+A browser-based visual node editor for building GPU image-effect pipelines. Users create processing graphs by wiring nodes on a React Flow canvas; each node is backed by a **processor** that runs shader / compute logic via PixiJS (WebGL2) and publishes typed outputs downstream. The engine executes the entire graph every frame in topological order, enabling real-time preview of multi-pass shader effects, segmentation, contour extraction, and animation.
 
 The app is a single-page tool — there is one route (`/`) that renders the `NodeEditor`.
+
+> **Maintenance contract (every agent reads this).** This document and `product-vision.mdc` are the canonical map of the codebase. They are part of the deliverable. Whenever you finish a task that changes processor count, effect catalog, slot layout, persistence shape, directory layout, snapshot schema, animation pool semantics, or any other invariant described here — **update the affected sections of these two files in the same change**. Out-of-date rules cost more debugging time than the documentation update. If you intentionally diverge from a rule, rewrite the rule; do not leave the codebase contradicting it.
+
+## Domain rules (companion `.mdc` files)
+
+The detailed reference for every subsystem lives in dedicated rules under `.cursor/rules/`. All are `alwaysApply: true`, so they're already in your context — these short bullets are pointers, not duplications.
+
+| Topic | File | Read before |
+|-------|------|-------------|
+| Long-term tier vision, T2/T3 plumbing roadmap, architectural invariants | `product-vision.mdc` | Cross-tier or architectural changes. |
+| Dataflow engine — `DataflowEngine`, `BaseProcessor`, GPU helpers, lifecycle, FPS gate, dirty propagation, subscriber preservation | `node-engine.mdc` | Touching `node-engine/*` or adding/refactoring a processor. |
+| Animation pipeline — Pulse/Signal/ChannelSignal, Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool | `animation-system.mdc` | Changing animation processors, signal types, or shader-side animation contracts. |
+| Geometry pipeline — segmentation → contourResample → sdfFromContour / contourPreview / instanced effects, `ContourSamples` shape | `geometry-contour.mdc` | Any contour/SDF/instanced-pass work. |
+| Text composition — `text` + `textStyle` + `textStrip`, `TEXT` / `TEXT_STYLE` slots, breaking change for old snapshots | `text-composition.mdc` | Text input UX or downstream text consumers. |
+| Effect manifest format & runtime — `PlaygroundConfig`, fullscreen vs instanced passes, ribbon scrolling, texture pool, animation pool, canonical noise, shader conventions | `effects-and-shaders.mdc` | Adding/editing effects, passes, or any GLSL. |
+| UI/views layer — `NodeEditor`, `BaseNodeShell`, `EditableStepEdge`, contexts, hooks, widgets, theme, grid alignment, headless rendering | `ui-views.mdc` | Editor surface, node views, or widget changes. |
+| Persistence — Dexie schema, `SceneSnapshot`, undo/redo cursor, blob storage, debounced auto-save, ID counter healing | `persistence.mdc` | Snapshot shape, history flow, or any persisted field. |
+| Per-processor reference (all 25 nodes — type, slots, params, behaviour, caches, edge cases) | `processors-catalogue.mdc` | Editing or wiring any processor. |
+| Per-effect reference (all 8 manifests — passes, fields, slots, composition tricks) | `effects-catalogue.mdc` | Tuning, debugging, or extending an effect. |
+
+**Maintenance contract extends to all of these.** When you change a subsystem, update the matching domain rule in the same edit, not "later". Stale rules are worse than missing rules.
 
 ---
 
@@ -27,7 +48,7 @@ The app is a single-page tool — there is one route (`/`) that renders the `Nod
 | Persistence | Dexie (IndexedDB wrapper) | 4 |
 | Geometry | polygon-clipping | 0.15 |
 | Routing | react-router-dom | 7 |
-| ML | SAM (Segment Anything) via web worker, Marigold depth/normals via backend API |
+| ML | SAM (Segment Anything) via web worker |
 
 No Tailwind, no shadcn. Styling is MUI `sx` prop + plain CSS files in `flow-nodes/styles/`. The MUI theme (`src/theme.ts`) is a custom dark theme with Geist/Vercel-inspired tokens, monospace typography (JetBrains Mono 700), 6px spacing unit, and dense control sizing.
 
@@ -57,21 +78,23 @@ src/
 │   │   ├── animation-controller.ts  # Universal 8-slot controller (raw 0..1 → mapped value)
 │   │   ├── noise-visualizer.ts # Pattern-warped fbm preview (chess / stripes), driven by Signal
 │   │   ├── log.ts              # Effect metrics sink — per-pass CPU + GPU dispatch timings (EMA)
-│   │   └── ... (28 processors total)
+│   │   └── ... (27 processors total — see PROCESSOR_CATALOG)
 │   └── render/
 │       └── instanced-mesh.ts   # Instanced geometry builder for ribbon/particle passes
 │
 ├── effects/                    # Named effect presets (PlaygroundConfig manifests + GLSL)
-│   ├── index.ts                # exports effects: PlaygroundConfig[]
+│   ├── index.ts                # exports effects: PlaygroundConfig[] (8 entries)
 │   ├── marching-ants/          # config.ts + ribbon.vert.ts + ribbon.frag.ts
 │   ├── text-orbit/             # config.ts + ribbon.vert/frag
+│   ├── text-grid-orbit/        # config.ts + fragment.ts
+│   ├── dot-orbit/              # config.ts + dot.vert/frag + dot.glow.frag
+│   ├── dot-grid-orbit/         # config.ts + fragment.ts
 │   ├── god-rays/               # config.ts + fragment.ts
-│   ├── light-beam/             # ...
-│   ├── ping-pong-morphing/     # ...
-│   └── ... (10+ effect folders)
+│   ├── light-beam/             # config.ts + fragment.ts
+│   └── ping-pong-morphing/     # config.ts + fragment.ts
 │
 ├── pipeline/                   # Shared shader infrastructure
-│   ├── types.ts                # PlaygroundConfig, EffectPass, FieldDef, SlotDef, ANIMATION_CHANNEL_COUNT
+│   ├── types.ts                # PlaygroundConfig, EffectPass, FieldDef, SlotDef, TextureSlotDef, ANIMATION_CHANNEL_COUNT, TEXTURE_CHANNEL_COUNT
 │   ├── default-vertex.ts       # Fullscreen quad vertex shader
 │   ├── coords.ts               # Coordinate texture builder
 │   ├── uniforms.ts             # Uniform packing helpers
@@ -79,8 +102,7 @@ src/
 │   └── passes/                 # Reusable fragment shaders (SDF blur, copy-source)
 │
 ├── engine/                     # External ML workers
-│   ├── sam/                    # SAM (Segment Anything) worker factory + types
-│   └── depth/                  # Depth estimation worker factory + types
+│   └── sam/                    # SAM (Segment Anything) worker factory + types
 │
 └── components/
     ├── NodeEditor.tsx           # Main editor: ReactFlow + engine init + toolbar + sidebar
@@ -88,7 +110,7 @@ src/
     │
     ├── node-editor/             # Editor sub-components and hooks
     │   ├── constants.ts         # GRID_SIZE (20), snapToGrid, nextId, maxNodeIdNumber, SLOT_COMPAT
-    │   ├── menuGroups.ts        # "Add Node" popover menu structure (10 groups)
+    │   ├── menuGroups.ts        # "Add Node" popover menu structure (9 groups, hidden processors filtered out)
     │   ├── NodeEditorToolbar.tsx # Toolbar: back, undo/redo, export/import/clear, pin toggle, FPS cap
     │   ├── AddNodePopover.tsx   # Context-menu popover for adding nodes
     │   └── hooks/
@@ -98,11 +120,11 @@ src/
     │       └── useEdgeColouring.ts      # Edge stroke colour from source node category
     │
     └── flow-nodes/              # All custom React Flow node infrastructure
-        ├── nodeTypes.ts         # Registry mapping processor id → React component (28 entries)
+        ├── nodeTypes.ts         # Registry mapping processor id → React component (27 entries)
         ├── BaseNodeShell.tsx    # Node chrome: coloured header, handles, pin button, NodeResizer
-        ├── EditableStepEdge.tsx # Custom orthogonal edge with draggable bend points (383 lines)
+        ├── EditableStepEdge.tsx # Custom orthogonal edge with draggable bend points
         ├── NodePinSidebar.tsx   # Right sidebar showing pinned nodes in headless mode
-        ├── categoryColors.ts   # Accent colour per category (10 categories + legacy aliases)
+        ├── categoryColors.ts   # Accent colour per category (8 live categories + 6 legacy aliases)
         ├── types.ts             # PipelineNodeData interface
         │
         ├── context/             # React contexts
@@ -136,7 +158,7 @@ src/
         │   ├── editable-edge.css    # Orthogonal edge and bend-point styles
         │   └── pin-sidebar.css      # Sidebar card styles
         │
-        └── views/               # Per-processor UI components (29 files)
+        └── views/               # Per-processor UI components (24 files, one per processor)
             ├── ImageNodeView.tsx
             ├── BlurNodeView.tsx
             ├── EffectNodeView.tsx
@@ -201,30 +223,57 @@ src/
 
 ### Slot Types
 
-`TEXTURE`, `POLYGON`, `NUMBER`, `VEC`, `DEPTH_RAW`, `CONFIG`, `CONTOUR`, `PULSE`, `SIGNAL`, `ANIMATION`, `METRICS`, `ANY` (wildcard). Connection validation uses `SLOT_COMPAT` table.
+`TEXTURE`, `NUMBER`, `VEC`, `CONFIG`, `CONTOUR`, `EVENT`, `SIGNAL`, `ANIMATION`, `METRICS`, `TEXT`, `TEXT_STYLE`, `ANY` (wildcard). Connection validation uses `SLOT_COMPAT` table in `node-editor/constants.ts`. `TEXT_STYLE` is intentionally distinct from `CONFIG` so users can't accidentally wire a typography preset into an effect's `config` input. There is no separate `POLYGON` slot — geometry flows as `CONTOUR` (ContourSamples SoA) end-to-end; the legacy `polygon` processor that packed raw points into a coords texture has been removed.
 
 ### Signal Types
 
-- `PulseSignal` — discrete tap event: `{ count, lastTimestampMs, lastX?, lastY? }`.
-- `Signal` — continuous driver from AutoTimer / Envelope / Combine: `{ value, time, age, state, lastTimestampMs }`. `value` is the user-controlled waveform output (clamped or unbounded depending on mode); `time` is the source-internal monotonic ms clock and is **not** propagated to shaders directly — see "Animation Channels" below.
-- `ChannelSignal` — per-channel packet emitted by `AnimationController`: `{ time, raw, value, state }`. Note: `time` here carries the upstream `Signal.value` (unclamped), **not** the upstream `Signal.time` ms — keeping it as user-controlled drive is what makes `constant 0` actually freeze the channel and `unbounded` mode grow it linearly.
+- `EventSignal` — discrete event: `{ count, lastTimestampMs, lastX?, lastY? }`.
+- `Signal` — continuous driver from Timer / Interpolator / Envelope / Combine: `{ value, time, age, state, lastTimestampMs }`. `value` is the user-controlled waveform output (clamped or unbounded depending on mode); `time` is the source-internal monotonic ms clock and is **not** propagated to shaders directly — see "Animation Channels" below.
+- `ChannelSignal` — per-channel packet emitted by `AnimationController`: `{ time, raw, value, state }`. Note: `time` here carries the upstream `Signal.value` (unclamped), **not** the upstream `Signal.time` ms — keeping it as user-controlled drive is what makes a paused Timer actually freeze the channel and `unbounded` mode grow it linearly.
 - `AnimationSignal` — `{ channels: Record<string, ChannelSignal> }`.
 - `EffectMetrics` — per-frame profiler payload from EffectProcessor: `{ effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }`. `PassMetric` carries `{ id, kind, cpuMs, skipped }`.
 
-### Processor Categories & Catalog (28 types)
+### Processor Categories & Catalog (27 types)
 
-**Input** (6): `number`, `image`, `polygon`, `segmentation`, `sdfTextAtlas`, `textStrip`
-**Image ops** (5): `blur`, `remap`, `blend`, `denoise`, `sdfFromContour`
-**Contour** (1): `contourResample` (Chaikin/Laplacian smoothing, arc-length resampling)
-**Depth** (2): `depthEstimate` (web worker), `depthBlit` (raw → texture)
-**AI/ML** (3, hidden): `materialEstimate`, `marigoldDepth`, `marigoldNormals` (backend API)
-**Animation triggers** (2): `tap` (pointer → PulseSignal), `autoTimer` (time-based waveforms)
-**Animation modulators** (2): `envelope` (pulse → shaped signal), `combineSignals` (add/max/min/mul/mix)
-**Animation controller** (1): `animationController` — universal 8-slot mapper. Inputs `signal_0..signal_7` (raw 0..1) plus optional `config` (CONFIG, supplies per-effect slot labels and default min/max). Output `signal: AnimationSignal` keyed by index strings `'0'..'7'`. Per-slot params `min_i`/`max_i`.
+**Input** (6): `number`, `constantSignal`, `image`, `text`, `textStyle`, `textStrip`
+**Image ops** (4): `blur`, `remap`, `blend`, `denoise`
+**Contour** (3): `segmentation` (TEXTURE → CONTOUR via SAM), `contourResample` (Chaikin/Laplacian smoothing, arc-length resampling), `sdfFromContour` (CONTOUR → SDF TEXTURE)
+**Animation triggers** (2): `eventEmitter` (on-demand EventSignal source — EMIT button, no canvas listener), `timer` (linear-phase time source: looped saw or unbounded growth, with `paused` toggle)
+**Animation modulators** (4): `envelope` (event → shaped signal), `interpolator` (signal → profile-shaped signal: linear/sine/triangle/bell/gaussian/pulse), `combineSignals` (add/max/min/mul/mix), `signalSwitch` (two SIGNALs cross-faded by an EVENT control — each event toggles A↔B with separate A→B / B→A duration + easing profiles)
+**Animation controllers** (2): `animationController` — universal 8-slot mapper. Inputs `signal_0..signal_7` (raw 0..1) plus optional `config` (CONFIG, supplies per-effect slot labels and default min/max). Output `animation: AnimationSignal` keyed by index strings `'0'..'7'`. Per-slot params `min_i`/`max_i`. (Output handle is named `animation` — not `signal` — so it doesn't visually collide with the SIGNAL-typed `signal` outputs of Timer / Interpolator / Combine / SignalSwitch.) `animationSwitch` — two-input cross-fade between two whole AnimationSignal packets, gated by a discrete EVENT, with per-direction transition duration + easing profile (same UX as `signalSwitch` but applied to every channel of the pool at once); use to swap whole controller presets on a single Emit instead of fanning out 8 SignalSwitches.
 **Output** (3): `effect` (multi-pass shader compositor; emits `texture` + `metrics`), `preview` (pass-through + canvas extract), `contourPreview`
 **Utility** (3): `config` (effect selection + params passthrough), `noiseVisualizer` (pattern-warp preview of canonical fbm), `log` (effect timing inspector)
 
-**`alwaysDirty` processors**: `effect`, `tap`, `autoTimer`, `envelope`, `combineSignals`, `animationController`. The `log` processor relies on dirty-propagation from upstream Effect — it's not alwaysDirty itself, so an unwired Log node sits idle and adds zero per-frame cost.
+#### Text composition
+
+Text rendering used to be a single self-contained node (`textStrip` baking text + font + spacing into its own params). It is now decomposed into three nodes that communicate through the typed `TEXT` and `TEXT_STYLE` slots:
+
+- `text` — emits `text: TEXT`. Single multiline string param. One source can feed several Text Strips with the same copy.
+- `textStyle` — emits `style: TEXT_STYLE` (`{ font, letterSpacing, weight: 'regular' | 'bold', transform: 'none' | 'upper' | 'lower' }`). One preset can drive several Text Strips at once.
+- `textStrip` — consumes `text: TEXT` (required) + `style: TEXT_STYLE` (optional, falls back to a sensible default). Emits a single `texture` output; downstream consumers derive the strip aspect ratio from `texture.width / texture.height` (Effect already exposes this as `uTxcn{i}Aspect`).
+
+The previous `sdfTextAtlas` processor was removed (no live effect consumed it). Old snapshots that contain it will log `Unknown processor type: sdfTextAtlas` from `DataflowEngine.addNode` and skip it — this is intentional, the editor does not auto-migrate. Text-using snapshots saved before the split also stop rendering until the user wires the new pair of source nodes; this is the agreed clean break.
+
+#### Geometry composition
+
+Polygon-shaped data is `CONTOUR` end-to-end. There is no `POLYGON` slot any more.
+
+- `segmentation` emits `contour: CONTOUR` directly — it builds a full `ContourSamples` packet (positions + tangents + arcS + totalLength + aabb + closed) from the raw SAM polygon point list and caches it by reference, so consumers can plug it straight into `contourPreview`, `contourResample`, `sdfFromContour`, or the Effect node's `contour` input without an intermediate adapter.
+- `contourResample` now takes `contour: CONTOUR` and emits a single `contour: CONTOUR` (smoothing + uniform / curvature-adaptive resampling + optional outward offset). Its previous secondary outputs (`smoothed_polygon: POLYGON`, `total_length: NUMBER`) had no live consumers and were dropped — the totalLength lives on `ContourSamples` itself.
+- The legacy `polygon` processor (file-loaded JSON polygon → `coords_tex` / `aabb` / `point_count` / `tex_dim` outputs that the SDF stage used to read) was removed. SDF generation now goes through `sdfFromContour`, which builds the coords texture internally from `ContourSamples`. The dead `coords_tex` / `aabb` / `point_count` / `tex_dim` reads have been deleted from `effect.ts`, `EffectInputName`, `BaseProcessor.resolveRes`, and `pipeline/uniforms.ts` (`applyCoordsUniforms` and the JSON-input `buildCoordsTexture` are gone).
+
+The depth-estimation (`depthEstimate`, `depthBlit`) and AI material/normals processors (`materialEstimate`, `marigoldDepth`, `marigoldNormals`) used to ship in the catalog but were removed. Their category strings (`depth`, `ai`, `marigold`, `dnf`, `source`, `process`) are still tolerated by `ProcessorDef.category` and `categoryColors.ts` as **legacy aliases** so old persisted snapshots continue to load with sensible accent colours; do not remove these aliases until snapshot migration is in place.
+
+**`alwaysDirty` processors**: `effect`, `eventEmitter`, `timer`, `envelope`, `combineSignals`, `signalSwitch`, `animationController`, `animationSwitch`. `interpolator` is intentionally **not** alwaysDirty — it's a pure function of its input and rides upstream propagation (Timer / Envelope / Combine are alwaysDirty). The `log` processor relies on dirty-propagation from upstream Effect — it's not alwaysDirty itself, so an unwired Log node sits idle and adds zero per-frame cost.
+
+#### Animation composition (Timer + Interpolator)
+
+The previous monolithic `autoTimer` baked clock + waveform into a single node. It is now decomposed into two complementary processors:
+
+- `timer` — pure time source. Two modes: `looped` (phase wraps `[0, 1)` every `durationMs`, saw-tooth with instant reset) and `unbounded` (`elapsed / durationMs`, grows linearly forever, ideal for monotonic shader scroll consumers). Carries `phaseOffsetMs` for staggering and a `paused` toggle that freezes the elapsed-ms accumulator without losing phase.
+- `interpolator` — shape-only complement. Consumes a SIGNAL whose `.value` is a phase, applies one of `linear | sine | triangle | bell | gaussian | pulse` (mirroring the original autoTimer modes minus `constant`), and emits a SIGNAL whose `.value` is the shaped curve sampled at `phase = frac(input.value)`. `linear` profile is a passthrough that preserves unbounded inputs intact. Pure function of input → not `alwaysDirty`.
+
+Minimal animation graph: `Timer → AnimationController → Effect`. Insert an `Interpolator` between the Timer and the controller (or anywhere downstream of any SIGNAL source) when you want a shaped waveform; omit it for raw monotonic phase. To freeze a channel: `Timer.paused = true` (combine with `phaseOffsetMs` for any static phase). Old snapshots referencing `autoTimer` log `Unknown processor type: autoTimer` from `DataflowEngine.addNode` and skip — the editor does not auto-migrate; rebuild the chain manually.
 
 ---
 
@@ -240,7 +289,7 @@ A fixed-size pool of `ANIMATION_CHANNEL_COUNT = 8` generic channels. Effects don
 
 | Component | Source | Notes |
 |-----------|--------|-------|
-| `.x` (drive) | upstream `Signal.value` (unclamped) | AutoTimer `unbounded` mode grows linearly forever (good for monotonic phase / scroll); `sine`/`triangle`/`bell`/`gaussian`/`pulse` oscillate 0..1; `constant` is static. To control speed, change `AutoTimer.durationMs`. **NOT** the upstream `Signal.time` ms field — that's intentionally hidden so the user's choice of waveform actually governs what shaders see (otherwise a constant-mode timer would still ramp time forever and animate everything). |
+| `.x` (drive) | upstream `Signal.value` (unclamped) | `Timer mode=unbounded` grows linearly forever (good for monotonic phase / scroll); `Interpolator` profiles `sine`/`triangle`/`bell`/`gaussian`/`pulse` oscillate 0..1; a paused Timer holds a static phase. To control speed, change `Timer.durationMs`. **NOT** the upstream `Signal.time` ms field — that's intentionally hidden so the user's choice of waveform actually governs what shaders see (otherwise even a paused timer would keep ramping `time` forever and animate everything). |
 | `.y` (raw) | `clamp01(Signal.value)` | 0..1 driver after clamping. Useful when the shader needs a bounded mix factor regardless of upstream mode. |
 | `.z` (value) | `lerp(min, max, .y)` | Physical value mapped through the AnimationController's per-slot `min_i`/`max_i` params. Most shaders use this for amplitude-style modulation (radial offset, size, glow multiplier, intensity). |
 | `.w` (state) | upstream `Signal.state` | 0 = idle, 1 = clip in progress. |
@@ -259,7 +308,7 @@ Canonical slot layout (convention only, not enforced — any shader can opt into
 
 The `EffectProcessor` warns once per (effect, slot) when a shader references an undeclared `uChan{i}` so manifest/shader drift surfaces in the console.
 
-**Speed is upstream, period.** Effect manifests no longer expose per-uniform speed knobs (`uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uDropPulseSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. — all removed). Animation rate is fully owned by the chain `AutoTimer (mode + durationMs) → optional Envelope/Combine → AnimationController (min/max)`. To pause an effect: feed it AutoTimer in `constant` mode with value `0`. To slow / speed up: tune `durationMs` on the AutoTimer (smaller = faster `value` growth in `unbounded` mode, faster cycle in `sine`/`triangle`). To rescale amplitude: expand/contract the controller's `min_i`/`max_i` range for that slot.
+**Speed is upstream, period.** Effect manifests no longer expose per-uniform speed knobs (`uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uDropPulseSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. — all removed). Animation rate is fully owned by the chain `Timer (mode + durationMs) → optional Interpolator/Envelope/Combine → AnimationController (min/max)`. To pause an effect: set `Timer.paused = true` (the channel freezes at its current phase). To slow / speed up: tune `durationMs` on the Timer (smaller = faster `value` growth in `unbounded` mode, faster cycle in `looped`). To rescale amplitude: expand/contract the controller's `min_i`/`max_i` range for that slot.
 
 ### Pass Types
 
@@ -268,23 +317,27 @@ The `EffectProcessor` warns once per (effect, slot) when a shader references an 
 
 ### Runtime (EffectProcessor)
 
-Resolves active effect from `config` input, builds `UniformGroup` from fields + static uniforms + the full 8-channel animation pool (`uChan0..uChan7` as `vec4(time, raw, value, state)`), binds texture inputs (source, SDF, depth, normals, atlas, etc.), executes passes in order into a single output RT. Uses `Shader.from` with WebGL2 GLSL.
+Resolves active effect from `config` input, builds `UniformGroup` from fields + static uniforms + the full 8-channel animation pool (`uChan0..uChan7` as `vec4(drive, raw, value, state)`) + the full 8-slot texture pool (`uTxcn0..uTxcn7`, with a 1×1 white fallback for unconnected slots referenced by the shader), and binds the optional `source` and `coords_tex` inputs. Passes execute in order into a single output RT. Uses `Shader.from` with WebGL2 GLSL.
 
 ### Available Effects
 
-ping-pong morphing (single wave), god rays (single ray), light beam (single ray), dot orbit, glow drop orbit, neon ring orbit, drop grid orbit, dot grid orbit, text orbit, text grid orbit, marching ants. Multi-ray / multi-wave compositions are now built by **chaining multiple Effect nodes** through the `source` input (with `blend: 'add'`) — one node per ray/wave with its own colour, density, phase offset, etc. The shaders themselves render exactly one instance.
+Currently shipped (8, see `src/effects/index.ts`): `ping-pong-morphing` (single wave), `god-rays` (single ray), `light-beam` (single ray), `dot-orbit`, `dot-grid-orbit`, `text-orbit`, `text-grid-orbit`, `marching-ants`. Multi-ray / multi-wave compositions are built by **chaining multiple Effect nodes** through the `source` input (with `blend: 'add'`) — one node per ray/wave with its own colour, density, phase offset, etc. The shaders themselves render exactly one instance.
 
-None of these effects expose a speed parameter. The configs only carry geometric / colour / shape uniforms; everything that animates is fed via animation slots and is therefore driven by the user's AutoTimer + AnimationController graph.
+None of these effects expose a speed parameter. The configs only carry geometric / colour / shape uniforms; everything that animates is fed via animation slots and is therefore driven by the user's Timer + (optional Interpolator) + AnimationController graph.
+
+### Texture Channels (universal pool)
+
+In addition to the animation pool, the Effect node exposes a fixed-size pool of generic texture inputs `txcn0..txcn7` (`TEXTURE_CHANNEL_COUNT = 8`, see `pipeline/types.ts`). Each manifest declares which slots it consumes via `PlaygroundConfig.textures.slots`, with a human-readable label that the Effect node UI renders next to the corresponding handle (e.g. `txcn0 · SDF`, `txcn1 · Atlas`). Shaders bind only the channels they need by declaring `uniform sampler2D uTxcn{i};`. Slots the manifest doesn't declare still exist on the node — the user can wire any texture into them, and shaders may opt into any pool index. There is no longer a typed `sdf` / `atlas` boundary at the node level; the same Effect node can host any combination of texture maps. Unconnected `txcn{i}` referenced by a shader fall back to a 1×1 white texture.
 
 ### Noise Standard
 
-Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 — shaders sample `uv + uChan5.x * driftRate * driftDir`. Drift speed is owned upstream by the AutoTimer wired into slot 5 (`unbounded` mode for steady drift, `constant 0` to freeze it); shaders never invent their own time source and never multiply by a per-effect speed uniform.
+Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 — shaders sample `uv + uChan5.x * driftRate * driftDir`. Drift speed is owned upstream by the Timer wired into slot 5 (`unbounded` mode for steady drift, `paused = true` to freeze it); shaders never invent their own time source and never multiply by a per-effect speed uniform.
 
 ### Noise Visualizer (`noiseVisualizer`)
 
 A debug surface for the canonical `fbm2D`. Renders a binary pattern (chess or stripes) sampled at `uv + noise displacement` so the user can *see* what the noise field is doing to a known surface. Two decorrelated `fbm2D` samples form a 2D vector field; amplitude is in UV units (typical 0..0.3).
 
-- Input: `signal: SIGNAL` (typically wired from AutoTimer). Drift driver = `signal.value`, NOT `signal.time` — that way `constant` mode → static field, `unbounded` → steady drift, `sine`/`triangle` → breathing. Without an upstream signal `tDrive = 0` and the field is frozen.
+- Input: `signal: SIGNAL` (typically wired from Timer, optionally through Interpolator). Drift driver = `signal.value`, NOT `signal.time` — that way a paused Timer → static field, `unbounded` → steady drift, Interpolator `sine`/`triangle` profile → breathing. Without an upstream signal `tDrive = 0` and the field is frozen.
 - Output: `texture: TEXTURE`. Wire to a Preview node to inspect.
 - Params: `mode` (chess/stripes), `scale` (noise frequency), `amp` (displacement), `cells`/`stripes` (pattern frequency), `speed` (drift gain).
 
@@ -333,7 +386,7 @@ Three guards keep it consistent:
 
 ## UI Architecture
 
-### NodeEditor.tsx (~280 lines)
+### NodeEditor.tsx
 
 Orchestrates everything: `useNodesState` + `useEdgesState` (React Flow), `engineRef` (DataflowEngine), four custom hooks, toolbar, sidebar, context menu. Loading gate shows "Initializing GPU..." until Pixi is ready.
 
@@ -343,17 +396,17 @@ Wraps every node view. Renders: `NodeResizer` (visible when selected, grid-snapp
 
 Two modes: **graph** (full chrome + handles) and **headless** (no handles/resizer — used in pin sidebar).
 
-### EditableStepEdge.tsx (383 lines)
+### EditableStepEdge.tsx
 
 Custom orthogonal edge with draggable bend points. Segments snap to grid. Bend data persists in `edge.data.bends`. Supports selection, deletion, and hover states.
 
 ### Node Views (`views/`)
 
-29 components, one per processor type. Each wraps `BaseNodeShell` and renders parameter widgets using the `widgets/` components. They access the engine via `useEngine()` and update params via `useSetParam()`.
+24 components, one per processor type. Each wraps `BaseNodeShell` and renders parameter widgets using the `widgets/` components. They access the engine via `useEngine()` and update params via `useSetParam()`.
 
 ### Category Colours
 
-10 distinct hues with intentional progression: green (input) → gold/orange/pink (animation chain) → blue (image ops) → teal (contour) → sky (depth) → violet (AI) → red (output) → slate (util). All dark enough for white header text readability.
+8 live hues with intentional progression: green (input) → gold/orange/pink (animTrigger / animMod / animCtrl) → blue (imageOp) → teal (contour) → red (output) → slate (util). 6 legacy aliases (`depth` sky, `ai`/`marigold`/`dnf` violet, `source` green, `process` blue) keep persisted scenes from going grey but do not appear in the live menu. All accents sit on the dark side of the perceived-luminance line so the unified light header text reads cleanly without per-colour overrides.
 
 ---
 

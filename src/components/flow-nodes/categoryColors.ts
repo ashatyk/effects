@@ -23,7 +23,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
      * chain still runs a warm gradient (gold → orange → pink) so the eye
      * reads the signal flow as one continuous family. */
     input:       '#22c55e', // hsl 142°  green       — data sources
-    animTrigger: '#a16207', // hsl  41°  gold-700    — pulse generators
+    animTrigger: '#a16207', // hsl  41°  gold-700    — event / time generators
     animMod:     '#c2410c', // hsl  17°  orange-700  — signal modulators
     animCtrl:    '#ec4899', // hsl 330°  pink        — animation controllers
     imageOp:     '#3b82f6', // hsl 221°  blue        — image processing

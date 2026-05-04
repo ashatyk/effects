@@ -5,43 +5,42 @@ import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
 import { useSetParam } from '../hooks/useSetParam'
 import { NumberField, StatusLine } from '../widgets'
-import { tapDef, TapProcessor } from '../../../node-engine/processors/tap'
+import { eventEmitterDef, EventEmitterProcessor } from '../../../node-engine/processors/event-emitter'
 import type { PipelineNodeData } from '../types'
 
-export const TapNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
+export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const set = useSetParam(id)
-    const throttleMs = (data.params.throttleMs ?? 50) as number
+    const throttleMs = (data.params.throttleMs ?? 0) as number
 
     const [count, setCount] = useState(0)
 
-    /* Poll the processor's pulse counter so the UI reflects every tap (live
-       click on canvas, dev "Fire" button, or programmatic dispatch). */
+    /* Poll the processor's event counter so the UI shows every emit. The
+       Emit button updates `state.count` synchronously inside `emit()`, but
+       downstream propagation only happens on the next engine tick — the
+       poll keeps the badge in sync regardless of tick rate. */
     useEffect(() => {
         const tick = () => {
-            const proc = engine.getProcessor<TapProcessor>(id)
-            if (proc) {
-                const c = (proc as unknown as { state?: { count: number } }).state?.count ?? 0
-                setCount(c)
-            }
+            const proc = engine.getProcessor<EventEmitterProcessor>(id)
+            if (proc) setCount(proc.state.count ?? 0)
         }
         const t = setInterval(tick, 80)
         return () => clearInterval(t)
     }, [engine, id])
 
-    const fire = useCallback(() => {
-        const proc = engine.getProcessor<TapProcessor>(id)
-        proc?.fireSynthetic()
+    const onEmit = useCallback(() => {
+        const proc = engine.getProcessor<EventEmitterProcessor>(id)
+        proc?.emit()
         engine.markDirty(id)
     }, [engine, id])
 
     return (
-        <BaseNodeShell title={tapDef.title} category={tapDef.category} inputs={tapDef.inputs} outputs={tapDef.outputs} minWidth={200}>
+        <BaseNodeShell title={eventEmitterDef.title} category={eventEmitterDef.category} inputs={eventEmitterDef.inputs} outputs={eventEmitterDef.outputs} minWidth={200}>
             <Button
                 variant="contained"
                 color="primary"
                 fullWidth
-                onClick={fire}
+                onClick={onEmit}
                 className="nodrag"
                 sx={{
                     height: 44,
@@ -65,10 +64,10 @@ export const TapNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeD
                     },
                 }}
             >
-                TAP
+                EMIT
             </Button>
             <NumberField label="throttle (ms)" value={throttleMs} step={10} min={0} onChange={v => set('throttleMs', v)} />
-            <StatusLine tone="muted">pulses: {count}</StatusLine>
+            <StatusLine tone="muted">events: {count}</StatusLine>
         </BaseNodeShell>
     )
 })

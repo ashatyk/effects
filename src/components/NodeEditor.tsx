@@ -312,8 +312,9 @@ function NodeEditorInner() {
                                 defaultEdgeOptions={{ type: 'editableStep' }}
                                 snapToGrid
                                 snapGrid={[GRID_SIZE, GRID_SIZE]}
+                                proOptions={{ hideAttribution: true }}
                             >
-                                <Background color="rgba(255,255,255,0.05)" gap={GRID_SIZE} size={1} />
+                                <Background color="rgba(255,255,255,0.07)" gap={GRID_SIZE} size={1} />
                             </ReactFlow>
                             <AddNodePopover
                                 open={!!contextMenu}

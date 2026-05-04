@@ -1,0 +1,178 @@
+---
+description: Dataflow engine internals — DataflowEngine, BaseProcessor, GPU helpers, signal types, lifecycle invariants. Read before touching node-engine/* or before adding/refactoring a processor.
+alwaysApply: true
+---
+
+# Node Engine — Dataflow runtime
+
+The node engine is the framework-agnostic core that lives in `src/node-engine/` and depends on **PixiJS only** (no React, no MUI, no @xyflow/react). The Tier 3 runtime will eventually re-export this directory verbatim, so any change here must keep it free of editor concerns.
+
+## Module map
+
+| File | Role |
+|------|------|
+| `node-engine/types.ts` | `SLOT` enum, signal interfaces, `ProcessorDef`, `ContourSamples`, `IDataflowEngine` (the dependency-injected facade processors see). |
+| `node-engine/dataflow-engine.ts` | `DataflowEngine` — owns processors, params, edges, topological order, dirty set, output cache, GPU helpers, rAF loop, FPS gate, subscriber bus. |
+| `node-engine/scene-store.ts` | Dexie tables (`snapshots`, `blobs`) and `SceneStore` cursor-based undo/redo + blob storage. See `persistence.mdc`. |
+| `node-engine/processors/base-processor.ts` | `BaseProcessor` abstract — `def`, `execute`, `alwaysDirty`, RT helpers (`ensureRT`/`ensurePing`/`ensurePong`), `val`, `resolveRes`, `destroy`. |
+| `node-engine/processors/index.ts` | `PROCESSOR_CATALOG: Record<string, { def, create }>` — single registry. Adding/removing a processor changes only this file + a view in `flow-nodes/views/` + a menu group entry. |
+| `node-engine/processors/<name>.ts` | One processor per file. See `processors-catalogue.mdc` for per-processor reference. |
+| `node-engine/render/instanced-mesh.ts` | `buildInstancedMesh` + contour resamplers (`streamsFromContour`, `resampleContourScrolling`, `resampleContourRibbon`). Used by `effect.ts` for instanced passes. |
+
+## Core types (`types.ts`)
+
+### `SLOT` enum (wire types)
+
+```
+TEXTURE | NUMBER | VEC | CONFIG | CONTOUR
+EVENT   | SIGNAL | ANIMATION
+METRICS | TEXT   | TEXT_STYLE
+ANY (wildcard, only on type-erased handles)
+```
+
+Connection compatibility lives in `components/node-editor/constants.ts → SLOT_COMPAT`. `ANY` accepts every other slot. There is **no `POLYGON` slot** — geometry flows as `CONTOUR` (`ContourSamples` SoA) end-to-end. There is **no `DEPTH_RAW` slot** — the depth-estimation processors were retired.
+
+### Signal interfaces
+
+```ts
+EventSignal { count, lastTimestampMs, lastX?, lastY? }
+Signal      { value, time, age, state: 0|1, lastTimestampMs }
+ChannelSignal { time, raw, value, state: 0|1 }
+AnimationSignal { channels: Record<string, ChannelSignal> }
+TextStyle   { font, letterSpacing, weight: 'regular'|'bold', transform: 'none'|'upper'|'lower' }
+EffectMetrics { effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }
+ContourSamples { version: 1, closed, count, totalLength, aabb: [4], positions, tangents, arcS }
+```
+
+`ChannelSignal.time` is **not** the upstream `Signal.time` ms — see `animation-system.mdc` for the rationale (it carries the unclamped drive value so a paused Timer actually freezes the channel).
+
+### `ProcessorDef`
+
+```ts
+{
+  type: string                   // unique key, also React Flow node type
+  title: string                  // node header label
+  category: 'input' | 'animTrigger' | 'animMod' | 'animCtrl'
+          | 'imageOp' | 'contour' | 'output' | 'util'
+          | 'depth' | 'ai' | 'source' | 'process' | 'marigold' | 'dnf' // legacy
+  inputs: HandleDef[]            // { name, type, label? }
+  outputs: HandleDef[]
+  defaultParams: Record<string, unknown>
+  hidden?: boolean               // hides from "Add Node" picker; still loadable from snapshot
+}
+```
+
+Legacy categories are tolerated so old snapshots don't lose accent colours; **do not remove them** without a snapshot migration.
+
+### `IDataflowEngine` (what processors see)
+
+A narrow facade — `app`, `defaultWidth/Height`, `renderPass`, `renderPassInto`, `markDirty`, `getOutputs`. Processors call only these methods on `engine`. `DataflowEngine` exposes more (`addNode`, `subscribeNode`, etc.) but that surface is editor-only.
+
+## DataflowEngine lifecycle
+
+1. `new DataflowEngine(app)` — takes a hidden offscreen Pixi `Application`.
+2. `addNode(id, type, initialParams?)` — instantiate from `PROCESSOR_CATALOG[type]`, store params, mark dirty, `rebuildGraph()`.
+3. `setEdges(edges)` — rebuild adjacency + Kahn's topo sort, mark all dirty.
+4. `start()` — kick the rAF loop.
+5. `tick()` (every accepted frame): mark `alwaysDirty` nodes → if dirty set empty bail → walk topo order, gather inputs, run `execute()`, store in `outputCache`, notify subscribers → clear dirty set.
+6. `stop()` / `destroy()` — release rAF, destroy processors, clear all maps, drop `nodeListeners`.
+
+### FPS gate (`setTargetFps(fps)`)
+
+`targetFps = 0` → uncapped, native rAF. Positive values throttle `tick()` to roughly `1000/fps` ms with a 0.5 ms slack so a 60fps cap doesn't drop every other frame to 30fps because of rAF jitter. Only graph evaluation is gated; rAF still runs and the canvas keeps compositing the last frame, so static scenes don't visibly stutter.
+
+The cap is persisted by the toolbar to `localStorage["nodeEditor.fps.v1"]` and re-applied on engine creation through `usePipelineEngine`.
+
+### Dirty propagation (`markDirty(nodeId)`)
+
+BFS over adjacency starting at `nodeId`, marking all reachable descendants dirty. Triggered by:
+
+- `updateNodeParams` (param edit).
+- `setEdges` / `addNode` / `removeNode` (structural change marks **everything** dirty).
+- Manually by processors that observe external state (`eventEmitter` on Emit / programmatic dispatch, `image` after async load, `segmentation` on SAM result).
+- Implicitly every frame for `alwaysDirty` processors (see list below).
+
+### `alwaysDirty` processors
+
+`effect`, `eventEmitter`, `timer`, `envelope`, `combineSignals`, `signalSwitch`, `animationController`. All of them either own a clock (timer / envelope active clip / combine / signalSwitch morph clock) or react to external events that the engine cannot observe directly (eventEmitter), or composite per-frame (effect). `interpolator` is intentionally **not** alwaysDirty — it's a pure function of its input and rides upstream dirty propagation. The `log` node is also not alwaysDirty — it relies on dirty propagation from upstream Effect, so a Log without a wired Effect adds zero per-frame cost.
+
+`noiseVisualizer` is also not alwaysDirty: when an upstream Timer is wired it gets propagated dirt every frame; when nothing is wired the field is intentionally frozen.
+
+### Subscriber preservation across snapshots
+
+`engine.subscribeNode(id, cb)` keys listeners by **node id**, not by processor instance. `applySnapshot` (undo/redo, scene import) tears down every processor and immediately re-adds nodes with the same ids; React views stay mounted with stable `[engine, id]` deps so their subscribe-effects never re-fire.
+
+Therefore `removeNode` **must not** drop `nodeListeners.get(id)`. If it did, the rebuilt processors would publish into an empty Set and previews / metrics widgets / output-reading nodes would freeze on the pre-undo frame.
+
+The unsubscribe closure deletes the empty Set entry once the last listener detaches, so permanently-removed nodes don't leave dangling state. **Do not reintroduce `nodeListeners.delete(id)` inside `removeNode`** — it's the cause of the historical "previews freeze after undo" bug.
+
+`destroy()` does clear `nodeListeners` because at that point the entire engine is gone.
+
+### Topological execution
+
+Kahn's algorithm. Cycles are technically possible if the user wires one (React Flow doesn't reject them up front), but `rebuildGraph` only enqueues nodes with `inDegree === 0`, so anything inside a cycle simply never executes. Adding a connect-time cycle detector is on the wishlist.
+
+### Input gathering
+
+`gatherInputs(nodeId)` reads `outputCache[source][sourceHandle]` for each incoming edge and writes it into `inputs[targetHandle]`. A missing source output leaves the slot undefined — processors must tolerate that.
+
+## GPU helpers
+
+- `renderPass(fragment, resources, w?, h?) → RenderTexture` — creates a fullscreen quad `Mesh` with `Shader.from({ gl: { vertex: DEFAULT_VERTEX, fragment }, resources })`, renders into a fresh `RenderTexture(w×h, scaleMode=linear)`, returns it. Caller owns the RT.
+- `renderPassInto(target, fragment, resources)` — same, but renders into a caller-owned RT (so `BaseProcessor.ensure*RT` can recycle the surface).
+- Geometry is cached per `(w, h)` key in `geoCache: Map<string, Geometry>`. The cache is destroyed in `engine.destroy()`.
+
+`DEFAULT_VERTEX` lives in `src/pipeline/default-vertex.ts` and uses Pixi v8's `uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix` triplet — matches what fullscreen `Mesh`es expect.
+
+## `BaseProcessor` contract
+
+### Required overrides
+
+- `readonly def: ProcessorDef` — declarative metadata.
+- `execute(inputs, params, engine) → Record<string, any>` — pure of the processor instance's mutable state, but free to mutate it. Returns a flat record that the engine puts into `outputCache`.
+
+### Optional state
+
+- `alwaysDirty: boolean` — engine flags this node dirty every frame.
+- `nodeId: string` — engine writes this on `addNode`. Use it for `engine.markDirty(this.nodeId)` from async callbacks.
+
+### Helpers
+
+- `val(inputs, params, key, fallback)` — priority `inputs[key] > params[key] > fallback`. Used everywhere a NUMBER input mirrors a same-named widget param.
+- `resolveRes(inputs, params, engine) → [w, h]` — resolution priority:
+  1. explicit `width`/`height` (input or param) when both > 0.
+  2. dimensions of the `source` input.
+  3. dimensions of the `sdf` input.
+  4. dimensions of any other texture-like input.
+  5. `engine.defaultWidth × engine.defaultHeight` (900×1200).
+  
+  This is what stops a small auxiliary texture (e.g. a 512×512 atlas) from accidentally driving the canvas resolution. There is no `coords_tex` probe — the legacy polygon-coords path is gone.
+- `ensureRT(w, h)` / `ensurePing(w, h)` / `ensurePong(w, h)` — RenderTexture pool of size 1/1/1 per processor. Recreates on dimension change, destroys the old. Use this instead of `RenderTexture.create` directly, otherwise per-frame allocation will drown the GPU.
+- `destroy()` — destroys the three RTs. Override and call `super.destroy()` to release additional resources (web worker handles, cached coord textures, sprite display objects).
+
+### Texture ownership
+
+- A processor's output `texture` slot publishes a Pixi `TextureSource` (e.g. `rt.source`), **not** a `Texture` wrapper. Downstream nodes that need a `Texture` create their own one-shot wrapper and **destroy it** after use (see `Preview` and `Segmentation` for the canonical pattern — single reused wrapper that's only re-created when the upstream source identity changes). Allocating a new `Texture` per frame is the dominant memory leak risk — a single un-destroyed wrapper per execute became multi-GB tab usage in the past.
+- Source ownership stays with the producer. Consumers do not destroy `inputs.<x>`.
+- The `image` processor unloads its previous URL via `Assets.unload(prevUrl)` before reloading, otherwise Pixi's global `Assets` cache holds the prior bitmap forever.
+
+## Adding a new processor — checklist
+
+1. Create `src/node-engine/processors/<name>.ts`:
+   - Export `<name>Def: ProcessorDef`.
+   - Export `class <Name>Processor extends BaseProcessor` with `def` + `execute`.
+   - If the node owns a clock or external event source, set `alwaysDirty = true`.
+   - If it allocates auxiliary GPU/CPU resources, override `destroy()` and call `super.destroy()`.
+2. Register in `src/node-engine/processors/index.ts → PROCESSOR_CATALOG`.
+3. Build a view `src/components/flow-nodes/views/<Name>NodeView.tsx` wrapping `BaseNodeShell` + widgets.
+4. Register the view in `src/components/flow-nodes/nodeTypes.ts → pipelineNodeTypes`.
+5. Add to `src/components/node-editor/menuGroups.ts → RAW_GROUPS` under the right section (this also drives the picker accent colour).
+6. If a brand-new SLOT type is involved, extend `node-engine/types.ts → SLOT` and `components/node-editor/constants.ts → SLOT_COMPAT`. Document it in `project-overview.mdc` and `product-vision.mdc` per the maintenance contract.
+7. Update `processors-catalogue.mdc` with a new section.
+
+## Common pitfalls
+
+- **Returning a fresh object reference every frame** when nothing changed is fine for the engine but expensive for React subscribers. If a processor is `alwaysDirty` and downstream nodes only need the value occasionally, gate publication or memoise inside the view.
+- **Reading the wrong field** for animation drive: shaders bind `uChan{i}.x` (drive, unclamped) by default. `.y` is the 0..1 clamped form, `.z` is `lerp(min, max, raw)`, `.w` is state. See `animation-system.mdc`.
+- **Reaching for `Signal.time`** instead of `Signal.value` in any node consuming a `SIGNAL`: `time` keeps growing whenever the Timer is running (paused intervals are skipped, but every active frame adds to it), so reading time leaks animation through any node that should track the user's chosen waveform. Always drive from `value` — that's what the user controls via the Timer + Interpolator chain.
+- **Forgetting `engine.markDirty(this.nodeId)`** at the end of an async callback (image load, segmentation worker reply, text rasterisation): the engine has no way of knowing the processor's internal state changed, and the new outputs will only surface on the next unrelated dirty propagation.

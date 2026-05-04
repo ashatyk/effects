@@ -12,8 +12,9 @@ export default `
 
     /* Animation channels — vec4(drive, raw, value, state).
        Slot 0: appearance progress (0..1) — controls overall amplitude.
-       Slot 1: ping-pong drive (0..1) — wire AutoTimer in 'triangle' or
-               'bell' mode so the value oscillates 0..1..0 over the period.
+       Slot 1: ping-pong drive (0..1) — wire Timer → Interpolator with the
+               'triangle' or 'bell' profile so the value oscillates 0..1..0
+               over the period.
        Slot 4: intensity multiplier on final colour & alpha.
        Slot 5: noise time — uChan5.x drives fbm drift (unbounded value). */
     uniform vec4 uChan0;
@@ -147,9 +148,10 @@ ${NOISE_GLSL}
            animation graph — the shader does no internal interpolation
            or fract-based phase generation any more.
 
-             apear      = uChan0.z   ramped via Envelope / AutoTimer easing.
-             halfBipolar = uChan1.x oscillates 0..1..0 (triangle/bell mode);
-                           remap to -1..1 so the wave swings symmetrically.
+             apear      = uChan0.z   ramped via Envelope / Interpolator easing.
+             halfBipolar = uChan1.x oscillates 0..1..0 (Interpolator triangle/
+                           bell profile); remap to -1..1 so the wave swings
+                           symmetrically.
              noiseDrive = uChan5.x — unbounded value, used as continuous
                            drift coordinate. */
         float apearInter = uChan0.z;

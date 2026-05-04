@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore, type NodeProps, type ReactFlowState } from '@xyflow/react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
@@ -52,40 +52,106 @@ const ROW_GRID = '14px 1fr 56px 56px'
 const ROW_GAP = 0.75
 
 /* Channel-row specifics on top of the global compact `.pn` input chrome:
-   right-aligned tabular numerics so digits line up across the 8 rows, and
-   no native spinner buttons (rows are too tight; keyboard arrows still
-   step the value). */
+   right-aligned tabular numerics so digits line up across the 8 rows.
+   We use type="text" + inputMode="decimal" instead of type="number" because
+   `<input type=number>` reports an *empty* `e.target.value` while the user
+   types intermediate states like `-` or `0.`, which would force us to
+   commit either NaN (and fall back to 0, eating the minus) or to suppress
+   the keystroke. With a text input we keep the raw string in local state
+   and only push numeric updates upstream when the buffer parses, so the
+   user can freely type negatives and decimals without the field snapping
+   under their fingers. */
 const COMPACT_INPUT_SX = {
     '& .MuiOutlinedInput-input': {
         textAlign: 'right' as const,
         fontVariantNumeric: 'tabular-nums',
     },
-    '& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button': {
-        WebkitAppearance: 'none',
-        margin: 0,
-    },
-    '& input[type=number]': { MozAppearance: 'textfield' },
 }
+
+/** Matches numeric strings the user is allowed to *type* (including
+ *  intermediate forms like `-`, `.`, `-.`, `0.`). Does NOT require a digit
+ *  — that's what `parseAndCommit` is for. */
+const PARTIAL_NUMERIC = /^-?(?:\d+\.?\d*|\.\d*)?$/
 
 interface CompactNumberProps {
     value: number
     onChange: (v: number) => void
-    step?: number
 }
 
-const CompactNumber = memo(function CompactNumber({ value, onChange, step = 0.1 }: CompactNumberProps) {
+const CompactNumber = memo(function CompactNumber({ value, onChange }: CompactNumberProps) {
+    /* Buffer the raw text so the user can park the field on `-` / `0.` /
+       `-.` mid-type without us snapping the parsed number back into the
+       input. */
+    const [text, setText] = useState(() => formatExternal(value))
+    /* `lastExternal` lets us tell apart "the parent updated us" (e.g. undo
+       redo, slot defaults applied) from "the user is mid-edit". Without it,
+       every parent re-render with an unchanged value would clobber a
+       half-typed buffer like `0.`. */
+    const lastExternal = useRef(value)
+
+    useEffect(() => {
+        if (value !== lastExternal.current) {
+            lastExternal.current = value
+            setText(formatExternal(value))
+        }
+    }, [value])
+
+    const handleChange = (raw: string) => {
+        if (!PARTIAL_NUMERIC.test(raw)) return // reject letters, double minuses, etc.
+        setText(raw)
+        const n = parseFloat(raw)
+        if (Number.isFinite(n)) {
+            lastExternal.current = n
+            onChange(n)
+        }
+    }
+
+    const handleBlur = () => {
+        const n = parseFloat(text)
+        if (Number.isFinite(n)) {
+            const normalised = formatExternal(n)
+            setText(normalised)
+            lastExternal.current = n
+            if (n !== value) onChange(n)
+        } else {
+            /* Buffer never reached a parsable number (user cleared the
+               field, left it on `-`, etc.) — restore the upstream value
+               so we don't ship a stale string. */
+            setText(formatExternal(value))
+        }
+    }
+
     return (
         <TextField
-            type="number"
+            type="text"
             size="small"
-            value={Number.isFinite(value) ? value : 0}
-            onChange={e => onChange(parseFloat(e.target.value) || 0)}
-            slotProps={{ htmlInput: { step, className: 'nodrag' } }}
+            value={text}
+            onChange={e => handleChange(e.target.value)}
+            onBlur={handleBlur}
+            slotProps={{
+                htmlInput: {
+                    inputMode: 'decimal',
+                    /* Hint mobile / IME keyboards that minus + decimal are
+                       valid characters. Desktop browsers ignore `pattern`
+                       on text inputs but mobile uses it for keyboard
+                       layout. */
+                    pattern: '-?[0-9]*\\.?[0-9]*',
+                    className: 'nodrag',
+                },
+            }}
             sx={COMPACT_INPUT_SX}
             fullWidth
         />
     )
 })
+
+/** Stable string form for an external number — avoids "1" round-tripping
+ *  to "1" but "1.5" round-tripping to "1.5". `Number.toString()` is fine
+ *  here; we just guard against `NaN`. */
+function formatExternal(n: number): string {
+    if (!Number.isFinite(n)) return '0'
+    return String(n)
+}
 
 interface ChannelRowProps {
     index: number

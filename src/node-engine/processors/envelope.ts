@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BaseProcessor } from './base-processor'
-import { SLOT, type ProcessorDef, type IDataflowEngine, type PulseSignal, type Signal } from '../types'
+import { SLOT, type ProcessorDef, type IDataflowEngine, type EventSignal, type Signal } from '../types'
 
 export type EnvelopeShape = 'bell' | 'rise' | 'fall' | 'plateau' | 'gaussian' | 'triangle'
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
@@ -10,7 +10,7 @@ export const envelopeDef: ProcessorDef = {
     type: 'envelope',
     title: 'Envelope',
     category: 'animMod',
-    inputs: [{ name: 'pulse', type: SLOT.PULSE }],
+    inputs: [{ name: 'event', type: SLOT.EVENT }],
     outputs: [{ name: 'signal', type: SLOT.SIGNAL }],
     defaultParams: {
         shape: 'bell' as EnvelopeShape,
@@ -43,10 +43,10 @@ export interface EnvelopeSnapshot {
 }
 
 /**
- * Turn discrete pulses into a continuous 0..1 signal shaped by an activation
- * curve. Each pulse spawns a new clip; the curve is sampled per frame.
+ * Turn discrete events into a continuous 0..1 signal shaped by an activation
+ * curve. Each event spawns a new clip; the curve is sampled per frame.
  *
- * `restart` keeps only the most recent clip (new tap aborts the previous).
+ * `restart` keeps only the most recent clip (new event aborts the previous).
  * `add` sums the contributions of every active clip (clamped to 1).
  * `max`  takes the maximum across active clips (best for caps that should
  *        never appear "pumped" by retriggers).
@@ -56,8 +56,8 @@ export class EnvelopeProcessor extends BaseProcessor {
     alwaysDirty = true
 
     private clips: EnvelopeClip[] = []
-    private lastSeenPulseCount = -1
-    private lastPulseTs = 0
+    private lastSeenEventCount = -1
+    private lastEventTs = 0
     private snapshot: EnvelopeSnapshot = {
         clips: [],
         value: 0,
@@ -84,14 +84,14 @@ export class EnvelopeProcessor extends BaseProcessor {
         const decayEasing = (params.decayEasing ?? 'linear') as Easing
         const retriggerMode = (params.retriggerMode ?? 'restart') as RetriggerMode
 
-        const pulse = inputs.pulse as PulseSignal | null | undefined
+        const event = inputs.event as EventSignal | null | undefined
 
         const now = performance.now()
 
-        /* React to a new pulse: spawn a clip. */
-        if (pulse && pulse.count > this.lastSeenPulseCount) {
-            this.lastSeenPulseCount = pulse.count
-            this.lastPulseTs = pulse.lastTimestampMs || now
+        /* React to a new event: spawn a clip. */
+        if (event && event.count > this.lastSeenEventCount) {
+            this.lastSeenEventCount = event.count
+            this.lastEventTs = event.lastTimestampMs || now
             const clip: EnvelopeClip = { startMs: now }
             if (retriggerMode === 'restart') this.clips = [clip]
             else this.clips.push(clip)
@@ -114,7 +114,7 @@ export class EnvelopeProcessor extends BaseProcessor {
 
         const state: 0 | 1 = this.clips.length > 0 ? 1 : 0
         const time = state === 1 ? mostRecentT * durationMs : 0
-        const age = this.lastPulseTs > 0 ? now - this.lastPulseTs : 0
+        const age = this.lastEventTs > 0 ? now - this.lastEventTs : 0
         const finalValue = clamp01(value)
 
         const signal: Signal = {
@@ -122,7 +122,7 @@ export class EnvelopeProcessor extends BaseProcessor {
             time,
             age,
             state,
-            lastTimestampMs: this.lastPulseTs,
+            lastTimestampMs: this.lastEventTs,
         }
 
         /* Publish a snapshot that the NodeView reads each frame to draw the

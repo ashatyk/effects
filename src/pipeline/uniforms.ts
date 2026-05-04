@@ -1,4 +1,4 @@
-import type { CoordsTexture, FieldDef, UniformEntries, UniformKind } from './types'
+import type { FieldDef, UniformEntries, UniformKind } from './types'
 
 export function buildUniformEntries(
     fields: FieldDef[],
@@ -15,14 +15,4 @@ export function buildUniformEntries(
         entries[uniformName] = { value: field.default, type: field.kind }
     }
     return entries
-}
-
-export function applyCoordsUniforms(uniforms: UniformEntries, coordsRes: CoordsTexture | undefined) {
-    if (!coordsRes) return
-    uniforms.uPointTextureDim = { value: [coordsRes.w, coordsRes.h], type: 'vec2<f32>' }
-    uniforms.uPointTexelCount = { value: coordsRes.count, type: 'i32' }
-    uniforms.uPointAABB = {
-        value: [coordsRes.minX, coordsRes.minY, coordsRes.maxX, coordsRes.maxY],
-        type: 'vec4<f32>',
-    }
 }

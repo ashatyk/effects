@@ -23,11 +23,11 @@ const idleSignal = (): Signal => ({ value: 0, time: 0, age: 0, state: 0, lastTim
 
 /**
  * Combines two SIGNAL inputs into one. Use to layer user input (envelope)
- * over an idle drive (auto-timer):
+ * over an idle drive (timer + interpolator):
  *
- *   AutoTimer ──┐
- *               ├── Combine (mode = a_overrides_b) ──> Controller
- *   Envelope ───┘
+ *   Timer → Interpolator ──┐
+ *                          ├── Combine (mode = a_overrides_b) ──> Controller
+ *   Envelope ──────────────┘
  *
  * Modes:
  *   - `add`            -> a + b (no clamping; controller handles range mapping).

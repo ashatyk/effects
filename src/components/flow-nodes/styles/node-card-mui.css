@@ -100,9 +100,14 @@
     color: var(--pn-text-secondary);
 }
 
-/* Header pin icon inherits the header's light text colour. */
+/* Header pin icon inherits the header's light text colour. The
+   `text-shadow` set on `.pn-header` doesn't apply to SVGs (it only
+   shadows glyphs), so we mirror it as a `drop-shadow` filter on the
+   icon — keeps the pin button visually attached to the title row
+   instead of floating flat against the accent backdrop. */
 .pn-header .MuiSvgIcon-root {
     color: inherit;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
 }
 
 .pn .MuiFormLabel-root,

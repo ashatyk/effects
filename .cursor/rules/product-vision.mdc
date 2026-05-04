@@ -32,7 +32,7 @@ The codebase you are looking at is **Tier 1**. It must produce artifacts that Ti
 
 In-browser visual node graph (this app). Designers wire processors into pipelines. Output is a `SceneSnapshot` persisted to IndexedDB and exportable as JSON.
 
-Already in place: `DataflowEngine`, `PROCESSOR_CATALOG`, 11 effect manifests, universal 8-slot animation pool, history with pinned nodes & viewport.
+Already in place: `DataflowEngine`, `PROCESSOR_CATALOG` (27 processors), 8 effect manifests, universal 8-slot animation pool, universal 8-slot texture pool (`uTxcn0..7`), typed text composition (`text` + `textStyle` → `textStrip` over `TEXT` / `TEXT_STYLE` slots), decomposed time + waveform (`timer` + `interpolator` replacing the legacy monolithic `autoTimer`), unified geometry transport on `CONTOUR` (no separate `POLYGON` slot — segmentation emits `ContourSamples` directly), history with pinned nodes & viewport.
 
 ## Tier 2 — Supplier configuration tool (next major work)
 
@@ -100,7 +100,7 @@ Until then: keep all renderer-specific code (Pixi, Metal, Vulkan calls) **out of
 
 These are choices made today to keep the three tiers cleanly separable. Future refactors must preserve them:
 
-- **Manifests are renderer-agnostic.** `PlaygroundConfig`, `EffectPass`, `FieldDef`, `SlotDef` reference no Pixi/WebGL/Metal types. Adding `import { Texture } from 'pixi.js'` to `pipeline/types.ts` would break Tier 3.
+- **Manifests are renderer-agnostic.** `PlaygroundConfig`, `EffectPass`, `FieldDef`, `SlotDef`, `TextureSlotDef` reference no Pixi/WebGL/Metal types. **Known leak to clean up before T3 extraction:** `pipeline/types.ts` currently imports `Texture` from `pixi.js` purely for the engine-only `CoordsTexture` helper type — that type does not belong in the manifest module and must be moved into `node-engine/` (or behind a renderer-agnostic interface) before this file is shipped to Tier 3. Do not add any new Pixi-typed exports here in the meantime.
 - **`DataflowEngine` is framework-agnostic.** No React, MUI, or xyflow imports inside `src/node-engine/`. Tier 3 imports `node-engine/` + `effects/` + `pipeline/` and nothing else from this repo.
 - **Snapshots are the cross-tier transport.** `SceneSnapshot` (graph + asset blobs) is the format that flows from Tier 1 to Tier 2 to Tier 3. Adding fields is fine; removing or making them React-specific is not.
 - **Animation channels stay positional.** The 8-channel pool with the canonical layout (slot 0 = phase, 1 = radial, 2 = size, 3 = spacing/glow, 4 = intensity, 5 = noise time, 6/7 free) is a wire contract between effect authors and runtimes. Don't reintroduce named channels.
@@ -118,3 +118,37 @@ These are choices made today to keep the three tiers cleanly separable. Future r
 5. **Native runtimes**: Swift+Metal and Kotlin+Vulkan, each consuming the same `PublishedPipeline` JSON and pre-compiled shader artifacts.
 
 When in doubt about whether a change is "Tier 1 only" or "leaks into Tier 2/3": ask whether the change affects manifest shape, processor execute() behavior, or shader code. If yes — it crosses tiers and needs to land in code that doesn't depend on React.
+
+## Documentation maintenance (every agent)
+
+`product-vision.mdc` (this file) and `project-overview.mdc` are part of the codebase, not separate artefacts. Both are loaded as `alwaysApply` rules and shape every future agent's mental model.
+
+**At the end of every task that changes any of the following, update both files in the same change:**
+
+- Tier boundaries, T2/T3 plumbing status, or any item under "Suggested ordering of next big steps".
+- Architectural invariants list (additions, leaks discovered, leaks closed).
+- Processor catalog size or category list (`PROCESSOR_CATALOG`, `ProcessorDef.category`).
+- Effect catalog (`src/effects/index.ts`).
+- Animation pool / texture pool semantics (`ANIMATION_CHANNEL_COUNT`, `TEXTURE_CHANNEL_COUNT`, slot-component layout).
+- `SceneSnapshot` shape, manifest version, persistence schema.
+- Engine lifecycle invariants (FPS-gate, dirty propagation, subscriber preservation).
+- Directory layout under `src/`.
+
+If you intentionally diverge from a stated invariant, **rewrite the invariant** — do not leave the rule contradicting the code. If the divergence is temporary, add it under "Known leaks" with the trigger condition for cleanup. Stale rules are worse than missing rules; treat them as a bug to fix in the same PR.
+
+## Companion domain rules
+
+Detailed reference docs live next to this file under `.cursor/rules/` and are all `alwaysApply: true`. They cover the moving parts of Tier 1; this file stays focused on the cross-tier picture.
+
+- `project-overview.mdc` — concrete map of the current codebase (tech stack, directory tree, snapshot shape, lifecycle).
+- `node-engine.mdc` — `DataflowEngine`, `BaseProcessor`, GPU helpers, dirty/FPS contracts.
+- `animation-system.mdc` — Pulse/Signal/ChannelSignal pipeline and the 8-channel uniform pool.
+- `geometry-contour.mdc` — segmentation → contour resample → SDF / instanced passes; `ContourSamples` shape.
+- `text-composition.mdc` — `text` + `textStyle` → `textStrip` chain over typed `TEXT` / `TEXT_STYLE` slots.
+- `effects-and-shaders.mdc` — `PlaygroundConfig` manifest format, fullscreen vs instanced passes, canonical noise.
+- `ui-views.mdc` — editor surface, node views, widgets, theme. **Tier 1 only — never imported by Tier 3.**
+- `persistence.mdc` — Dexie schema, snapshot/blob storage, undo/redo, ID counter healing.
+- `processors-catalogue.mdc` — per-processor reference for all 27 nodes.
+- `effects-catalogue.mdc` — per-effect reference for all 8 manifests.
+
+Update the relevant domain rule in the same change that modifies its subsystem — same maintenance contract as for this file.

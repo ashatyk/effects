@@ -4,7 +4,13 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: #141414;
+    /* Editor shell backdrop — sits behind every React Flow overlay
+       (controls, minimap, attribution) and shows through whenever the
+       canvas itself is transparent. Slightly lighter than the Geist
+       black we use for chrome (#0a0a0a) so node cards have a calmer
+       contrast band around them and the grid dots stay readable
+       without bumping their alpha. */
+    background: #1c1c1e;
 }
 
 .node-editor-body {
@@ -42,15 +48,6 @@
 
 .react-flow__handle {
     background: transparent;
-}
-
-.react-flow__attribution {
-    background: transparent !important;
-    color: rgba(255, 255, 255, 0.20) !important;
-}
-
-.react-flow__attribution a {
-    color: rgba(255, 255, 255, 0.30) !important;
 }
 
 .react-flow__controls {
