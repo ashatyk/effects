@@ -95,6 +95,15 @@ export function useSceneState(): SceneState {
     )
 
     const addPage = useCallback((name?: string) => {
+        /* Heal the module-level page-id counter against every live
+           page's `p_<int>` suffix BEFORE minting. The initial scene
+           bootstraps with the hard-coded `DEFAULT_PAGE_ID = 'p_1'`
+           without touching the counter, so the very first `addPage`
+           would otherwise reissue `p_1` and produce two pages sharing
+           one id (the active-page filter then matches both pages and
+           any edit applies to both — "обе активны как одно целое").
+           Mirrors `healAndMintNodeId` in NodeEditor. */
+        setPageIdCounterFromPages(pagesRef.current)
         const id = nextPageId()
         const idx = pagesRef.current.length + 1
         setPages(prev => [...prev, { id, name: name ?? `Page ${idx}`, nodes: [], edges: [] }])
