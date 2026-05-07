@@ -1,39 +1,24 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
 import { useEngine } from '../context/EngineContext'
-import { NumberField, SelectField } from '@effects/ui'
 import { useCanvasFill } from '../hooks/useCanvasFill'
 import {
     envelopeDef, EnvelopeProcessor, sampleShape,
-    type EnvelopeShape, type Easing, type EnvelopeSnapshot, type RetriggerMode,
+    type EnvelopeShape, type Easing, type EnvelopeSnapshot,
 } from '@effects/runtime/node-engine/processors/envelope'
 import type { PipelineNodeData } from '../types'
-
-const SHAPES = ['bell', 'rise', 'fall', 'plateau', 'gaussian', 'triangle'] as const
-const EASINGS = ['linear', 'easeIn', 'easeOut', 'easeInOut'] as const
-const MODES = ['restart', 'add', 'max'] as const
 
 const PREVIEW_H = 70
 const SAMPLES = 96
 
-export const EnvelopeNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
+/**
+ * Graph card: live envelope curve preview with running clip play-heads.
+ * Editable params (shape, duration, easings, retrigger) live in
+ * `EnvelopeNodeSettings`.
+ */
+export const EnvelopeNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
-    const shape = (data.params.shape ?? 'bell') as string
-    const durationMs = (data.params.durationMs ?? 600) as number
-    const peakTime = (data.params.peakTime ?? 0.5) as number
-    const plateauHold = (data.params.plateauHold ?? 0.4) as number
-    const attackEasing = (data.params.attackEasing ?? 'linear') as string
-    const decayEasing = (data.params.decayEasing ?? 'linear') as string
-    const retriggerMode = (data.params.retriggerMode ?? 'restart') as string
-
-    const showPeak = shape !== 'bell' && shape !== 'rise' && shape !== 'fall'
-    const showPlateau = shape === 'plateau'
-    const showAttack = shape === 'rise' || shape === 'plateau'
-    const showDecay = shape === 'fall' || shape === 'plateau'
-
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const rafRef = useRef<number | null>(null)
     const sizeRef = useRef({ w: 240, h: PREVIEW_H, ctx: null as CanvasRenderingContext2D | null })
@@ -44,10 +29,6 @@ export const EnvelopeNodeView = memo(({ id, data }: NodeProps & { data: Pipeline
 
     useCanvasFill(canvasRef, PREVIEW_H, onResize)
 
-    /* Live curve preview: redraws every frame, reads the processor's snapshot
-       to overlay current play-head(s) and the active value. The static shape
-       outline is recomputed when params change; the play-head moves with the
-       clip's elapsed time. */
     useEffect(() => {
         const tick = () => {
             const { w, h, ctx } = sizeRef.current
@@ -66,7 +47,7 @@ export const EnvelopeNodeView = memo(({ id, data }: NodeProps & { data: Pipeline
     }, [engine, id])
 
     return (
-        <BaseNodeShell title={envelopeDef.title} category={envelopeDef.category} inputs={envelopeDef.inputs} outputs={envelopeDef.outputs} minWidth={260}>
+        <BaseNodeShell title={envelopeDef.title} category={envelopeDef.category} inputs={envelopeDef.inputs} outputs={envelopeDef.outputs} minWidth={240}>
             <canvas
                 ref={canvasRef}
                 className="nodrag"
@@ -80,21 +61,6 @@ export const EnvelopeNodeView = memo(({ id, data }: NodeProps & { data: Pipeline
                     marginBottom: 6,
                 }}
             />
-            <SelectField label="shape" value={shape as EnvelopeShape} options={SHAPES} onChange={v => set('shape', v)} />
-            <NumberField label="duration (ms)" value={durationMs} step={50} min={1} onChange={v => set('durationMs', v || 1)} />
-            {showPeak && (
-                <NumberField label="peak (0..1)" value={peakTime} step={0.05} min={0} max={1} onChange={v => set('peakTime', v)} />
-            )}
-            {showPlateau && (
-                <NumberField label="hold (0..1)" value={plateauHold} step={0.05} min={0} max={1} onChange={v => set('plateauHold', v)} />
-            )}
-            {showAttack && (
-                <SelectField label="attack" value={attackEasing as Easing} options={EASINGS} onChange={v => set('attackEasing', v)} />
-            )}
-            {showDecay && (
-                <SelectField label="decay" value={decayEasing as Easing} options={EASINGS} onChange={v => set('decayEasing', v)} />
-            )}
-            <SelectField label="retrigger" value={retriggerMode as RetriggerMode} options={MODES} onChange={v => set('retriggerMode', v)} />
         </BaseNodeShell>
     )
 })
@@ -102,7 +68,6 @@ export const EnvelopeNodeView = memo(({ id, data }: NodeProps & { data: Pipeline
 function drawEnvelope(ctx: CanvasRenderingContext2D, w: number, h: number, snap: EnvelopeSnapshot | undefined) {
     ctx.clearRect(0, 0, w, h)
 
-    /* Background grid: vertical thirds + horizontal midline. */
     ctx.strokeStyle = '#1d2029'
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -120,7 +85,6 @@ function drawEnvelope(ctx: CanvasRenderingContext2D, w: number, h: number, snap:
         return
     }
 
-    /* Static envelope curve sampled across [0..1]. */
     const pad = 4
     const innerW = w - pad * 2
     const innerH = h - pad * 2
@@ -144,7 +108,6 @@ function drawEnvelope(ctx: CanvasRenderingContext2D, w: number, h: number, snap:
     }
     ctx.stroke()
 
-    /* Active clip play-heads + value markers. */
     const now = performance.now()
     for (const clip of snap.clips) {
         const t = (now - clip.startMs) / Math.max(1, snap.durationMs)
@@ -172,7 +135,6 @@ function drawEnvelope(ctx: CanvasRenderingContext2D, w: number, h: number, snap:
         ctx.fill()
     }
 
-    /* Numeric readout. */
     ctx.fillStyle = '#9aa3b2'
     ctx.font = '10px ui-monospace, Menlo, monospace'
     ctx.fillText(`val ${snap.value.toFixed(3)}`, 6, h - 6)
@@ -180,8 +142,6 @@ function drawEnvelope(ctx: CanvasRenderingContext2D, w: number, h: number, snap:
 }
 
 function clampOpen01(v: number): number {
-    /* sampleShape returns 0 at exactly t=0 and t=1; clamp slightly inside the
-       range so the curve preview looks continuous to the eye. */
     if (v <= 0) return 0.0001
     if (v >= 1) return 0.9999
     return v

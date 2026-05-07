@@ -1,9 +1,7 @@
 import { memo, useCallback, useEffect, useRef } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
 import { useEngine } from '../context/EngineContext'
-import { NumberField, SelectField, SwitchField } from '@effects/ui'
 import { useCanvasFill } from '../hooks/useCanvasFill'
 import {
     interpolatorDef, InterpolatorProcessor, applyProfile,
@@ -13,29 +11,16 @@ import type { Easing } from '@effects/runtime/node-engine/processors/envelope'
 import type { Signal } from '@effects/runtime/node-engine/types'
 import type { PipelineNodeData } from '../types'
 
-const PROFILES: InterpolatorProfile[] = [
-    'linear', 'sine', 'triangle', 'bell', 'gaussian', 'pulse',
-    'steps', 'square', 'sawTeeth',
-]
-const EASINGS: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut']
-
 const PREVIEW_H = 60
 const SAMPLES = 256
 
-const usesEasing = (p: InterpolatorProfile): boolean =>
-    p === 'triangle' || p === 'bell' || p === 'gaussian' || p === 'pulse'
-const usesPeak = (p: InterpolatorProfile): boolean =>
-    p === 'triangle' || p === 'bell' || p === 'gaussian' || p === 'pulse'
-const usesPlateau = (p: InterpolatorProfile): boolean => p === 'pulse'
-const usesStepCount = (p: InterpolatorProfile): boolean => p === 'steps'
-const usesTeethCount = (p: InterpolatorProfile): boolean => p === 'square' || p === 'sawTeeth'
-const usesDutyCycle = (p: InterpolatorProfile): boolean => p === 'square'
-const usesSmoothness = (p: InterpolatorProfile): boolean =>
-    p === 'steps' || p === 'square' || p === 'sawTeeth'
-
+/**
+ * Graph card: live profile curve + play-head. The full param surface
+ * (profile, peak/plateau/easing, discrete steps/teeth, smoothness,
+ * reverse) lives in `InterpolatorNodeSettings`.
+ */
 export const InterpolatorNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
     const profile = (data.params.profile ?? 'sine') as InterpolatorProfile
     const peakTime = (data.params.peakTime ?? 0.5) as number
     const plateauHold = (data.params.plateauHold ?? 0.4) as number
@@ -56,9 +41,6 @@ export const InterpolatorNodeView = memo(({ id, data }: NodeProps & { data: Pipe
 
     useCanvasFill(canvasRef, PREVIEW_H, onResize)
 
-    /* Live preview: redraws every frame. Polls processor for the upstream
-       Signal (input) so the play-head reflects the actual phase the runtime
-       is interpolating, not just the static curve. */
     useEffect(() => {
         const tick = () => {
             const { w, h, ctx } = sizeRef.current
@@ -85,7 +67,7 @@ export const InterpolatorNodeView = memo(({ id, data }: NodeProps & { data: Pipe
     }, [engine, id, profile, peakTime, plateauHold, easing, reverse, stepCount, teethCount, dutyCycle, smoothness])
 
     return (
-        <BaseNodeShell title={interpolatorDef.title} category={interpolatorDef.category} inputs={interpolatorDef.inputs} outputs={interpolatorDef.outputs} minWidth={260}>
+        <BaseNodeShell title={interpolatorDef.title} category={interpolatorDef.category} inputs={interpolatorDef.inputs} outputs={interpolatorDef.outputs} minWidth={240}>
             <canvas
                 ref={canvasRef}
                 className="nodrag"
@@ -99,29 +81,6 @@ export const InterpolatorNodeView = memo(({ id, data }: NodeProps & { data: Pipe
                     margin: '4px 0',
                 }}
             />
-            <SelectField label="profile" value={profile} options={PROFILES} onChange={v => set('profile', v)} />
-            {usesPeak(profile) && (
-                <NumberField label="peak (0..1)" value={peakTime} step={0.05} min={0} max={1} onChange={v => set('peakTime', v)} />
-            )}
-            {usesPlateau(profile) && (
-                <NumberField label="hold width (0..1)" value={plateauHold} step={0.05} min={0} max={1} onChange={v => set('plateauHold', v)} />
-            )}
-            {usesEasing(profile) && (
-                <SelectField label="easing" value={easing} options={EASINGS} onChange={v => set('easing', v)} />
-            )}
-            {usesStepCount(profile) && (
-                <NumberField label="steps (2..64)" value={stepCount} step={1} min={2} max={64} onChange={v => set('stepCount', Math.round(v))} />
-            )}
-            {usesTeethCount(profile) && (
-                <NumberField label="teeth (1..64)" value={teethCount} step={1} min={1} max={64} onChange={v => set('teethCount', Math.round(v))} />
-            )}
-            {usesDutyCycle(profile) && (
-                <NumberField label="duty (0..1)" value={dutyCycle} step={0.05} min={0} max={1} onChange={v => set('dutyCycle', v)} />
-            )}
-            {usesSmoothness(profile) && (
-                <NumberField label="smoothness (0..1)" value={smoothness} step={0.05} min={0} max={1} onChange={v => set('smoothness', v)} />
-            )}
-            <SwitchField label="reverse" checked={reverse} onChange={v => set('reverse', v)} />
         </BaseNodeShell>
     )
 })
@@ -137,7 +96,6 @@ function drawInterpolator(
 ): void {
     ctx.clearRect(0, 0, w, h)
 
-    /* Background grid: vertical thirds + horizontal midline. */
     ctx.strokeStyle = '#1d2029'
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -152,10 +110,6 @@ function drawInterpolator(
     const innerW = w - pad * 2
     const innerH = h - pad * 2
 
-    /* Static profile curve sampled across one full cycle (phase 0..1).
-       Discrete profiles produce hard jumps — use moveTo on instant
-       transitions so the rendering doesn't draw a diagonal across the
-       canvas at every step boundary. */
     ctx.strokeStyle = '#5b9dff'
     ctx.lineWidth = 1.5
     ctx.beginPath()
@@ -167,8 +121,6 @@ function drawInterpolator(
         const y = pad + (1 - clamp01(v)) * innerH
         if (i === 0) ctx.moveTo(x, y)
         else if (prevValue != null && Math.abs(v - prevValue) > 0.4) {
-            /* Likely a discrete jump — break the path so the line doesn't
-               cut diagonally across the canvas. */
             ctx.moveTo(x, y)
         }
         else ctx.lineTo(x, y)
@@ -176,9 +128,6 @@ function drawInterpolator(
     }
     ctx.stroke()
 
-    /* Live play-head reflects the upstream phase (frac of input.value for
-       wrapping profiles, raw input.value clamped to [0,1] for linear so the
-       indicator stays on canvas for unbounded inputs). */
     if (input && output) {
         const phase = profile === 'linear'
             ? clamp01(input.value)

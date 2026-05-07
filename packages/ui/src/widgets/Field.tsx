@@ -38,7 +38,12 @@ export const Field = memo(function Field({ label, children, column }: FieldProps
                 gridTemplateColumns: `${LABEL_W}px 1fr`,
                 alignItems: 'center',
                 columnGap: 1.25,
-                minHeight: 22,
+                /* Match the unified small-input height (`MuiInputBase.sizeSmall = 28px`).
+                 * `alignItems: center` vertically centres the label against
+                 * the control, so the row always reads as a clean horizontal
+                 * pair regardless of whether the control is `<input>` or
+                 * `<div role="combobox">`. */
+                minHeight: 28,
             }}
         >
             <Typography

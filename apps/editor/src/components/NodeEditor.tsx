@@ -33,8 +33,7 @@ import Alert from '@mui/material/Alert'
 import { EngineProvider } from './flow-nodes/context/EngineContext'
 import { pipelineNodeTypes } from './flow-nodes/nodeTypes'
 import { PinProvider, usePinState } from './flow-nodes/context/PinContext'
-import { NodePinTerminal } from './flow-nodes/NodePinTerminal'
-import { PublishInspector } from './node-editor/PublishInspector'
+import { RightRail } from './node-editor/RightRail'
 
 import {
     GRID_SIZE, snapToGrid, nextId, getNodeIdCounter, setNodeIdCounter, maxNodeIdNumber,
@@ -78,15 +77,12 @@ function NodeEditorInner() {
 
     const engineRef = useRef<DataflowEngine | null>(null)
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null)
-    const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
-        try { return localStorage.getItem('nodeEditor.sidebarOpen.v1') !== '0' } catch { return true }
-    })
-    const [outlineOpen, setOutlineOpen] = useState<boolean>(() => {
-        try { return localStorage.getItem('nodeEditor.outlineOpen.v1') !== '0' } catch { return true }
-    })
-    const [inspectorOpen, setInspectorOpen] = useState<boolean>(() => {
-        try { return localStorage.getItem('nodeEditor.inspectorOpen.v1') !== '0' } catch { return true }
-    })
+    /* Outline (left rail) and Settings (right rail) are permanent
+     * surfaces — no toggle state, no localStorage persistence, no
+     * close button. The legacy Pin terminal was retired alongside
+     * these toggles; `PinContext` + per-card `PinToggle` survive as
+     * latent infrastructure but no surface currently consumes the
+     * pinned-id set for display. */
     const [publishMessage, setPublishMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
     const [fps, setFps] = useState<FpsOption>(() => {
         try {
@@ -128,18 +124,6 @@ function NodeEditorInner() {
         }
         return parts.join('|')
     }, [pages])
-
-    useEffect(() => {
-        try { localStorage.setItem('nodeEditor.sidebarOpen.v1', sidebarOpen ? '1' : '0') } catch { /* */ }
-    }, [sidebarOpen])
-
-    useEffect(() => {
-        try { localStorage.setItem('nodeEditor.outlineOpen.v1', outlineOpen ? '1' : '0') } catch { /* */ }
-    }, [outlineOpen])
-
-    useEffect(() => {
-        try { localStorage.setItem('nodeEditor.inspectorOpen.v1', inspectorOpen ? '1' : '0') } catch { /* */ }
-    }, [inspectorOpen])
 
     /* Push the cap to the engine whenever it (or the engine itself) changes.
        Persist the choice so opening a fresh tab keeps the user's preference. */
@@ -566,12 +550,6 @@ function NodeEditorInner() {
                 <PinProvider value={pin}>
                     <div className="node-editor">
                         <NodeEditorToolbar
-                            sidebarOpen={sidebarOpen}
-                            onToggleSidebar={() => setSidebarOpen(v => !v)}
-                            outlineOpen={outlineOpen}
-                            onToggleOutline={() => setOutlineOpen(v => !v)}
-                            inspectorOpen={inspectorOpen}
-                            onToggleInspector={() => setInspectorOpen(v => !v)}
                             onUndo={handleUndo}
                             onRedo={handleRedo}
                             onExport={exportScene}
@@ -582,83 +560,70 @@ function NodeEditorInner() {
                             onFpsChange={setFps}
                         />
                         {/* IDE-style three-region layout below the toolbar:
-                            outline | (tabs + canvas) | inspector across the
-                            top, pin terminal across the bottom. The
-                            outline rail and inspector each span the full
-                            top-region height; the page tab strip lives
-                            inside the central column so it starts where
-                            the outline ends. */}
+                            outline (left rail) | tabs + canvas | settings
+                            (right rail). Both rails are permanent — they
+                            have no toggle button and no close affordance.
+                            The user controls only their widths via the
+                            edge-resize handles each rail owns. */}
                         <div className="node-editor-body">
-                            <div className="node-editor-top-row">
-                                <SceneOutlineSidebar
-                                    visible={outlineOpen}
-                                    onClose={() => setOutlineOpen(false)}
-                                />
-                                <div className="node-editor-main">
-                                    <NodeEditorTabs />
-                                    <div className="node-editor-graph-row">
-                                        <div
-                                            className="node-editor-graph-full"
-                                            onDragOver={onCanvasDragOver}
-                                            onDrop={onCanvasDrop}
+                            <SceneOutlineSidebar />
+                            <div className="node-editor-main">
+                                <NodeEditorTabs />
+                                <div className="node-editor-graph-row">
+                                    <div
+                                        className="node-editor-graph-full"
+                                        onDragOver={onCanvasDragOver}
+                                        onDrop={onCanvasDrop}
+                                    >
+                                        <ReactFlow
+                                            /* No `key={activePageId}` here on purpose:
+                                               remounting ReactFlow on every switch
+                                               tore down + rebuilt every node card
+                                               (Effect/Preview/Segmentation each pay
+                                               canvas init + subscriber setup), which
+                                               was the user-visible "freeze on tab
+                                               switch". xyflow's own diff against
+                                               `nodes`/`edges` arrays already handles
+                                               page swaps cheaply, and selection /
+                                               hover state attached to nodes that no
+                                               longer exist gets cleaned up by
+                                               react-flow on its own. */
+                                            nodes={activePage.nodes}
+                                            edges={colouredEdges}
+                                            onNodesChange={onNodesChange}
+                                            onEdgesChange={onEdgesChange}
+                                            onConnect={onConnect}
+                                            onNodesDelete={onNodesDelete}
+                                            isValidConnection={isValidConnection}
+                                            nodeTypes={pipelineNodeTypes as unknown as NodeTypes}
+                                            edgeTypes={pipelineEdgeTypes}
+                                            onPaneContextMenu={onPaneContextMenu}
+                                            onMoveEnd={onMoveEnd}
+                                            onClick={() => setContextMenu(null)}
+                                            deleteKeyCode={['Delete', 'Backspace']}
+                                            multiSelectionKeyCode="Shift"
+                                            selectionKeyCode="Shift"
+                                            minZoom={0.2}
+                                            maxZoom={3}
+                                            defaultViewport={activePage.viewport}
+                                            defaultEdgeOptions={{ type: 'editableStep' }}
+                                            snapToGrid
+                                            snapGrid={[GRID_SIZE, GRID_SIZE]}
+                                            proOptions={{ hideAttribution: true }}
                                         >
-                                            <ReactFlow
-                                                /* No `key={activePageId}` here on purpose:
-                                                   remounting ReactFlow on every switch
-                                                   tore down + rebuilt every node card
-                                                   (Effect/Preview/Segmentation each pay
-                                                   canvas init + subscriber setup), which
-                                                   was the user-visible "freeze on tab
-                                                   switch". xyflow's own diff against
-                                                   `nodes`/`edges` arrays already handles
-                                                   page swaps cheaply, and selection /
-                                                   hover state attached to nodes that no
-                                                   longer exist gets cleaned up by
-                                                   react-flow on its own. */
-                                                nodes={activePage.nodes}
-                                                edges={colouredEdges}
-                                                onNodesChange={onNodesChange}
-                                                onEdgesChange={onEdgesChange}
-                                                onConnect={onConnect}
-                                                onNodesDelete={onNodesDelete}
-                                                isValidConnection={isValidConnection}
-                                                nodeTypes={pipelineNodeTypes as unknown as NodeTypes}
-                                                edgeTypes={pipelineEdgeTypes}
-                                                onPaneContextMenu={onPaneContextMenu}
-                                                onMoveEnd={onMoveEnd}
-                                                onClick={() => setContextMenu(null)}
-                                                deleteKeyCode={['Delete', 'Backspace']}
-                                                multiSelectionKeyCode="Shift"
-                                                selectionKeyCode="Shift"
-                                                minZoom={0.2}
-                                                maxZoom={3}
-                                                defaultViewport={activePage.viewport}
-                                                defaultEdgeOptions={{ type: 'editableStep' }}
-                                                snapToGrid
-                                                snapGrid={[GRID_SIZE, GRID_SIZE]}
-                                                proOptions={{ hideAttribution: true }}
-                                            >
-                                                <Background color="rgba(255,255,255,0.07)" gap={GRID_SIZE} size={1} />
-                                            </ReactFlow>
-                                            <AddNodePopover
-                                                open={!!contextMenu}
-                                                anchorPosition={contextMenu ? { top: contextMenu.y, left: contextMenu.x } : undefined}
-                                                onClose={() => setContextMenu(null)}
-                                                groups={menuGroups}
-                                                onAdd={onAddFromPopover}
-                                            />
-                                        </div>
+                                            <Background color="rgba(255,255,255,0.07)" gap={GRID_SIZE} size={1} />
+                                        </ReactFlow>
+                                        <AddNodePopover
+                                            open={!!contextMenu}
+                                            anchorPosition={contextMenu ? { top: contextMenu.y, left: contextMenu.x } : undefined}
+                                            onClose={() => setContextMenu(null)}
+                                            groups={menuGroups}
+                                            onAdd={onAddFromPopover}
+                                        />
                                     </div>
                                 </div>
-                                <PublishInspector
-                                    visible={inspectorOpen}
-                                    onClose={() => setInspectorOpen(false)}
-                                />
                             </div>
-                            <NodePinTerminal
-                                visible={sidebarOpen}
-                                onClose={() => setSidebarOpen(false)}
-                            />
+                            <RightRail />
                         </div>
                         <Snackbar
                             open={publishMessage != null}

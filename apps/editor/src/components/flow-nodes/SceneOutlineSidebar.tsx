@@ -2,9 +2,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import IconButton from '@mui/material/IconButton'
 import Tooltip from '@mui/material/Tooltip'
-import CloseIcon from '@mui/icons-material/Close'
 import AccountTreeIcon from '@mui/icons-material/AccountTree'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
@@ -13,11 +11,6 @@ import { PROCESSOR_CATALOG } from '@effects/runtime/node-engine/processors'
 import { useScene } from '../node-editor/SceneContext'
 import { CLONE_DRAG_MIME } from '../node-editor/constants'
 import { categoryColor } from './categoryColors'
-
-interface Props {
-    visible: boolean
-    onClose: () => void
-}
 
 const STORAGE_KEY = 'nodeEditor.outlineSidebarWidth.v1'
 const COLLAPSED_KEY = 'nodeEditor.outlineCollapsedPages.v1'
@@ -45,10 +38,16 @@ function readCollapsedPages(): Set<string> {
 }
 
 /**
- * Left-rail outline panel. Lists every scene page and the originals
- * inside it (clones are hidden — they're aliases of originals shown
- * elsewhere on the canvas, not first-class scene content). Two
- * primary actions per node row:
+ * Left-rail outline panel. **Permanent** surface — there is no
+ * `visible` flag, no toolbar toggle, no close button. The panel is
+ * always mounted alongside the canvas; only its width is user-
+ * controlled (right-edge resize handle, persisted to
+ * `localStorage[STORAGE_KEY]`).
+ *
+ * Lists every scene page and the originals inside it (clones are
+ * hidden — they're aliases of originals shown elsewhere on the
+ * canvas, not first-class scene content). Two primary actions per
+ * node row:
  *
  *  1. Click → `jumpToNode` (switches page if needed and centres on it).
  *  2. Drag onto the canvas → creates a viewer-only clone at the drop
@@ -60,7 +59,7 @@ function readCollapsedPages(): Set<string> {
  * persists per page in localStorage so the panel re-opens the way
  * the user left it.
  */
-export const SceneOutlineSidebar = memo(function SceneOutlineSidebar({ visible, onClose }: Props) {
+export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
     const { pages, activePageId, switchPage, jumpToNode } = useScene()
     const [width, setWidth] = useState<number>(() => readStoredWidth())
     const [resizing, setResizing] = useState(false)
@@ -117,8 +116,6 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar({ visible, 
         originals: page.nodes.filter(n => !n.data.cloneOf),
     })), [pages])
 
-    if (!visible) return null
-
     return (
         <Box
             component="aside"
@@ -139,7 +136,6 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar({ visible, 
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
                     /* Match `NodeEditorTabs` row height so the outline
                        header sits flush with the tab strip on the
                        right — IDE-style horizontal alignment. */
@@ -167,14 +163,6 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar({ visible, 
                         Scene outline
                     </Typography>
                 </Box>
-                <IconButton
-                    size="small"
-                    onClick={onClose}
-                    aria-label="Hide scene outline"
-                    sx={{ p: 0.25 }}
-                >
-                    <CloseIcon sx={{ fontSize: 16, display: 'block' }} />
-                </IconButton>
             </Box>
             <Box sx={{ flex: 1, overflowY: 'auto', py: 0.5 }}>
                 {pageContents.map(({ page, originals }) => {

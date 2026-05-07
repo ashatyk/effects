@@ -3,24 +3,25 @@ import type { NodeProps } from '@xyflow/react'
 import Button from '@mui/material/Button'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
-import { useSetParam } from '../hooks/useSetParam'
-import { NumberField, StatusLine, TextFieldRow } from '@effects/ui'
+import { StatusLine } from '@effects/ui'
 import { eventEmitterDef, EventEmitterProcessor } from '@effects/runtime/node-engine/processors/event-emitter'
 import type { PipelineNodeData } from '../types'
 
+/**
+ * Graph card: identity readout + a prominent EMIT button. The button
+ * needs to be on the canvas itself — the most common authoring loop
+ * is "wire envelope/switch → click EMIT → watch downstream pulse",
+ * and ducking into the right rail for every test would defeat the
+ * point. Editable id / label / throttle live in
+ * `EventEmitterNodeSettings`.
+ */
 export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
-    const throttleMs = (data.params.throttleMs ?? 0) as number
     const eventId = (data.params.id as string | undefined) ?? ''
     const label = (data.params.label as string | undefined) ?? 'Event'
 
     const [count, setCount] = useState(0)
 
-    /* Poll the processor's event counter so the UI shows every emit. The
-       Emit button updates `state.count` synchronously inside `emit()`, but
-       downstream propagation only happens on the next engine tick — the
-       poll keeps the badge in sync regardless of tick rate. */
     useEffect(() => {
         const tick = () => {
             const proc = engine.getProcessor<EventEmitterProcessor>(id)
@@ -38,6 +39,11 @@ export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: Pipe
 
     return (
         <BaseNodeShell title={eventEmitterDef.title} category={eventEmitterDef.category} inputs={eventEmitterDef.inputs} outputs={eventEmitterDef.outputs} minWidth={200}>
+            <StatusLine tone={eventId ? 'muted' : 'error'}>
+                id: {eventId || '(unset — edit in Settings)'}
+            </StatusLine>
+            <StatusLine tone="muted">label: {label}</StatusLine>
+            <StatusLine tone="muted">events: {count}</StatusLine>
             <Button
                 variant="contained"
                 color="primary"
@@ -45,6 +51,7 @@ export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: Pipe
                 onClick={onEmit}
                 className="nodrag"
                 sx={{
+                    mt: 0.5,
                     height: 44,
                     fontSize: 14,
                     fontWeight: 800,
@@ -68,21 +75,6 @@ export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: Pipe
             >
                 EMIT
             </Button>
-            <TextFieldRow
-                label="event id"
-                value={eventId}
-                onChange={v => set('id', v)}
-                placeholder="evt_button"
-                monospace
-            />
-            <TextFieldRow
-                label="label"
-                value={label}
-                onChange={v => set('label', v)}
-                placeholder="Event"
-            />
-            <NumberField label="throttle (ms)" value={throttleMs} step={10} min={0} onChange={v => set('throttleMs', v)} />
-            <StatusLine tone="muted">events: {count}</StatusLine>
         </BaseNodeShell>
     )
 })

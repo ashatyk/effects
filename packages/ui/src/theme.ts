@@ -137,7 +137,26 @@ export const theme = createTheme({
         MuiInputBase: {
             styleOverrides: {
                 root: { fontSize: 12 },
-                sizeSmall: { minHeight: 24 },
+                /* Locked height so plain TextField (`<input>`), number
+                 * field, and Select (`<div role="combobox">`) all
+                 * render at the same row height. Without `height: 28`
+                 * MUI 8's number input defaults to a taller box than
+                 * the select element — the symptom users see as
+                 * "duration field is huge next to the select".
+                 *
+                 * Multiline inputs (`rows={N}` TextField) are exempt:
+                 * `height: 28` would clamp the wrapper to a single
+                 * row regardless of `rows`, and the inner `<textarea>`
+                 * overflows visibly above the wrapper (no `overflow:
+                 * hidden` from MUI). The carve-out lets multiline
+                 * grow to its rows-derived natural height. */
+                sizeSmall: {
+                    minHeight: 28,
+                    height: 28,
+                    '&.MuiInputBase-multiline': {
+                        height: 'auto',
+                    },
+                },
             },
         },
         MuiOutlinedInput: {
@@ -147,8 +166,21 @@ export const theme = createTheme({
                     '& fieldset': { borderColor: geist.border },
                     '&:hover fieldset': { borderColor: geist.borderHi },
                     '&.Mui-focused fieldset': { borderWidth: 1, borderColor: geist.gray700 },
-                    '& .MuiOutlinedInput-input.MuiInputBase-inputSizeSmall': {
-                        padding: '2px 8px',
+                    /* Single padding rule that targets both the plain
+                     * `<input>` and the `<div role="combobox">` Select
+                     * surface. Both carry `MuiInputBase-inputSizeSmall`
+                     * in MUI 8, so this guarantees identical inner
+                     * geometry and prevents the height-mismatch from
+                     * recurring. `boxSizing` keeps the wrapper's
+                     * `height: 28` honoured even when the inner
+                     * element wants to grow. */
+                    '& .MuiInputBase-inputSizeSmall': {
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                        paddingLeft: 8,
+                        paddingRight: 8,
+                        minHeight: 0,
+                        boxSizing: 'border-box',
                     },
                 },
             },
@@ -156,11 +188,10 @@ export const theme = createTheme({
         MuiSelect: {
             defaultProps: { size: 'small' },
             styleOverrides: {
-                select: {
-                    paddingTop: 2,
-                    paddingBottom: 2,
-                    minHeight: '20px !important',
-                },
+                /* No per-Select padding/minHeight — the unified
+                 * MuiInputBase-inputSizeSmall rule above handles both
+                 * input flavours uniformly. Only the dropdown chevron
+                 * stays here (it's Select-only). */
                 icon: { right: 4 },
             },
         },

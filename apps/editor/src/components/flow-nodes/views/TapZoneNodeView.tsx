@@ -3,21 +3,19 @@ import type { NodeProps } from '@xyflow/react'
 import Button from '@mui/material/Button'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
-import { useSetParam } from '../hooks/useSetParam'
-import { TextFieldRow, StatusLine } from '@effects/ui'
+import { StatusLine } from '@effects/ui'
 import { tapZoneDef, TapZoneProcessor } from '@effects/runtime/node-engine/processors/tap-zone'
 import type { PipelineNodeData } from '../types'
 
 /**
- * Tap-zone node view. Same EMIT-button affordance as `eventEmitter`
- * for editor-time chain testing (Envelope/SignalSwitch responding to
- * synthetic taps), plus the supplier-facing `id`/`label` params and a
- * status line that surfaces whether the contour input is currently
- * wired (the contour is a hard dependency for the Tier-3 hit-test).
+ * Graph card: supplier-facing identity, live event counter, contour
+ * status, plus a manual EMIT button. Tier-3 runtime owns hit-testing
+ * — the editor stand-in fires the same `emit()` from the canvas so
+ * downstream chains can be tested without leaving the graph. Editable
+ * id / label / hint live in `TapZoneNodeSettings`.
  */
 export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
 
     const eventId = (data.params.id as string | undefined) ?? ''
     const label = (data.params.label as string | undefined) ?? 'Tap zone'
@@ -25,9 +23,6 @@ export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineN
     const [count, setCount] = useState(0)
     const [contourConnected, setContourConnected] = useState(false)
 
-    /* Poll the processor for live event count + contour-connection
-       state. Sub-frame resolution isn't needed — 80 ms keeps the
-       badge feeling responsive without burning the main thread. */
     useEffect(() => {
         const tick = () => {
             const proc = engine.getProcessor<TapZoneProcessor>(id)
@@ -51,8 +46,16 @@ export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineN
             category={tapZoneDef.category}
             inputs={tapZoneDef.inputs}
             outputs={tapZoneDef.outputs}
-            minWidth={240}
+            minWidth={220}
         >
+            <StatusLine tone={eventId ? 'muted' : 'error'}>
+                id: {eventId || '(unset — edit in Settings)'}
+            </StatusLine>
+            <StatusLine tone="muted">label: {label}</StatusLine>
+            <StatusLine tone="muted">events: {count}</StatusLine>
+            <StatusLine tone={contourConnected ? 'muted' : 'error'}>
+                contour: {contourConnected ? 'connected' : 'not connected — wire a CONTOUR input for runtime hit-test'}
+            </StatusLine>
             <Button
                 variant="contained"
                 color="primary"
@@ -60,6 +63,7 @@ export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineN
                 onClick={onEmit}
                 className="nodrag"
                 sx={{
+                    mt: 0.5,
                     height: 44,
                     fontSize: 14,
                     fontWeight: 800,
@@ -79,23 +83,6 @@ export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineN
             >
                 EMIT
             </Button>
-            <TextFieldRow
-                label="event id"
-                value={eventId}
-                onChange={v => set('id', v)}
-                placeholder="tap_button"
-                monospace
-            />
-            <TextFieldRow
-                label="label"
-                value={label}
-                onChange={v => set('label', v)}
-                placeholder="Tap zone"
-            />
-            <StatusLine tone="muted">events: {count}</StatusLine>
-            <StatusLine tone={contourConnected ? 'muted' : 'error'}>
-                contour: {contourConnected ? 'connected' : 'not connected — wire a CONTOUR input for runtime hit-test'}
-            </StatusLine>
         </BaseNodeShell>
     )
 })

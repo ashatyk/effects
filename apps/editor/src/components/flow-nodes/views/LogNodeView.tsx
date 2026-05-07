@@ -4,9 +4,8 @@ import Stack from '@mui/material/Stack'
 import Box from '@mui/material/Box'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
-import { SectionTitle, SliderField } from '@effects/ui'
+import { SectionTitle } from '@effects/ui'
 import { COL_SECONDARY, COL_DIVIDER } from '@effects/ui/widgets/constants'
-import { useSetParam } from '../hooks/useSetParam'
 import { logDef, LogProcessor } from '@effects/runtime/node-engine/processors/log'
 import type { EffectMetrics } from '@effects/runtime/node-engine/types'
 import type { PipelineNodeData } from '../types'
@@ -26,11 +25,15 @@ function fmtMs(ms: number): string {
     return `${ms.toFixed(1)} ms`
 }
 
+/**
+ * Graph card: live timing readout (effect name, total / cpu / gpu /
+ * fps cap, per-pass breakdown). The smoothing slider lives in
+ * `LogNodeSettings`.
+ */
 export const LogNodeView = memo(function LogNodeView(
-    { id, data }: NodeProps & { data: PipelineNodeData },
+    { id }: NodeProps & { data: PipelineNodeData },
 ) {
     const engine = useEngine()
-    const set = useSetParam(id)
     const [snapshot, setSnapshot] = useState<EffectMetrics | null>(null)
     /* Mirror the latest snapshot in a ref so the throttled `pull` can
        compare without putting `snapshot` in the effect deps (which would
@@ -102,15 +105,6 @@ export const LogNodeView = memo(function LogNodeView(
                     </Box>
                 </Stack>
             )}
-
-            <Box sx={{ mt: 1 }}>
-                <SliderField
-                    label="smoothing"
-                    value={(data.params.smoothing ?? 0.85) as number}
-                    min={0} max={0.99} step={0.01} fixed={2}
-                    onChange={v => set('smoothing', v)}
-                />
-            </Box>
         </BaseNodeShell>
     )
 })

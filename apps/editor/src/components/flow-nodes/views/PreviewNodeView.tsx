@@ -2,11 +2,14 @@ import { memo, useRef, useEffect, useCallback } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useEngine } from '../context/EngineContext'
-import { ActionButton } from '@effects/ui'
 import { previewDef } from '@effects/runtime/node-engine/processors/preview'
 import { PreviewProcessor } from '@effects/runtime/node-engine/processors/preview'
 import type { PipelineNodeData } from '../types'
 
+/**
+ * Graph card: live image preview of the wired upstream texture. Save
+ * button lives in `PreviewNodeSettings`.
+ */
 export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -38,16 +41,6 @@ export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeDat
         return unsub
     }, [engine, id, draw])
 
-    const saveImage = useCallback(() => {
-        const proc = engine.getProcessor<PreviewProcessor>(id)
-        if (!proc?.imgCanvas) return
-        const dataUrl = proc.imgCanvas.toDataURL('image/png')
-        const a = document.createElement('a')
-        a.href = dataUrl
-        a.download = `preview-${id}.png`
-        a.click()
-    }, [engine, id])
-
     return (
         <BaseNodeShell
             title={previewDef.title}
@@ -58,7 +51,6 @@ export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeDat
             minHeight={60}
         >
             <canvas ref={canvasRef} className="pn-preview-canvas" />
-            <ActionButton onClick={saveImage} variant="primary">Save image</ActionButton>
         </BaseNodeShell>
     )
 })

@@ -13,26 +13,21 @@
     background: #1c1c1e;
 }
 
-/* Body is two stacked rows: top region (outline | flow | inspector) +
-   the bottom pin terminal. Each region is `min-height: 0` so flex
-   children inside can scroll instead of overflowing the viewport. */
+/* Body is a single horizontal row: outline | main | right rail.
+   The right rail stacks Settings (top) above the Pin terminal (bottom)
+   internally; both share the rail width. Each region is `min-height: 0`
+   so flex children inside can scroll instead of overflowing the
+   viewport. */
 .node-editor-body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.node-editor-top-row {
     flex: 1;
     display: flex;
     min-height: 0;
 }
 
 /* The central column owns its own page tab strip on top plus the
-   canvas-row below — so the outline + inspector siblings span the full
-   top-region height (toolbar bottom to pin terminal top), and tabs
-   start where the outline ends instead of spanning the whole window. */
+   canvas-row below — so the outline + right-rail siblings span the
+   full body height (toolbar bottom to window bottom), and tabs start
+   where the outline ends instead of spanning the whole window. */
 .node-editor-main {
     flex: 1;
     display: flex;

@@ -132,12 +132,14 @@ No Tailwind, no shadcn. Styling is MUI `sx` + plain CSS files in `flow-nodes/sty
 │   │           │       ├── usePipelineEngine.ts, useSceneHistory.ts, useNodeEditorShortcuts.ts,
 │   │           │       └── useEdgeColouring.ts, useDerivedSurface.ts
 │   │           └── flow-nodes/                  # React Flow node infra
-│   │               ├── nodeTypes.ts             # processor id → React component (30 inc. `clone`)
+│   │               ├── nodeTypes.ts             # processor id → graph-canvas component (30 inc. `clone`)
+│   │               ├── settingsTypes.ts         # processor id → settings-pane component (~26 entries)
 │   │               ├── BaseNodeShell.tsx, EditableStepEdge.tsx, NodePinTerminal.tsx,
 │   │               ├── SceneOutlineSidebar.tsx, categoryColors.ts, types.ts
 │   │               ├── context/, hooks/ (useSetParam, useSetNodeLabel, useSetExposed, ...)
 │   │               ├── styles/ (node-card, editable-edge, pin-terminal CSS)
-│   │               └── views/                   # Per-processor UI (one tsx per processor)
+│   │               ├── views/                   # GRAPH cards: visual only (one tsx per processor)
+│   │               └── settings/                # SETTINGS panes: editable controls (one tsx per processor)
 │   │
 │   ├── supplier/               # ★ Tier-2 supplier app (see supplier-app.mdc)
 │   │   ├── package.json        # @effects/supplier; deps: @effects/{runtime,player,ui} + react + mui + pixi
@@ -172,7 +174,7 @@ No Tailwind, no shadcn. Styling is MUI `sx` + plain CSS files in `flow-nodes/sty
 
 **`apps/editor/src/components/node-editor/`** — `constants.ts` (`GRID_SIZE = 20`, `snapToGrid`, `nextId`, `maxNodeIdNumber`, `SLOT_COMPAT`), `menuGroups.ts` (Add-Node popover, 10 groups), `sceneResolver.ts` (`PageState`, `resolveSceneForEngine`, `findOriginAcrossPages`, `buildResolvedAdjacency`, `wouldCreateCycle`, page-id minting), `SceneContext.tsx`, `publish-from-pages.ts` (editor wrapper around `derivePublishedSurface` + `publishStructuralHash`), `PublishInspector.tsx`, `NodeEditorToolbar.tsx`, `NodeEditorTabs.tsx`, `AddNodePopover.tsx`, `hooks/` (`usePipelineEngine`, `useSceneHistory`, `useNodeEditorShortcuts`, `useEdgeColouring`, `useDerivedSurface`).
 
-**`apps/editor/src/components/flow-nodes/`** — `nodeTypes.ts` (30 entries inc. `clone`), `BaseNodeShell.tsx`, `EditableStepEdge.tsx`, `NodePinTerminal.tsx`, `SceneOutlineSidebar.tsx`, `categoryColors.ts`, `types.ts` (`PipelineNodeData` with `cloneOf?`, `label?`, `exposed?`), `context/` (`EngineContext`, `PinContext`, `NodeIdContext`, `HeadlessNodeContext`), `hooks/` (`useSetParam`, `useSetNodeLabel`, `useSetExposed`, `useNodeOutputs`, `useCanvasFill`), `styles/`, `views/` (one tsx per processor).
+**`apps/editor/src/components/flow-nodes/`** — `nodeTypes.ts` (30 entries inc. `clone`, graph-canvas registry), `settingsTypes.ts` (~26 entries, settings-pane registry parallel to `nodeTypes`), `BaseNodeShell.tsx`, `EditableStepEdge.tsx`, `NodePinTerminal.tsx`, `SceneOutlineSidebar.tsx`, `categoryColors.ts`, `types.ts` (`PipelineNodeData` with `cloneOf?`, `label?`, `exposed?`), `context/` (`EngineContext`, `PinContext`, `NodeIdContext`, `HeadlessNodeContext`), `hooks/` (`useSetParam`, `useSetNodeLabel`, `useSetExposed`, `useNodeOutputs`, `useCanvasFill`), `styles/`, `views/` (graph cards — visual only), `settings/` (settings panes — editable controls; `types.ts` exports `NodeSettingsProps`).
 
 **`packages/ui/src/widgets/`** (used by editor + supplier) — `Field`, `NumberField`, `TextFieldRow`, `SelectField`, `SwitchField`, `SliderField`, `ColorField`, `ActionButton`, `StatusLine`, `SectionTitle`, `constants.ts`.
 

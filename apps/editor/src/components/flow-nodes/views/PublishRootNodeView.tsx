@@ -2,8 +2,7 @@ import { memo, useMemo } from 'react'
 import type { NodeProps } from '@xyflow/react'
 import Box from '@mui/material/Box'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
-import { TextFieldRow, StatusLine } from '@effects/ui'
+import { StatusLine } from '@effects/ui'
 import { publishRootDef } from '@effects/runtime'
 import type { DerivePublishedSurfaceResult, PublishError } from '@effects/runtime'
 import { useScene } from '../../node-editor/SceneContext'
@@ -11,24 +10,14 @@ import { deriveFromPages } from '../../node-editor/publish-from-pages'
 import type { PipelineNodeData } from '../types'
 
 /**
- * Node card for the Tier-2 publish entry point. Three text fields
- * drive the supplier-facing metadata (`name` / `version` / `effectId`
- * slug); the bottom block runs `derivePublishedSurface` against the
- * current scene on every render and shows a counters summary so the
- * author sees, at a glance, what the supplier will receive. Errors
- * surface inline (red) instead of being hidden until the toolbar
- * Publish button is pressed.
- *
- * The traversal is cheap (Map walks + BFS over edges; no GPU work)
- * so we recompute on every render against `pages`. If the scene grows
- * past tens of thousands of nodes a `useMemo` keyed on
- * `publishStructuralHash` would be the next step.
+ * Graph card: visual-only — supplier-facing identity readout + live
+ * publication summary (counters + validation errors). The text editors
+ * for `name` / `version` / `effectId` live in `PublishRootNodeSettings`.
  */
 export const PublishRootNodeView = memo(function PublishRootNodeView(
-    { id, data }: NodeProps & { data: PipelineNodeData },
+    { data }: NodeProps & { data: PipelineNodeData },
 ) {
     const { pages } = useScene()
-    const set = useSetParam(id)
 
     const name = (data.params.name as string | undefined) ?? 'Untitled'
     const version = (data.params.version as string | undefined) ?? 'v1'
@@ -42,27 +31,15 @@ export const PublishRootNodeView = memo(function PublishRootNodeView(
             category={publishRootDef.category}
             inputs={publishRootDef.inputs}
             outputs={publishRootDef.outputs}
-            minWidth={320}
+            minWidth={260}
         >
-            <TextFieldRow
-                label="name"
-                value={name}
-                onChange={v => set('name', v)}
-                placeholder="Untitled"
-            />
-            <TextFieldRow
-                label="version"
-                value={version}
-                onChange={v => set('version', v)}
-                placeholder="v1"
-            />
-            <TextFieldRow
-                label="id (slug)"
-                value={effectId}
-                onChange={v => set('effectId', slugify(v))}
-                placeholder="my-effect"
-                monospace
-            />
+            <Box>
+                <StatusLine tone="muted">name: {name}</StatusLine>
+                <StatusLine tone="muted">version: {version}</StatusLine>
+                <StatusLine tone={effectId ? 'muted' : 'error'}>
+                    id: {effectId || '(unset — edit in Settings)'}
+                </StatusLine>
+            </Box>
             <Summary result={result} />
         </BaseNodeShell>
     )
@@ -109,15 +86,4 @@ function describeError(e: PublishError): string {
         default:
             return 'Unknown publish error.'
     }
-}
-
-/* Conservative ASCII slug: lowercase alphanumerics + hyphen, no
-   trailing hyphens, capped length. Keeps cyrillic/unicode out because
-   Tier-3 runtimes pin URL routes and file names to this id. */
-function slugify(v: string): string {
-    return v
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64)
 }

@@ -1,67 +1,49 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useMemo, type ComponentType, type ReactNode } from 'react'
 import { useStore } from '@xyflow/react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import IconButton from '@mui/material/IconButton'
 import Checkbox from '@mui/material/Checkbox'
 import FormControlLabel from '@mui/material/FormControlLabel'
-import CloseIcon from '@mui/icons-material/Close'
-import VisibilityIcon from '@mui/icons-material/Visibility'
+import SettingsIcon from '@mui/icons-material/Settings'
 import { PROCESSOR_CATALOG, effects } from '@effects/runtime'
 import type { DerivePublishedSurfaceResult, PublishError } from '@effects/runtime'
 import { useScene } from './SceneContext'
 import { useSetExposed } from '../flow-nodes/hooks/useSetExposed'
 import { TextFieldRow, SwitchField, SectionTitle, StatusLine } from '@effects/ui'
 import { deriveFromPages, publishStructuralHash } from './publish-from-pages'
+import { pipelineNodeSettings } from '../flow-nodes/settingsTypes'
+import { pipelineNodeActions } from '../flow-nodes/actionsTypes'
 import type { PipelineNodeData, ExposedMeta } from '../flow-nodes/types'
 
-interface Props {
-    visible: boolean
-    onClose: () => void
-}
-
-const STORAGE_KEY = 'nodeEditor.inspector.width.v1'
-const MIN_WIDTH = 280
-const MAX_WIDTH = 720
-const DEFAULT_WIDTH = 340
-
-function readStoredWidth(): number {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) return DEFAULT_WIDTH
-        const n = parseInt(raw, 10)
-        if (!Number.isFinite(n)) return DEFAULT_WIDTH
-        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, n))
-    } catch { return DEFAULT_WIDTH }
-}
-
 /**
- * Right-rail Publish Inspector. Shows the supplier-exposure controls
- * for the currently selected node — toggles `data.exposed` per the
- * processor's nature:
+ * Right-rail Settings panel. **Permanent** surface — no `onClose`
+ * prop, no close button in the header. The toolbar carries no toggle
+ * for it either; the Settings panel is always visible alongside the
+ * canvas (rail width is the only user control, owned by `RightRail`).
  *
- *   - Image / Segmentation / TapZone: only "Expose whole node" toggle
- *     (their UIs are irreducible to a list of fields).
- *   - Config: per-field checkboxes for the active effect's `FieldDef`
- *     list.
- *   - PublishRoot: live publication preview (image slots count, tap
- *     zones, fields, errors) — no exposure toggle (the root is the
- *     publication itself).
- *   - Other: "Expose whole node" toggle as a generic fallback.
+ * Two responsibilities:
  *
- * The inspector reads the React Flow store directly to pick up
- * selection changes without threading state through every parent.
- * Width is user-resizable on the LEFT edge (mirrors the outline
- * sidebar's right-edge handle) and persisted to localStorage.
+ *   1. Surface the per-node Settings pane of the currently-selected
+ *      node. Each processor ships an independent `*NodeSettings`
+ *      component (registered in `pipelineNodeSettings`) — distinct
+ *      from the in-graph `*NodeView`. Authors control the two visual
+ *      surfaces independently: the graph card stays visual + handles,
+ *      the Settings pane carries the editable controls (and any extra
+ *      readouts the author wants on this surface).
+ *
+ *   2. Tier-2 supplier-exposure controls — toggles `data.exposed` per
+ *      the processor's nature (whole-node toggle for image / segmentation
+ *      / tap-zone / event / generic; per-FieldDef checkboxes for config
+ *      nodes), plus a live publication summary on the PublishRoot.
+ *      These are unique to Settings.
+ *
+ * Selection is read straight from the React Flow store so the panel
+ * picks up clicks without threading state through every parent.
  */
-export const PublishInspector = memo(function PublishInspector({ visible, onClose }: Props) {
+export const PublishInspector = memo(function PublishInspector() {
     const { pages } = useScene()
-    const [width, setWidth] = useState<number>(() => readStoredWidth())
-    const [resizing, setResizing] = useState(false)
 
-    /* Track selection across the active page only — selection is a
-       per-page concept (React Flow store mounts per active page). */
     const selectedId = useStore((s: any) => {
         const all = (s.nodeLookup as Map<string, any> | undefined)
         if (!all) return null
@@ -71,8 +53,6 @@ export const PublishInspector = memo(function PublishInspector({ visible, onClos
         return null
     })
 
-    /* Resolve the selected node from the SCENE (not just React Flow's
-       store) so we can mutate `data.exposed` via `updateNodeData`. */
     const selectedNode = useMemo(() => {
         if (!selectedId) return null
         for (const p of pages) {
@@ -82,80 +62,25 @@ export const PublishInspector = memo(function PublishInspector({ visible, onClos
         return null
     }, [selectedId, pages])
 
-    /* Persist width (debounced via the natural rhythm of mouseup). */
-    useEffect(() => {
-        try { localStorage.setItem(STORAGE_KEY, String(width)) } catch { /* */ }
-    }, [width])
-
-    const onResizeStart = useCallback((e: React.MouseEvent) => {
-        e.preventDefault()
-        setResizing(true)
-        const onMove = (ev: MouseEvent) => {
-            const next = window.innerWidth - ev.clientX
-            const clamped = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, next))
-            setWidth(clamped)
-        }
-        const onUp = () => {
-            setResizing(false)
-            window.removeEventListener('mousemove', onMove)
-            window.removeEventListener('mouseup', onUp)
-        }
-        window.addEventListener('mousemove', onMove)
-        window.addEventListener('mouseup', onUp)
-    }, [])
-
-    if (!visible) return null
-
     return (
         <Box
-            component="aside"
             sx={{
-                position: 'relative',
-                width,
-                flexShrink: 0,
+                flex: 1,
+                minHeight: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                bgcolor: 'background.paper',
-                borderLeft: 1,
-                borderColor: 'divider',
                 overflow: 'hidden',
-                transition: resizing ? 'none' : 'width 120ms ease',
             }}
         >
-            {/* Resize hit-strip on the LEFT edge (mirror of outline
-                sidebar's right-edge handle). */}
-            <Box
-                role="separator"
-                aria-orientation="vertical"
-                onMouseDown={onResizeStart}
-                sx={{
-                    position: 'absolute',
-                    top: 0,
-                    bottom: 0,
-                    left: 0,
-                    width: 6,
-                    marginLeft: '-3px',
-                    cursor: 'col-resize',
-                    zIndex: 2,
-                    '&:hover::after': { backgroundColor: 'rgba(255, 255, 255, 0.18)' },
-                    '&::after': {
-                        content: '""',
-                        position: 'absolute',
-                        top: 0,
-                        bottom: 0,
-                        left: 3,
-                        width: 1,
-                        backgroundColor: resizing ? 'rgba(255, 255, 255, 0.40)' : 'transparent',
-                        transition: 'background-color 120ms ease',
-                    },
-                }}
-            />
             <Box
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between',
-                    height: 40,
+                    /* Match the Scene Outline header height (32 px) so
+                     * both rails line up across the editor's top edge.
+                     * If you change this, change `SceneOutlineSidebar`'s
+                     * header in lockstep. */
+                    height: 32,
                     flexShrink: 0,
                     px: 1.5,
                     bgcolor: 'background.default',
@@ -164,7 +89,7 @@ export const PublishInspector = memo(function PublishInspector({ visible, onClos
                 }}
             >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, lineHeight: 1 }}>
-                    <VisibilityIcon sx={{ fontSize: 14, color: 'text.secondary', display: 'block' }} />
+                    <SettingsIcon sx={{ fontSize: 14, color: 'text.secondary', display: 'block' }} />
                     <Typography
                         variant="caption"
                         component="span"
@@ -176,14 +101,11 @@ export const PublishInspector = memo(function PublishInspector({ visible, onClos
                             lineHeight: 1,
                         }}
                     >
-                        Publish Inspector
+                        Settings
                     </Typography>
                 </Box>
-                <IconButton size="small" onClick={onClose} aria-label="Hide inspector" sx={{ p: 0.25 }}>
-                    <CloseIcon sx={{ fontSize: 16, display: 'block' }} />
-                </IconButton>
             </Box>
-            <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }}>
+            <Box sx={{ flex: 1, overflowY: 'auto' }}>
                 {selectedNode
                     ? <NodeInspector node={selectedNode} pages={pages} />
                     : <EmptyHint />}
@@ -198,13 +120,13 @@ function EmptyHint() {
             variant="body2"
             sx={{ color: 'text.disabled', textAlign: 'center', fontStyle: 'italic', px: 1, py: 3 }}
         >
-            Select a node on the canvas to mark it exposable.
+            Select a node on the canvas to edit its settings.
         </Typography>
     )
 }
 
 interface NodeInspectorProps {
-    node: { id: string; data: PipelineNodeData }
+    node: { id: string; data: PipelineNodeData; type?: string }
     pages: ReturnType<typeof useScene>['pages']
 }
 
@@ -214,46 +136,165 @@ const NodeInspector = memo(function NodeInspector({ node, pages }: NodeInspector
     const exposed = node.data.exposed
     const setExposed = useSetExposed(node.id)
 
-    /* PublishRoot is the publication itself — no exposure toggle. */
-    if (proc === 'publishRoot') {
-        return <RootInspector pages={pages} />
-    }
-
     if (node.data.cloneOf) {
         return (
             <Typography variant="body2" sx={{ color: 'text.disabled', fontStyle: 'italic', px: 1 }}>
-                Clones are UI-only references and aren't part of the published surface. Select the original to expose it.
+                Clones are UI-only references. Select the original to edit it.
             </Typography>
         )
     }
 
     const titleFallback = (node.data.label ?? '').trim() || def?.title || proc
 
+    /* PublishRoot is the publication itself — no exposure toggle.
+       Its summary is rendered by PublishRootSummary below. */
+    const showExposure = proc !== 'publishRoot'
+
+    const SettingsComp = pipelineNodeSettings[proc]
+    const ActionsComp = pipelineNodeActions[proc]
+    /* Skip the `Parameters` section entirely when the processor only
+     * carries actions (e.g. `preview`'s Save image). Otherwise the
+     * panel would print "No editable parameters" right above an
+     * `Actions` block that clearly proves it has *something* to
+     * offer — confusing and noisy. If both registries miss the
+     * processor we still render the Parameters section so the
+     * empty-state hint surfaces (covers `effect`, `clone`, etc.). */
+    const showParameters = !!SettingsComp || !ActionsComp
+
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-            <Box>
-                <SectionTitle>{titleFallback}</SectionTitle>
-                <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 0.25 }}>
-                    {proc} · {node.id}
-                </Typography>
-            </Box>
+        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+            <SectionBlock>
+                <Box>
+                    <SectionTitle>{titleFallback}</SectionTitle>
+                    <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 0.25 }}>
+                        {proc} · {node.id}
+                    </Typography>
+                </Box>
+            </SectionBlock>
 
-            {/* Image / Segmentation / TapZone / EventEmitter / Number / etc.
-                — anything except `config` exposes as the whole node. */}
-            {proc === 'config'
-                ? <ConfigFieldsInspector node={node} exposed={exposed} setExposed={setExposed} />
-                : <WholeNodeInspector exposed={exposed} setExposed={setExposed} />}
+            {/* Per-node Settings pane — each processor ships its own
+                `*NodeSettings` component, registered in
+                `pipelineNodeSettings`. Independent from the in-graph
+                `*NodeView` so authors can control the visual layout of
+                each surface separately. */}
+            {showParameters && (
+                <SectionBlock heading="Parameters">
+                    <NodeSettingsPane node={node} SettingsComp={SettingsComp} />
+                </SectionBlock>
+            )}
 
-            <SharedExposureFields exposed={exposed} setExposed={setExposed} />
+            {/* Per-node Actions pane — export / snapshot / reset
+                buttons that produce side-effects (file download,
+                clipboard write) but do NOT mutate scene state. Kept
+                in its own section so users don't read "Save image"
+                as a tunable parameter. */}
+            {ActionsComp && (
+                <SectionBlock heading="Actions">
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                        <ActionsComp id={node.id} data={node.data} />
+                    </Box>
+                </SectionBlock>
+            )}
+
+            {proc === 'publishRoot' && (
+                <SectionBlock heading="Publish summary">
+                    <PublishRootSummary pages={pages} />
+                </SectionBlock>
+            )}
+
+            {showExposure && (
+                <SectionBlock heading="Supplier exposure">
+                    {proc === 'config'
+                        ? <ConfigFieldsInspector node={node} exposed={exposed} setExposed={setExposed} />
+                        : <WholeNodeInspector exposed={exposed} setExposed={setExposed} />}
+                    <SharedExposureFields exposed={exposed} setExposed={setExposed} />
+                </SectionBlock>
+            )}
         </Box>
     )
 })
 
 /**
- * "Expose whole node" toggle — the only widget for nodes whose UI
- * isn't reducible to a flat list of fields (Image upload, Segmentation
- * point editor, TapZone EMIT button + label).
+ * Visually-divided section in the right rail. Each block carries an
+ * uppercase heading + a top divider so the parameters / publish-summary
+ * / supplier-exposure groups read as distinct concerns instead of one
+ * flat scroll of widgets. The first block in the panel passes no
+ * `heading` so the per-node title group sits flush against the panel
+ * header without a redundant divider above it.
  */
+function SectionBlock({ heading, children }: { heading?: string; children: ReactNode }) {
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                /* Generous vertical rhythm: dividers + heading need air on
+                 * both sides so blocks parse as distinct concerns rather
+                 * than a continuous scroll. The heading also gets a bit
+                 * more bottom margin (`mb: 1`) to separate it from the
+                 * first row of controls. */
+                gap: 1,
+                px: 2,
+                pt: 2,
+                pb: 2,
+                ...(heading && {
+                    borderTop: 1,
+                    borderColor: 'divider',
+                }),
+            }}
+        >
+            {heading && (
+                <Typography
+                    variant="caption"
+                    sx={{
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                        fontWeight: 700,
+                        fontSize: 10,
+                        color: 'text.secondary',
+                        lineHeight: 1,
+                        mb: 0.5,
+                    }}
+                >
+                    {heading}
+                </Typography>
+            )}
+            {children}
+        </Box>
+    )
+}
+
+/**
+ * Renders the resolved per-processor Settings component inline.
+ * Resolution happens in the parent (`NodeInspector`) so it can also
+ * decide whether to skip the surrounding `Parameters` SectionBlock
+ * altogether — see the `showParameters` gate. The surrounding
+ * `SectionBlock` already supplies padding, gap, and the upper
+ * divider, so the pane carries no card frame of its own — controls
+ * sit flush with the section heading.
+ *
+ * Falls back to a friendly placeholder when the processor has no
+ * Settings entry AND no Actions entry (covers pure visualisers
+ * `effect`, `clone`, `contourPreview`, `textStrip`, `sdfFromContour`).
+ */
+const NodeSettingsPane = memo(function NodeSettingsPane({ node, SettingsComp }: {
+    node: { id: string; data: PipelineNodeData; type?: string }
+    SettingsComp: ComponentType<{ id: string; data: PipelineNodeData }> | undefined
+}) {
+    if (!SettingsComp) {
+        return (
+            <Typography variant="body2" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+                This node has no editable parameters.
+            </Typography>
+        )
+    }
+    return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+            <SettingsComp id={node.id} data={node.data} />
+        </Box>
+    )
+})
+
 function WholeNodeInspector({ exposed, setExposed }: {
     exposed: ExposedMeta | undefined
     setExposed: (e: ExposedMeta | undefined) => void
@@ -271,15 +312,6 @@ function WholeNodeInspector({ exposed, setExposed }: {
     )
 }
 
-/**
- * Per-field checkboxes for `config` nodes. Resolves the active effect
- * from `data.params.effect` (the same lookup `ConfigNodeView` uses)
- * and lists every `FieldDef` with a checkbox; checking one adds it to
- * `data.exposed.fields[]`. The `mode` flips to `'fields'` on first
- * tick and back to `undefined` on last untick (so an unchecked Config
- * doesn't sit in the published surface as `mode='fields'` with an
- * empty list).
- */
 function ConfigFieldsInspector({ node, exposed, setExposed }: {
     node: { data: PipelineNodeData }
     exposed: ExposedMeta | undefined
@@ -345,9 +377,6 @@ function ConfigFieldsInspector({ node, exposed, setExposed }: {
     )
 }
 
-/** Supplier-facing label/hint editors. Shown for every exposed mode
- *  (whole or fields) so the author can override the default node
- *  label. Both are optional. */
 function SharedExposureFields({ exposed, setExposed }: {
     exposed: ExposedMeta | undefined
     setExposed: (e: ExposedMeta | undefined) => void
@@ -371,11 +400,7 @@ function SharedExposureFields({ exposed, setExposed }: {
     )
 }
 
-/** PublishRoot view in the inspector — live publication summary +
- *  validation errors. Reuses `derivePublishedSurface` keyed on the
- *  publish-aware structural hash so noise (viewport, label edits on
- *  unrelated nodes, page renames) doesn't trigger re-traversal. */
-function RootInspector({ pages }: { pages: ReturnType<typeof useScene>['pages'] }) {
+function PublishRootSummary({ pages }: { pages: ReturnType<typeof useScene>['pages'] }) {
     const hash = publishStructuralHash(pages)
     const result = useMemo(
         () => deriveFromPages(pages),
@@ -385,12 +410,12 @@ function RootInspector({ pages }: { pages: ReturnType<typeof useScene>['pages'] 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             <SectionTitle>publish summary</SectionTitle>
-            <PublishSummary result={result} />
+            <PublishSummaryBody result={result} />
         </Box>
     )
 }
 
-function PublishSummary({ result }: { result: DerivePublishedSurfaceResult }) {
+function PublishSummaryBody({ result }: { result: DerivePublishedSurfaceResult }) {
     if (!result.ok) {
         return (
             <Box>

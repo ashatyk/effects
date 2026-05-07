@@ -4,9 +4,8 @@ import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
 import { useEngine } from '../context/EngineContext'
-import { NumberField, SelectField, SectionTitle } from '@effects/ui'
+import { SectionTitle } from '@effects/ui'
 import { useCanvasFill } from '../hooks/useCanvasFill'
 import {
     animationSwitchDef, AnimationSwitchProcessor,
@@ -14,15 +13,11 @@ import {
 } from '@effects/runtime/node-engine/processors/animation-switch'
 import {
     applyEasing,
-    type SwitchProfile, type SwitchSide,
+    type SwitchProfile,
 } from '@effects/runtime/node-engine/processors/signal-switch'
 import { COL_MUTED, COL_SECONDARY } from '@effects/ui/widgets/constants'
 import type { PipelineNodeData } from '../types'
 
-const PROFILES: SwitchProfile[] = [
-    'instant', 'linear', 'easeIn', 'easeOut', 'easeInOut', 'smoothstep', 'sine',
-]
-const SIDES: SwitchSide[] = ['a', 'b']
 const PROFILE_H = 50
 const SAMPLES = 96
 const READOUT_THROTTLE_MS = 90
@@ -42,13 +37,14 @@ interface LiveReadout {
 
 const EMPTY_READOUT: LiveReadout = { snap: null, channels: [] }
 
+/**
+ * Graph card: live channel-table + profile preview canvas. Editable
+ * params (initial side, transitions A→B / B→A) live in
+ * `AnimationSwitchNodeSettings`.
+ */
 export const AnimationSwitchNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
 
-    const initialSide    = (data.params.initialSide    ?? 'a') as SwitchSide
-    const transitionAbMs = (data.params.transitionAbMs ?? 500) as number
-    const transitionBaMs = (data.params.transitionBaMs ?? 500) as number
     const profileAb      = (data.params.profileAb      ?? 'easeInOut') as SwitchProfile
     const profileBa      = (data.params.profileBa      ?? 'easeInOut') as SwitchProfile
 
@@ -119,17 +115,6 @@ export const AnimationSwitchNodeView = memo(({ id, data }: NodeProps & { data: P
         >
             <SectionTitle>Live</SectionTitle>
             <ChannelTable readout={readout} />
-
-            <SectionTitle>Control</SectionTitle>
-            <SelectField label="initial side" value={initialSide} options={SIDES} onChange={v => set('initialSide', v)} formatOption={s => s.toUpperCase()} />
-
-            <SectionTitle>Transition A → B</SectionTitle>
-            <NumberField label="duration (ms)" value={transitionAbMs} step={50} min={0} max={10000} onChange={v => set('transitionAbMs', v)} />
-            <SelectField label="profile"       value={profileAb}      options={PROFILES} onChange={v => set('profileAb', v)} />
-
-            <SectionTitle>Transition B → A</SectionTitle>
-            <NumberField label="duration (ms)" value={transitionBaMs} step={50} min={0} max={10000} onChange={v => set('transitionBaMs', v)} />
-            <SelectField label="profile"       value={profileBa}      options={PROFILES} onChange={v => set('profileBa', v)} />
 
             <SectionTitle>Profile preview</SectionTitle>
             <canvas

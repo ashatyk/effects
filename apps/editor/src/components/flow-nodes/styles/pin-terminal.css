@@ -4,21 +4,13 @@
     background: transparent;
     border-radius: 6px;
     overflow: hidden;
-    /* Cards sit at their intrinsic width — Preview keeps its aspect
-       ratio, AnimationController keeps its widget grid, etc. The
-       parent flex row scrolls horizontally instead of squashing
-       cards. `flex-shrink: 0` makes that explicit so a wide card
-       doesn't get pinched when the terminal is narrow. */
+    /* Cards are stacked vertically inside the right-rail terminal —
+       full rail width, intrinsic height. flex-shrink: 0 so a tall
+       card (e.g. Preview) doesn't get pinched when the rail is short
+       and additional cards push the column past its visible height
+       (the parent column scrolls vertically instead). */
     flex-shrink: 0;
-    /* Cap card width so a single oversized pin doesn't push every
-       sibling card out of view. The intrinsic node width usually
-       caps below this anyway; the value matches the widest sensible
-       sidebar layout. */
-    max-width: 480px;
-    /* Cap card height so the terminal can scroll horizontally without
-       the cards trying to stretch to fill the (tall) terminal. */
-    align-self: stretch;
-    overflow-y: auto;
+    width: 100%;
 }
 
 .pn-terminal-card .pn {

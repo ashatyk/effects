@@ -14,12 +14,6 @@ import IosShareIcon from '@mui/icons-material/IosShare'
 import FileUploadIcon from '@mui/icons-material/FileUpload'
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch'
-import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
-import PushPinIcon from '@mui/icons-material/PushPin'
-import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined'
-import AccountTreeIcon from '@mui/icons-material/AccountTree'
-import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
-import VisibilityIcon from '@mui/icons-material/Visibility'
 import SpeedIcon from '@mui/icons-material/Speed'
 
 /** Allowed cap values. `0` means "uncapped" (rAF native rate). */
@@ -27,12 +21,6 @@ export const FPS_OPTIONS = [0, 5, 10, 15, 30, 60] as const
 export type FpsOption = typeof FPS_OPTIONS[number]
 
 interface Props {
-    sidebarOpen: boolean
-    onToggleSidebar: () => void
-    outlineOpen: boolean
-    onToggleOutline: () => void
-    inspectorOpen: boolean
-    onToggleInspector: () => void
     onUndo: () => void
     onRedo: () => void
     onExport: () => void
@@ -43,10 +31,14 @@ interface Props {
     onFpsChange: (fps: FpsOption) => void
 }
 
+/**
+ * Top toolbar. Outline (left rail) and Settings (right rail) are
+ * **permanent** workspace surfaces — there are no toggle buttons here
+ * for them, and the matching panels expose no close affordance. The
+ * legacy Pin terminal was retired with this change; its toolbar
+ * button was removed alongside the panel.
+ */
 export function NodeEditorToolbar({
-    sidebarOpen, onToggleSidebar,
-    outlineOpen, onToggleOutline,
-    inspectorOpen, onToggleInspector,
     onUndo, onRedo,
     onExport, onImport, onClear, onPublish,
     fps, onFpsChange,
@@ -108,45 +100,6 @@ export function NodeEditorToolbar({
                     </MenuItem>
                 ))}
             </TextField>
-            <Tooltip title={outlineOpen ? 'Hide scene outline' : 'Show scene outline'}>
-                <Button
-                    size="small"
-                    variant="text"
-                    color="inherit"
-                    onClick={onToggleOutline}
-                    startIcon={outlineOpen
-                        ? <AccountTreeIcon fontSize="small" />
-                        : <AccountTreeOutlinedIcon fontSize="small" />}
-                >
-                    Outline
-                </Button>
-            </Tooltip>
-            <Tooltip title={inspectorOpen ? 'Hide publish inspector' : 'Show publish inspector'}>
-                <Button
-                    size="small"
-                    variant="text"
-                    color="inherit"
-                    onClick={onToggleInspector}
-                    startIcon={inspectorOpen
-                        ? <VisibilityIcon fontSize="small" />
-                        : <VisibilityOutlinedIcon fontSize="small" />}
-                >
-                    Inspect
-                </Button>
-            </Tooltip>
-            <Tooltip title={sidebarOpen ? 'Hide pin terminal' : 'Show pin terminal'}>
-                <Button
-                    size="small"
-                    variant="text"
-                    color="inherit"
-                    onClick={onToggleSidebar}
-                    startIcon={sidebarOpen
-                        ? <PushPinIcon fontSize="small" />
-                        : <PushPinOutlinedIcon fontSize="small" />}
-                >
-                    Pins
-                </Button>
-            </Tooltip>
             <Stack direction="row" spacing={0.5}>
                 <Tooltip title="Undo (⌘Z)">
                     <Button size="small" variant="text" color="inherit" onClick={onUndo} startIcon={<UndoIcon fontSize="small" />}>

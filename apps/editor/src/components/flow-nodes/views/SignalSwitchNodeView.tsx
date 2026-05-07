@@ -3,9 +3,8 @@ import type { NodeProps } from '@xyflow/react'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
 import { useEngine } from '../context/EngineContext'
-import { NumberField, SelectField, SectionTitle } from '@effects/ui'
+import { SectionTitle } from '@effects/ui'
 import { useCanvasFill } from '../hooks/useCanvasFill'
 import {
     signalSwitchDef, SignalSwitchProcessor, applyEasing,
@@ -13,11 +12,6 @@ import {
 } from '@effects/runtime/node-engine/processors/signal-switch'
 import type { Signal } from '@effects/runtime/node-engine/types'
 import type { PipelineNodeData } from '../types'
-
-const PROFILES: SwitchProfile[] = [
-    'instant', 'linear', 'easeIn', 'easeOut', 'easeInOut', 'smoothstep', 'sine',
-]
-const SIDES: SwitchSide[] = ['a', 'b']
 
 const SCOPE_H = 60
 const PROFILE_H = 50
@@ -42,13 +36,14 @@ const makeRing = (): RingBuffer => ({
     head: 0,
 })
 
+/**
+ * Graph card: live oscilloscope (a/b/out + side bar + event spikes) +
+ * profile preview canvas. Editable params (initial side, transitions
+ * A→B / B→A) live in `SignalSwitchNodeSettings`.
+ */
 export const SignalSwitchNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
 
-    const initialSide    = (data.params.initialSide    ?? 'a') as SwitchSide
-    const transitionAbMs = (data.params.transitionAbMs ?? 500) as number
-    const transitionBaMs = (data.params.transitionBaMs ?? 500) as number
     const profileAb      = (data.params.profileAb      ?? 'easeInOut') as SwitchProfile
     const profileBa      = (data.params.profileBa      ?? 'easeInOut') as SwitchProfile
 
@@ -123,17 +118,6 @@ export const SignalSwitchNodeView = memo(({ id, data }: NodeProps & { data: Pipe
                 <Typography variant="caption" sx={{ color: '#ffdc50' }}>■ out</Typography>
                 <Typography variant="caption" sx={{ color: '#9ce28b' }}>▌ event</Typography>
             </Stack>
-
-            <SectionTitle>Control</SectionTitle>
-            <SelectField label="initial side" value={initialSide} options={SIDES} onChange={v => set('initialSide', v)} formatOption={s => s.toUpperCase()} />
-
-            <SectionTitle>Transition A → B</SectionTitle>
-            <NumberField label="duration (ms)" value={transitionAbMs} step={50}   min={0} max={10000} onChange={v => set('transitionAbMs', v)} />
-            <SelectField label="profile"       value={profileAb}      options={PROFILES} onChange={v => set('profileAb', v)} />
-
-            <SectionTitle>Transition B → A</SectionTitle>
-            <NumberField label="duration (ms)" value={transitionBaMs} step={50}   min={0} max={10000} onChange={v => set('transitionBaMs', v)} />
-            <SelectField label="profile"       value={profileBa}      options={PROFILES} onChange={v => set('profileBa', v)} />
 
             <SectionTitle>Profile preview</SectionTitle>
             <canvas

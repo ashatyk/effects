@@ -21,7 +21,15 @@
 }
 
 .pn .MuiInputBase-root.MuiInputBase-sizeSmall {
+    /* The shared theme locks small inputs to `height: 28px` (so the
+       settings panel renders TextField + Select at the same row
+       height). Graph node cards intentionally run tighter — `.pn` is
+       a high-density surface and 28 px would blow up multi-row nodes
+       — so we explicitly override BOTH `min-height` and `height`
+       here. `!important` again keeps us ahead of emotion's runtime
+       size=small variant. */
     min-height: 22px !important;
+    height: 22px !important;
 }
 
 .pn .MuiOutlinedInput-root.MuiInputBase-multiline {

@@ -3,18 +3,13 @@ import type { NodeProps } from '@xyflow/react'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { BaseNodeShell } from '../BaseNodeShell'
-import { useSetParam } from '../hooks/useSetParam'
 import { useEngine } from '../context/EngineContext'
-import { NumberField, SelectField } from '@effects/ui'
 import { useCanvasFill } from '../hooks/useCanvasFill'
 import {
     combineSignalsDef, CombineSignalsProcessor,
-    type CombineMode,
 } from '@effects/runtime/node-engine/processors/combine-signals'
 import type { Signal } from '@effects/runtime/node-engine/types'
 import type { PipelineNodeData } from '../types'
-
-const MODES: CombineMode[] = ['add', 'max', 'min', 'multiply', 'a_overrides_b', 'b_overrides_a', 'mix']
 
 const PREVIEW_H = 60
 const HISTORY = 120
@@ -33,11 +28,12 @@ const makeRing = (): RingBuffer => ({
     head: 0,
 })
 
-export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
+/**
+ * Graph card: live oscilloscope showing A/B/Out traces. Mode + mix
+ * factor live in `CombineSignalsNodeSettings`.
+ */
+export const CombineSignalsNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
-    const set = useSetParam(id)
-    const mode = (data.params.mode ?? 'a_overrides_b') as CombineMode
-    const mixFactor = (data.params.mixFactor ?? 0.5) as number
 
     const canvasRef = useRef<HTMLCanvasElement | null>(null)
     const rafRef = useRef<number | null>(null)
@@ -50,9 +46,6 @@ export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: Pi
 
     useCanvasFill(canvasRef, PREVIEW_H, onResize)
 
-    /* Live oscilloscope: pushes a/b/out values into a ring buffer and renders
-       all three traces overlaid. This makes it obvious what the combine is
-       doing (e.g. envelope spike on top of a saw input). */
     useEffect(() => {
         const tick = () => {
             const proc = engine.getProcessor<CombineSignalsProcessor>(id)
@@ -78,7 +71,7 @@ export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: Pi
     }, [engine, id])
 
     return (
-        <BaseNodeShell title={combineSignalsDef.title} category={combineSignalsDef.category} inputs={combineSignalsDef.inputs} outputs={combineSignalsDef.outputs} minWidth={260}>
+        <BaseNodeShell title={combineSignalsDef.title} category={combineSignalsDef.category} inputs={combineSignalsDef.inputs} outputs={combineSignalsDef.outputs} minWidth={240}>
             <canvas
                 ref={canvasRef}
                 className="nodrag"
@@ -92,14 +85,6 @@ export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: Pi
                     margin: '4px 0',
                 }}
             />
-            <SelectField
-                label="mode" value={mode} options={MODES}
-                onChange={v => set('mode', v)}
-                formatOption={m => m.replace(/_/g, ' ')}
-            />
-            {mode === 'mix' && (
-                <NumberField label="mix (a→b)" value={mixFactor} step={0.05} min={0} max={1} onChange={v => set('mixFactor', v)} />
-            )}
             <Stack sx={{ fontSize: 10, opacity: 0.7, py: 0.25 }}>
                 <Typography variant="caption" sx={{ color: '#5b9dff' }}>■ a</Typography>
                 <Typography variant="caption" sx={{ color: '#ff8a5b' }}>■ b</Typography>
@@ -112,21 +97,16 @@ export const CombineSignalsNodeView = memo(({ id, data }: NodeProps & { data: Pi
 function drawScope(ctx: CanvasRenderingContext2D, w: number, h: number, r: RingBuffer, out: Signal | null): void {
     ctx.clearRect(0, 0, w, h)
 
-    /* Find the displayable range: clamp lower bound to 0, but allow the upper
-       to expand if any trace exceeds 1 (combine 'add' or an unbounded Timer
-       can produce values > 1). */
     let hi = 1
     for (const arr of [r.a, r.b, r.out]) {
         for (const v of arr) if (Number.isFinite(v) && v > hi) hi = v
     }
     const lo = 0
 
-    /* Background grid */
     ctx.strokeStyle = '#1d2029'
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(0, h * 0.5); ctx.lineTo(w, h * 0.5)
-    /* horizontal line at value=1 if range expanded above 1 */
     if (hi > 1) {
         const yOne = mapY(1, lo, hi, h)
         ctx.moveTo(0, yOne); ctx.lineTo(w, yOne)
