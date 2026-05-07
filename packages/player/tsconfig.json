@@ -1,0 +1,11 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "tsBuildInfoFile": "./node_modules/.tmp/player.tsbuildinfo",
+        "types": ["vite/client"],
+        "paths": {
+            "@effects/runtime": ["../runtime/src/index.ts"]
+        }
+    },
+    "include": ["src"]
+}

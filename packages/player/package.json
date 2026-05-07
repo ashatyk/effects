@@ -1,0 +1,16 @@
+{
+  "name": "@effects/player",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@effects/runtime": "*",
+    "pixi.js": "^8.11.0"
+  }
+}
