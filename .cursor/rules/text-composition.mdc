@@ -1,11 +1,11 @@
 ---
-description: Text rendering chain — text + textStyle + textStrip → effect.txcn{i}; TEXT and TEXT_STYLE slot semantics, font loading, letter spacing fallback, breaking change for old snapshots. Read before changing text input UX or downstream text consumers.
+description: Text rendering chain — text + textStyle + textStrip → effect.txcn{i}; TEXT and TEXT_STYLE slot semantics, font loading, letter spacing fallback. Read before changing text input UX or downstream text consumers.
 alwaysApply: true
 ---
 
 # Text composition
 
-Text is rendered through three small input nodes that talk via two typed slots — `TEXT` (string) and `TEXT_STYLE` (typography descriptor). The strip is consumed downstream as a generic texture (`txcn{i}`) by ribbon-style effects (`text-orbit`, `text-grid-orbit`).
+Three input nodes wired by typed slots `TEXT` (string) and `TEXT_STYLE` (typography), feeding ribbon-style effects via the generic texture pool (`txcn{i}`).
 
 ```
 text (TEXT)        ─┐
@@ -13,141 +13,69 @@ text (TEXT)        ─┐
 textStyle (STYLE) ──┘
 ```
 
-This is intentionally a **breaking change** from the previous monolithic text node. Old snapshots that had `sdfTextAtlas` get the warning `Unknown processor type: sdfTextAtlas` from `DataflowEngine.addNode` and skip it; old `textStrip` snapshots that baked text/font/spacing into params no longer render until the user wires the new pair of source nodes. There is no auto-migration.
+Breaking change vs the old monolithic `sdfTextAtlas` / param-baked `textStrip` — old snapshots log `Unknown processor type` and skip; no auto-migration.
 
 ## Slot types
 
-### `TEXT`
-
-Plain UTF-8 string at the wire level. Downstream consumers are free to coerce, truncate, or transform.
-
 ```ts
-SLOT.TEXT = 'TEXT'
-```
+SLOT.TEXT = 'TEXT'                     // plain UTF-8 string
 
-### `TEXT_STYLE`
-
-Typography descriptor packet:
-
-```ts
-TextStyle {
-  font: string                       // CSS font-family stack
-  letterSpacing: number              // px, [-50, 200] clamped
-  weight: 'regular' | 'bold'         // binary by design
+TextStyle {                            // SLOT.TEXT_STYLE
+  font: string                         // CSS font-family stack
+  letterSpacing: number                // px, [-50, 200] clamped
+  weight: 'regular' | 'bold'
   transform: 'none' | 'upper' | 'lower'
 }
 ```
 
-Kept distinct from `CONFIG` so a typography preset can't accidentally feed into an `effect.config` slot — strict slot compatibility is enforced by `SLOT_COMPAT`.
+`TEXT_STYLE` is intentionally distinct from `CONFIG` (enforced by `SLOT_COMPAT`).
 
 ## Producers
 
-### `text` (`category: 'input'`)
-
-```
-inputs:  []
-outputs: [{ name: 'text', type: TEXT }]
-defaultParams: { value: 'Купи в комплекте' }
-```
-
-Single multiline string param. View renders an MUI `TextField` (multiline, no label — the surrounding node header is the label). Empty string is a legal output and downstream nodes treat it as "nothing to render".
-
-One source can fan out to multiple Text Strips, each with a different style.
-
-### `textStyle` (`category: 'input'`)
-
-```
-inputs:  []
-outputs: [{ name: 'style', type: TEXT_STYLE }]
-defaultParams: {
-  font: '"Inter", "Helvetica Neue", "Arial", "Noto Sans", sans-serif',
-  letterSpacing: 0,
-  weight: 'bold',
-  transform: 'none',
-}
-```
-
-`execute()` sanitises every field:
-
-- `font` falls back to `DEFAULT_FONT` if empty / non-string.
-- `letterSpacing` clamped to `[-50, 200]` via `clampSpacing`. Non-finite → 0.
-- `weight` strict allowlist (`'regular' | 'bold'`); anything else → `'bold'`.
-- `transform` strict allowlist (`'upper' | 'lower'`); anything else → `'none'`.
-
-The view exposes 4 widgets — font select (`SelectField`), letter spacing (`NumberField`), weight (`SelectField`), transform (`SelectField`). No connection hints (style is a pure source, not consumer).
-
-One preset can fan out to multiple Text Strips at once.
+- **`text`** (`input`) — single multiline string param `value`. Empty string is legal ("nothing to render"). Output `text: TEXT`. One source can fan out to many strips.
+- **`textStyle`** (`input`) — defaults: Inter stack, `letterSpacing: 0`, `weight: 'bold'`, `transform: 'none'`. `execute()` sanitises every field via `sanitiseStyle` (allowlists for weight/transform, `clampSpacing` for letterSpacing). Output `style: TEXT_STYLE`.
 
 ## `textStrip` — rasteriser
 
-```
-inputs:  [
-  { name: 'text',  type: TEXT,        label: 'text' },
-  { name: 'style', type: TEXT_STYLE,  label: 'style (optional)' },
-]
-outputs: [{ name: 'texture', type: TEXTURE }]
-defaultParams: {}
-```
+Inputs: `text: TEXT` (required), `style: TEXT_STYLE` (optional, falls back to default style). Output: `texture: TEXTURE` (TextureSource of the rasterised strip).
 
-Renders a horizontal raster strip on a Canvas2D, then uploads to a `RenderTexture`. Internal canvas height = 128 px (`STRIP_HEIGHT`). Glyph height = 78% of canvas (`FONT_FRAC = 0.78`). Padding = 24 px each side for glow tails (`PADDING`). The downstream consumer reads `texture.width / texture.height` to size the strip on the canvas (the Effect node already auto-derives this as `uTxcn{i}Aspect`).
+Rendering: Canvas2D → `RenderTexture`. `STRIP_HEIGHT = 128`px, `FONT_FRAC = 0.78`, `PADDING = 24`px each side (glow tail headroom). Downstream reads aspect from `texture.width / texture.height` (Effect node auto-derives `uTxcn{i}Aspect`).
 
-### Inputs handling
-
-```ts
-const rawText = typeof inputs.text === 'string' ? inputs.text : ''
-const style: TextStyle = sanitiseStyle(inputs.style)  // falls back to DEFAULT_STYLE
-const text  = applyTransform(rawText, style.transform)
-```
-
-Empty text → `{ texture: null }`, internal cache cleared. The previous strip RT stays allocated until the next non-empty rasterisation reuses it.
+Empty text → `{ texture: null }`, cache cleared. The previous strip RT stays allocated for reuse on the next non-empty rasterisation.
 
 ### Web font readiness
 
-Web fonts (`@font-face`, Google Fonts) load asynchronously. If the strip is rasterised before the typeface is available, Canvas2D silently falls back to a generic, and the strip is rendered in the wrong font. The strip awaits `document.fonts.load(cssFont)` (resolves even if the family is missing — Canvas2D then uses the next entry in the stack) before measuring/painting.
+Awaits `document.fonts.load(cssFont)` before measuring/painting (Canvas2D otherwise silently falls back to a generic typeface). The promise resolves even if the family is missing — Canvas2D then uses the next entry in the stack.
 
 ### Letter spacing
 
-Canvas2D supports `ctx.letterSpacing` on modern browsers. The strip:
+1. Try setting `mctx.letterSpacing = '${px}px'` on a measure context. Throws on older browsers → `supportsCtxSpacing = false`.
+2. Compute manual glyph-by-glyph width as fallback.
+3. If supported: paint with `textAlign = 'center'`, `ctx.fillText(text, stripW/2, ...)`.
+4. Otherwise: paint glyph-by-glyph at running x with custom spacing.
 
-1. Tries to set `mctx.letterSpacing = '${px}px'` on a measure context. If the assignment throws (older browser), `supportsCtxSpacing = false`.
-2. Computes `manualW` glyph-by-glyph as a fallback width.
-3. If the runtime supports the property, paints with `textAlign = 'center'` and `ctx.fillText(text, stripW/2, ...)`.
-4. Otherwise falls back to manual layout: paint each glyph at the running x and add custom spacing between glyphs. Slower but works on every browser.
-
-The strip width is `max(ctxMeasuredW, manualW) + 2*PADDING` so even browsers that report a too-small measured width still get a wide enough canvas.
+Strip width = `max(ctxMeasuredW, manualW) + 2*PADDING`.
 
 ### Caching
 
-Cache key = `${text}::${font}::${letterSpacing}::${weight}` (transform is folded into `text` already). On cache hit, `execute` returns the existing RT source immediately. On miss, `buildStrip(...)` kicks off the async font-ready → rasterise → blob → image → texture pipeline; `execute` returns `{ texture: null }` until the pipeline completes and calls `engine.markDirty(this.nodeId)`.
-
-`generating: boolean` flag prevents overlapping rasterisations.
-
-### Output
-
-`{ texture: this._outputRT.source }` — TextureSource of the rasterised strip. Wire into any `txcn{i}` slot of an Effect (typically slot 1, by convention "Atlas" / "Text strip"). Effects that need the aspect ratio read `uTxcn{i}Aspect`.
+Key = `${text}::${font}::${letterSpacing}::${weight}` (transform is folded into `text`). Hit → return existing RT immediately. Miss → async font-ready → rasterise → blob → image → upload → `engine.markDirty(this.nodeId)`. Returns `{ texture: null }` while pending. `generating: boolean` flag prevents overlapping rasterisations.
 
 ## Effect-side consumption
 
-Effects that use a text strip declare it in `manifest.textures.slots`:
+Manifests declare the slot:
 
 ```ts
-textures: {
-  slots: [
-    { slot: 1, label: 'Text strip (atlas)' },
-  ],
-}
+textures: { slots: [{ slot: 1, label: 'Text strip (atlas)' }] }
 ```
 
-The Effect node UI then surfaces the slot label next to the `txcn1` handle (e.g. `txcn1 · Text strip (atlas)`) so wiring is unambiguous.
+Shaders bind `uniform sampler2D uTxcn1;` and may read `uTxcn1Enabled` and `uTxcn1Aspect` (defaults to 1.0 when unconnected).
 
-Shaders bind the texture via `uniform sampler2D uTxcn1;` and may read `uTxcn1Enabled` (1.0 if connected, 0.0 otherwise) and `uTxcn1Aspect` (= `texture.width / texture.height`, defaults to 1.0 when no texture is connected).
+Canonical consumer: `text-orbit` (ribbon mode). `text-grid-orbit` consumes a glyph atlas instead — different shape (16-cell grid sampled by per-cell hash).
 
-Currently `text-orbit` (ribbon mode) is the canonical consumer. `text-grid-orbit` consumes a glyph atlas in slot 1, not a text strip — it's a different shape (16-cell grid sampled by hash of cell coordinate).
+## Pitfalls
 
-## Common pitfalls
-
-- **Treating `TEXT_STYLE` as `CONFIG`** — slot compatibility intentionally rejects this. If you need to fold style into a config payload, do it in a custom node that explicitly produces `CONFIG`.
-- **Wiring `text` directly into Effect** — the Effect node has no `TEXT` input. Always go through `textStrip` (or a new processor that consumes `TEXT` and produces `TEXTURE`).
-- **Editing `letterSpacing` outside `[-50, 200]`** — `textStyle` clamps silently. Wider ranges need to update both `clampSpacing` in `text-style.ts` and the `NumberField` min/max in the view.
-- **Adding more typography knobs (italic, line-height, multi-line)** — the current contract is intentionally narrow. Extending `TextStyle` is fine but every change must run through `sanitiseStyle` in `textStrip` (and any other consumers) so a malformed wire input doesn't crash the strip.
-- **Shipping a `textStrip` shader change without updating `text-orbit`'s expected aspect ratio** — `text-orbit/ribbon.frag` reads `uTxcn1Aspect` to convert ribbon UV.x into atlas UV.x. If the strip's `STRIP_HEIGHT` or `FONT_FRAC` changes, the visual proportion changes and effect manifests may need re-tuning.
+- Treating `TEXT_STYLE` as `CONFIG` — `SLOT_COMPAT` rejects.
+- Wiring `text` directly into Effect — Effect has no `TEXT` input, route through `textStrip`.
+- Editing `letterSpacing` outside `[-50, 200]` — silently clamped; widen by editing `clampSpacing` AND the `NumberField` min/max.
+- Extending `TextStyle` — keep changes funnelled through `sanitiseStyle`.
+- Changing `STRIP_HEIGHT` / `FONT_FRAC` — `text-orbit/ribbon.frag` reads `uTxcn1Aspect`; visual proportions shift and manifests may need re-tuning.

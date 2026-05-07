@@ -1,0 +1,256 @@
+---
+description: Tier-3 web runtime — packages/player (@effects/player) + apps/player demo. EffectPlayer facade, applyOverrides + canvas-sink + SupplierConfig + exporter live here. Supplier app and any future Tier-3 integration consume this. Read before changing the Tier-3 contract or moving runtime helpers.
+alwaysApply: true
+---
+
+# Tier-3 Player (`packages/player` + `apps/player`)
+
+`@effects/player` is the **framework-agnostic Tier-3 web runtime**. Accepts a `PublishedPipeline` (Tier-1 manifest) and an optional `SupplierConfig` (Tier-2 overrides), spins up the engine, applies overrides, streams the `publishRoot` output into a caller-provided canvas. No React, no MUI, no @xyflow/react — only `@effects/runtime` and Pixi.
+
+`apps/player` is a tiny vite+react demo on top of the package — two file pickers (pipeline required, config optional), canvas, three buttons (Load config / Reset / Back), optional events sidebar, and **canvas hit-testing for `tapZone` nodes**. Integration acceptance test: if a `(pipeline, config)` pair renders here visually identical to the supplier's preview AND its tap zones / event emitters fire correctly, every other consumer that mounts `EffectPlayer.create({ pipeline, config, canvas })` + wires its own click handler will work.
+
+## Why this package exists
+
+Before the split: supplier app owned `applyOverrides.ts`, `canvas-sink.ts`, `useSupplierRuntime.ts`, `supplier-config.ts`, `exporter.ts` privately. Useful to other Tier-3 consumers but locked behind the React form-app.
+
+After: `applyOverrides` / `canvas-sink` / `SupplierConfig` / `exporter` / `createEngine` live in `@effects/player`. `EffectPlayer` is the high-level facade bundling all of the above behind one async constructor. Supplier app keeps `useSupplierRuntime` React hook as a thin adapter around `createEngine`. A partner marketplace page imports `EffectPlayer` and is done in one async call.
+
+## File map (`packages/player`)
+
+```
+packages/player/
+├── package.json              # @effects/player; deps: @effects/runtime, pixi.js
+└── src/
+    ├── index.ts              # public surface
+    ├── EffectPlayer.ts       # high-level facade
+    ├── createEngine.ts       # Pixi App + DataflowEngine bootstrap; supports attached + offscreen modes
+    ├── applyOverrides.ts     # applyOverride.* granular helpers + applyAllOverrides bulk
+    ├── screen-sink.ts        # streamPublishRootToScreen — direct render to backbuffer (zero-copy)
+    ├── canvas-sink.ts        # streamPublishRootToCanvas — legacy extract path (supplier preview only)
+    ├── supplier-config.ts    # SupplierConfig type + SamPoint + emptyConfig()
+    └── exporter.ts           # serialize / parse / download / pickConfigFile
+```
+
+## Public surface (`@effects/player`)
+
+```ts
+class EffectPlayer {
+  static create(opts: EffectPlayerOptions): Promise<EffectPlayer>
+  pause(): void
+  resume(): void
+  destroy(): void
+  setConfig(config: SupplierConfig): void
+  getConfig(): SupplierConfig
+  setField(nodeId: string, paramKey: string, value: number | number[]): void
+  setImage(nodeId: string, dataUrl: string): void
+  setText(nodeId: string, value: string): void
+  emit(eventId: string, x?: number, y?: number): void
+  readonly pipeline: PublishedPipeline
+  readonly engine: DataflowEngine
+}
+
+interface EffectPlayerOptions {
+  pipeline: PublishedPipeline
+  canvas: HTMLCanvasElement
+  config?: SupplierConfig            // missing/mismatched → manifest defaults
+  fps?: number                        // 0 = uncapped (default)
+  autoStart?: boolean                 // default true
+}
+
+// Low-level building blocks (used by supplier + editor too)
+function createEngine(opts: CreateEngineOptions): Promise<CreatedEngine>
+//   CreateEngineOptions.mountCanvas?: HTMLCanvasElement
+//     - set: Pixi attaches GL to this canvas (no offscreen DOM node, no extract loop)
+//     - omit: Pixi creates its own hidden offscreen canvas (legacy supplier path)
+
+const applyOverride: { image, segmentation, scalar, vector, emit, text }
+function applyAllOverrides(engine, pipeline, config): void
+
+// Two display sinks (pick based on whether you used `mountCanvas`):
+function streamPublishRootToScreen(engine, rootNodeId): () => void   // attached, ZERO readback
+function streamPublishRootToCanvas(engine, rootNodeId, canvas): () => void  // legacy, supplier preview
+
+// Config data contract (Tier-2 → Tier-3)
+interface SupplierConfig {
+  pipelineId, pipelineVersion, manifestVersion,
+  imageSlots: Record<nodeId, { dataUrl }>,
+  segmentation: Record<nodeId, {
+    points: SamPoint[]      // SAM hint markers (kept for re-edit in supplier)
+    polygon?: number[]      // SAM-computed result baked into config — Tier-3 player applies directly, NEVER spawns SAM worker
+  }>,
+  fields: Record<`${nodeId}:${paramKey}`, number | number[]>,
+  texts:  Record<nodeId, { value: string }>,
+}
+interface SamPoint { point: [number, number]; label: 0 | 1 }
+function emptyConfig(pipeline: PublishedPipeline): SupplierConfig
+
+// JSON I/O
+function serializeConfig(cfg): string
+function downloadConfig(cfg): void
+function parseConfig(text, pipeline): ParseConfigResult
+function pickConfigFile(): Promise<string | null>
+```
+
+## Lifecycle of `EffectPlayer.create(opts)`
+
+1. `createEngine({ pipeline, fps, autoStart, mountCanvas: opts.canvas })`:
+    - `new Application()` + `app.init({ canvas: mountCanvas, preference: 'webgl', preferWebGLVersion: 2, autoStart: false })`.
+    - **Pixi attaches its GL context directly to the caller's canvas.** No hidden offscreen DOM node, no separate render surface. Player's mount mode (`mountCanvas` set).
+    - `new DataflowEngine(app)`, `setTargetFps(opts.fps)` if specified.
+    - For each `pipeline.graph.nodes`: `engine.addNode(id, processor, { ...params })`. Defensive `cloneOf` skip even though `derivePublishedSurface` already strips clones.
+    - `engine.setEdges(pipeline.graph.edges)`.
+    - `engine.start()` (unless `autoStart === false`).
+2. Resolve the `publishRoot` node. **Missing publishRoot fails loud** — a published manifest without one is malformed JSON; surface that rather than render a silent black canvas.
+3. `streamPublishRootToScreen(engine, root.id)` — subscribes to the engine. On every published-frame:
+    - Wraps the upstream `TextureSource` in a single reused `Texture` + `Sprite` (re-created only when source identity changes).
+    - If publishRoot dimensions changed, calls `renderer.resize(w, h)` so the GL backbuffer matches the effect's authored canvas (CSS `objectFit: contain` adapts the visible box independently).
+    - `renderer.render({ container: sprite })` — Pixi v8 renders to the GL backbuffer when no `target` is supplied. **One draw call, one fullscreen quad blit, zero pixel readback.**
+4. Apply overrides:
+    - If `opts.config?.pipelineId === opts.pipeline.id` use `opts.config`; otherwise `emptyConfig(opts.pipeline)` (mismatch is fail-soft — never crash a marketplace card on a bad config).
+    - `applyAllOverrides(engine, pipeline, config)`.
+5. Return the player instance, ready to receive runtime overrides.
+
+`destroy()` is idempotent: detach sink → destroy engine → destroy Pixi app (`destroyContext: false` in attached mode — caller's canvas survives).
+
+### Two mount modes
+
+| Mode | When | Display sink | Memory profile |
+|---|---|---|---|
+| **Attached** (`createEngine({ mountCanvas })`) | `EffectPlayer.create({ canvas })`, any production / mobile consumer | `streamPublishRootToScreen` — direct backbuffer render via `Sprite` | Flat. ~80 MB GPU steady-state for a 900×1200 effect; no JS-heap growth. |
+| **Offscreen** (`createEngine()` w/o `mountCanvas`) | Supplier app preview (engine + canvas in different React subtrees, lifting impractical) | `streamPublishRootToCanvas` — `renderer.extract.pixels(...)` ~30×/s + `putImageData` into a separate visible Canvas2D | Bleeds. ~4 MB×30 FPS GPU→JS heap copy + Pixi's own extract temporaries; reaches 2.6 GB after a few minutes of a multi-Effect-node scene. |
+
+Attached mode is the default for any new T3 surface. Offscreen mode is kept only for the supplier preview's structural constraint and is **not** suitable for production.
+
+## Memory profile (production target: ~80–150 MB total tab)
+
+A two-Effect-chained scene at 900×1200 should sit at **~80 MB** total tab memory in Chrome Task Manager (≈14 MB JS heap + ≈70 MB GPU + script/CSS caches). Anything significantly above that is a regression — historically a single architectural mistake on this surface can blow the tab to multi-GB on mobile.
+
+Cuts that get from the old ~2.6 GB ceiling to the current ~80 MB profile (do NOT silently revert any of these):
+
+1. **SAM bypass via `polygon` in `SupplierConfig.segmentation`.** Tier-3 contract: "the supplier did the segmentation, the result lives in the config." `applyOverride.segmentation` checks for a `polygon` field and routes to `SegmentationProcessor.setPolygonOverride(polygon)` — skips `initSam()` entirely. NO transformers.js / OpenCV.js / SlimSAM weights download, no Web Worker spawn (worker alone owns ~1.5–2 GB native ONNX/WASM heap on a real mobile profile). Legacy configs without `polygon` still work via the SAM path, but production manifests **MUST** ship `polygon` — the supplier app's `SegmentationInput` poll loop pushes the polygon back into config as soon as SAM produces it.
+2. **Attached-canvas mode** — Pixi writes directly to the user's canvas backbuffer. Legacy offscreen path runs `renderer.extract.pixels` ~30×/s and bleeds Pixi's internal extract temporaries.
+3. **`shader.destroy(false)` after each `mesh.destroy(...)` in `EffectProcessor`.** `Mesh.destroy()` does NOT release the shader (might be shared); ours never is — built fresh every frame from `Shader.from({ resources })`. Without explicit `shader.destroy(false)` the per-frame `BindGroup` allocations pile up indefinitely (90k+ orphaned `BindGroup` instances after a few minutes). The `false` arg keeps the underlying GL program alive (Pixi caches by source — re-using is desired) while releasing the owned BindGroups.
+4. **`tex.destroy(true)` in `TextStripProcessor`** after rendering rasterised PNG into the strip RT. Default `Sprite.destroy()` doesn't touch the texture; the source bitmap leaked one Texture+TextureSource per text re-rasterisation otherwise.
+5. **`RT.destroy(true)` in every `BaseProcessor.ensureRT*` / `destroy` path.** Pixi v8 default `destroyTextureSource: false` leaks the GPU `TextureSource` on every resolution change.
+6. **`ExtractSystem.canvas` / `.base64` monkey-patch** (`pixi-patches.ts`, auto-applied in `DataflowEngine.constructor`). Vanilla Pixi v8 `extract.canvas` allocates an intermediate `RenderTexture` via `textureGenerator.generateTexture(...)` and never destroys it — every call leaks one source-sized RT. Patch destroys + unloads the intermediate. Protects supplier `SegmentationProcessor.execute` (one extract per image change) and editor `PreviewProcessor.execute` (~30×/s).
+7. **Aggressive Pixi GC** in `app.init`: `gcMaxUnusedTime: 1000`, `gcFrequency: 1000`. Default 60 s / 30 s lets several MB of stale GPU resources pile up between sweeps.
+
+If tab memory ever climbs above ~200 MB in production, **don't** patch the symptom — open `apps/player`, set `localStorage.setItem('effectsDebug', '1')`, hard-refresh, read the per-second diagnostic dump. Heap snapshot top-15 by Retained Size + Chrome Task Manager split (JS / GPU / Image cache / Native) tells you which subsystem is regressing.
+
+## Live-overrides contract
+
+Every setter pushes the change into:
+1. **The engine** (next tick uses it). Re-uses `applyOverride.*`.
+2. **The in-memory `_config` snapshot** (so `getConfig()` / serialise reflects it).
+
+```ts
+player.setField('n_3', 'uColor', [1, 0, 0, 1])   // vector
+player.setField('n_3', 'uOpacity', 0.5)          // scalar
+player.setImage('n_1', 'data:image/png;base64,...')
+player.setText('n_5', 'CUSTOM TEXT')
+player.emit('cta_tap', 320, 480)                 // by surface.tapZones[].eventId
+```
+
+`emit(eventId)` looks up the matching `tapZone` / `eventEmitter` in `pipeline.surface.tapZones` and forwards `(x, y)` into `EventSignal.lastX/lastY`. **Unknown eventId is a silent no-op** (fail-soft).
+
+`setConfig(config)` is a bulk replace — used when the consumer wants to swap entire presets at runtime (tap a thumbnail to switch the look). Same fail-soft validation as `create`.
+
+## Apps that consume `@effects/player`
+
+### `apps/supplier` (Tier-2 form)
+
+The supplier app's React form needs **granular control** — every slider / file picker calls one `applyOverride.*` per interaction. Imports the granular helpers directly:
+
+```ts
+import {
+    applyAllOverrides, applyOverride,
+    downloadConfig, emptyConfig, parseConfig, pickConfigFile,
+    streamPublishRootToCanvas,
+    type SamPoint, type SupplierConfig,
+} from '@effects/player'
+```
+
+`useSupplierRuntime.ts` is a thin React adapter around `createEngine`. Does NOT use the `EffectPlayer` facade — wrapping every form widget in `player.setField` would just add a thin redirect.
+
+### `apps/player` (Tier-3 demo)
+
+```
+apps/player/
+├── package.json              # @effects/player-demo
+└── src/
+    ├── components/
+    │   └── EventEmitterButtons.tsx    # sidebar list of EMIT buttons for kind:'event' zones
+    ├── hooks/
+    │   └── useTapZoneHitTest.ts       # canvas click → point-in-polygon → player.emit(eventId, x, y)
+    └── pages/
+        ├── ManifestPickerPage.tsx     # two slots: pipeline (required), config (optional)
+        └── PlayerPage.tsx             # EffectPlayer + canvas + Load config / Reset / Back +
+                                       #  events sidebar + tap-zone hit-test wiring
+```
+
+### Event dispatch surfaces
+
+Two paths route into `EffectPlayer.emit(eventId, x?, y?)`:
+
+- **`eventEmitter` nodes** (`pipeline.surface.tapZones[].kind === 'event'`) → right-side **events sidebar** with one EMIT button per zone (`EventEmitterButtons`). Per-button click counter (`EMIT ·3`) for visual confirmation. Sidebar auto-hidden when the surface declares zero event-emitters.
+- **`tapZone` nodes** (`kind === 'tap'`) → **canvas hit-test** via `useTapZoneHitTest`. On every native canvas click:
+    1. Convert (clientX, clientY) → effect pixel space, accounting for `objectFit: contain` letterboxing on the canvas CSS box.
+    2. For each tap zone, look up the live `TapZoneProcessor` via `engine.getProcessor<TapZoneProcessor>(nodeId)` and read `proc.contour` (set by `tapZone.execute()` every frame the contour input is wired and producing).
+    3. Ray-casting point-in-polygon against `contour.positions`. **First match wins** — z-order is `surface.tapZones[]` array order. Two zones overlapping on the same pixel is an authoring bug; the runtime picks the earliest declared deterministically.
+    4. On a hit, call `player.emit(zone.eventId, x, y)`. The `(x, y)` are forwarded into `EventSignal.lastX/lastY` for hit-positioned downstream animations.
+
+Cursor goes to `pointer` on the canvas when at least one tap zone is in the surface. Misses (clicks in the letterbox or outside any zone) are silently swallowed.
+
+Both paths use the **same** `EffectPlayer.emit(eventId)` API as a partner integration would. Custom dispatch UX (programmatic timer, scroll-driven, sensor input): build it in your consumer and call `player.emit(...)`.
+
+The demo runs on port `5175` (editor 5173, supplier 5174). One file picker per slot; drop-zone routes by extension (`.config.json` → config slot if a pipeline is already loaded, otherwise treated as a fresh pipeline). Render button disabled until a pipeline is loaded.
+
+`PlayerPage.tsx` mounts a single `EffectPlayer` bound to its visible `<canvas>`:
+- Player recreated only when `pipeline` identity changes — Load config / Reset use `player.setConfig()` (no GPU teardown).
+- Footer surface stats (`fields N · imageSlots N · tapZones N · wholeNodes N`) come from `pipeline.surface`.
+
+## Workspace integration
+
+```
+packages/
+├── runtime/    @effects/runtime        # engine, processors, effects, publish, SAM
+├── player/     @effects/player         # EffectPlayer, applyOverrides, SupplierConfig
+└── ui/         @effects/ui             # MUI widgets + theme
+
+apps/
+├── editor/     @effects/editor         # Tier-1 visual editor
+├── supplier/   @effects/supplier       # Tier-2 supplier form
+└── player/     @effects/player-demo    # Tier-3 player demo
+```
+
+All three consuming apps + `@effects/player` itself link to source via `paths` (tsconfig.app.json) AND vite array-form regex aliases (vite.config.ts). The aliases must list **every** `@effects/*` package; missing one means deep imports break in dev mode silently. See `apps/editor/vite.config.ts` for why object-form trailing-slash aliases don't work in Vite 8.
+
+Run `npm run dev:player` from the repo root.
+
+## Out of scope (v1)
+
+- **WebGPU + WGSL inside the player.** Same Pixi+GLSL backend the runtime uses. WGSL migration tracked separately under "Suggested ordering of next big steps" in `product-vision.mdc`.
+- ~~**Custom render mount**~~ DONE. `EffectPlayer` uses attached mode → `streamPublishRootToScreen` → zero-copy direct render. Supplier preview keeps the offscreen + extract path because of structural constraints.
+- ~~**Hit-tested canvas taps for `tapZone` nodes**~~ DONE — `useTapZoneHitTest`. Native iOS / Android runtimes will reimplement against their platform touch APIs and the same `ContourSamples` shape.
+- **WASM Rust+wgpu core.** Phase-3 work per `product-vision.mdc → Suggested ordering`. Current `@effects/player` is the contract that survives that swap.
+- **Multiple players sharing one Pixi App / GL context.** Each `EffectPlayer.create` allocates its own. Resource sharing is a future optimisation.
+
+## Pitfalls
+
+- Importing React anywhere under `packages/player/` → kills the Tier-3 contract. Keep React-free so it survives WASM extraction.
+- Exporting a SupplierConfig from a non-supplier flow without `polygon` → published config looks fine, but Tier-3 player quietly falls back to spawning the SAM worker on first use → ~150 MB native memory + multi-second startup latency on mobile. Always export configs from the supplier app where the polling loop in `SegmentationInput` writes the polygon back. Programmatic configs (CLI, fixture) must pre-compute the polygon.
+- Removing `shader.destroy(false)` from `EffectProcessor.execute` → re-introduces the BindGroup leak.
+- Calling `setImage` with a cross-origin URL → engine uses `Assets.load(url)`; without CORS headers the browser blocks the texture upload. Use data URLs for self-contained portability.
+- Mixing the two display sinks on one engine → `streamPublishRootToScreen` calls `renderer.resize(w, h)` on the GL backbuffer; if you ALSO have `streamPublishRootToCanvas` running it extracts from a re-sized backbuffer. Pick one sink per engine.
+- Using `mountCanvas` mode without owning the canvas's CSS layout → `renderer.resize(w, h)` only changes `canvas.width / canvas.height` (the backing buffer). Need `objectFit: contain` (or similar) so the visible box adapts to the buffer aspect.
+- Mutating `getConfig()` return value directly → does NOT propagate to the engine. Always go through `setField` / `setImage` / `setText` / `setConfig`.
+- Forgetting `player.destroy()` → leaks a Pixi `Application`, an offscreen canvas in the DOM, a per-frame extract loop. In React, do it in the cleanup of the same effect that called `create`.
+- Reusing one `canvas` across multiple `EffectPlayer.create` calls without destroying the previous → both players write to the same canvas, last-write-wins flicker. Always destroy first.
+
+## Maintenance contract
+
+When you change this subsystem (file layout, public surface, EffectPlayer API, SupplierConfig shape, applyOverride semantics), update this rule in the same change. Also update:
+- `project-overview.mdc → Directory Structure`.
+- `product-vision.mdc → Tier 3`.
+- `supplier-app.mdc` — its `applyOverrides` / `canvas-sink` / `SupplierConfig` / `exporter` references point at `@effects/player`.
+- `publish-plane.mdc` if the consumer side adds requirements on the published surface.

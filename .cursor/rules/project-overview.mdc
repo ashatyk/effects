@@ -7,30 +7,40 @@ alwaysApply: true
 
 ## What This Is
 
-A browser-based visual node editor for building GPU image-effect pipelines. Users create processing graphs by wiring nodes on a React Flow canvas; each node is backed by a **processor** that runs shader / compute logic via PixiJS (WebGL2) and publishes typed outputs downstream. The engine executes the entire graph every frame in topological order, enabling real-time preview of multi-pass shader effects, segmentation, contour extraction, and animation.
+A **monorepo (npm workspaces)** that ships three apps over a shared GPU-effects runtime:
 
-The app is a single-page tool — there is one route (`/`) that renders the `NodeEditor`.
+- `apps/editor` — Tier-1 author-side **node editor** (React Flow + PixiJS). Wire processors; the engine executes the graph every frame in topological order. Toolbar Publish writes a `PublishedPipeline.json` for downstream consumers.
+- `apps/supplier` — Tier-2 **supplier app**. Loads a `PublishedPipeline.json`, renders a curated form (image upload, simplified SAM segmentation, per-FieldDef widgets, tap-zone summary), runs the same `DataflowEngine` for live preview, exports `<effectId>-<timestamp>.config.json` for Tier-3. See `supplier-app.mdc`.
+- `apps/player` — Tier-3 **web player demo**. Mounts `EffectPlayer` against pipeline + optional config; sidebar of EMIT buttons for `eventEmitter` nodes; native canvas hit-test for `tapZone` nodes. Integration acceptance test for any partner integration. See `player.mdc`.
 
-> **Maintenance contract (every agent reads this).** This document and `product-vision.mdc` are the canonical map of the codebase. They are part of the deliverable. Whenever you finish a task that changes processor count, effect catalog, slot layout, persistence shape, directory layout, snapshot schema, animation pool semantics, or any other invariant described here — **update the affected sections of these two files in the same change**. Out-of-date rules cost more debugging time than the documentation update. If you intentionally diverge from a rule, rewrite the rule; do not leave the codebase contradicting it.
+All three consume three shared workspace packages:
+- `packages/runtime` — framework-agnostic core: `DataflowEngine`, processor catalog, effect manifests, `pipeline/`, `publish.ts`, SAM worker. No React, no MUI, no @xyflow/react.
+- `packages/player` — framework-agnostic Tier-3 web runtime: `EffectPlayer` facade + `applyOverrides` + canvas-sink + `SupplierConfig` + JSON I/O. No React.
+- `packages/ui` — shared MUI widgets + dark `theme`. No engine deps.
+
+> **Maintenance contract.** This document and `product-vision.mdc` are the canonical map of the codebase. When you change processor count, effect catalog, slot layout, persistence shape, directory layout, snapshot schema, animation pool semantics, or any other invariant — **update both files in the same change**. Out-of-date rules cost more debugging time than the documentation update. If you intentionally diverge from a rule, rewrite the rule.
 
 ## Domain rules (companion `.mdc` files)
 
-The detailed reference for every subsystem lives in dedicated rules under `.cursor/rules/`. All are `alwaysApply: true`, so they're already in your context — these short bullets are pointers, not duplications.
+Detailed reference lives in dedicated rules under `.cursor/rules/` (all `alwaysApply: true`). These pointers are not duplications.
 
 | Topic | File | Read before |
 |-------|------|-------------|
 | Long-term tier vision, T2/T3 plumbing roadmap, architectural invariants | `product-vision.mdc` | Cross-tier or architectural changes. |
-| Dataflow engine — `DataflowEngine`, `BaseProcessor`, GPU helpers, lifecycle, FPS gate, dirty propagation, subscriber preservation | `node-engine.mdc` | Touching `node-engine/*` or adding/refactoring a processor. |
-| Animation pipeline — Pulse/Signal/ChannelSignal, Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool | `animation-system.mdc` | Changing animation processors, signal types, or shader-side animation contracts. |
-| Geometry pipeline — segmentation → contourResample → sdfFromContour / contourPreview / instanced effects, `ContourSamples` shape | `geometry-contour.mdc` | Any contour/SDF/instanced-pass work. |
-| Text composition — `text` + `textStyle` + `textStrip`, `TEXT` / `TEXT_STYLE` slots, breaking change for old snapshots | `text-composition.mdc` | Text input UX or downstream text consumers. |
-| Effect manifest format & runtime — `PlaygroundConfig`, fullscreen vs instanced passes, ribbon scrolling, texture pool, animation pool, canonical noise, shader conventions | `effects-and-shaders.mdc` | Adding/editing effects, passes, or any GLSL. |
-| UI/views layer — `NodeEditor`, `BaseNodeShell`, `EditableStepEdge`, contexts, hooks, widgets, theme, grid alignment, headless rendering | `ui-views.mdc` | Editor surface, node views, or widget changes. |
-| Persistence — Dexie schema, `SceneSnapshot`, undo/redo cursor, blob storage, debounced auto-save, ID counter healing | `persistence.mdc` | Snapshot shape, history flow, or any persisted field. |
-| Per-processor reference (all 25 nodes — type, slots, params, behaviour, caches, edge cases) | `processors-catalogue.mdc` | Editing or wiring any processor. |
-| Per-effect reference (all 8 manifests — passes, fields, slots, composition tricks) | `effects-catalogue.mdc` | Tuning, debugging, or extending an effect. |
+| Dataflow engine — `DataflowEngine`, `BaseProcessor`, GPU helpers, lifecycle, FPS gate, dirty propagation, subscriber preservation | `node-engine.mdc` | `node-engine/*` or processor refactor. |
+| Animation pipeline — Pulse/Signal/ChannelSignal, Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool | `animation-system.mdc` | Animation processors, signal types, shader-side animation contracts. |
+| Geometry pipeline — segmentation → contourResample → sdfFromContour / contourPreview / instanced effects, `ContourSamples` | `geometry-contour.mdc` | Any contour/SDF/instanced-pass work. |
+| Text composition — `text` + `textStyle` + `textStrip`, `TEXT` / `TEXT_STYLE` slots | `text-composition.mdc` | Text input UX or downstream text consumers. |
+| Effect manifest format & runtime — `PlaygroundConfig`, fullscreen vs instanced passes, ribbon scrolling, texture pool, animation pool, canonical noise, shader conventions | `effects-and-shaders.mdc` | Adding/editing effects, passes, GLSL. |
+| UI/views layer — `NodeEditor`, `BaseNodeShell`, `EditableStepEdge`, contexts, hooks, widgets, theme, grid alignment, headless rendering | `ui-views.mdc` | Editor surface, node views, widgets. |
+| Persistence — Dexie schema, `SceneSnapshot`, undo/redo cursor, blob storage, debounced auto-save, ID counter healing, `data.exposed`, `manifestVersion` | `persistence.mdc` | Snapshot shape, history flow, persisted fields. |
+| Per-processor reference (29 nodes — type, slots, params, behaviour, caches, edge cases) | `processors-catalogue.mdc` | Editing or wiring any processor. |
+| Per-effect reference (8 manifests — passes, fields, slots, composition tricks) | `effects-catalogue.mdc` | Tuning, debugging, extending an effect. |
+| Tier-2 publish plane — `publishRoot` / `tapZone`, `data.exposed`, `derivePublishedSurface`, `PublishedPipeline` schema | `publish-plane.mdc` | Publish surface, supplier-facing metadata, T2/T3 contracts. |
+| Tier-2 supplier app — `apps/supplier` layout, runtime wiring, simplified SAM widget, `SupplierConfig` shape, Export/Import contract | `supplier-app.mdc` | Supplier UX or `SupplierConfig` handoff. |
+| Tier-3 web runtime — `packages/player` (`@effects/player`), `EffectPlayer` facade, `applyOverrides` + `canvas-sink` + `SupplierConfig` + JSON I/O, `apps/player` demo | `player.mdc` | Tier-3 contract, runtime helpers, player demo. |
 
-**Maintenance contract extends to all of these.** When you change a subsystem, update the matching domain rule in the same edit, not "later". Stale rules are worse than missing rules.
+**Maintenance contract extends to all of these.** Update the matching domain rule in the same edit.
 
 ---
 
@@ -44,343 +54,329 @@ The detailed reference for every subsystem lives in dedicated rules under `.curs
 | Graph editor | @xyflow/react (React Flow) | 12 |
 | GPU rendering | PixiJS (WebGL2 preference) | 8 |
 | UI components | MUI + Emotion | 9 |
-| Fonts | JetBrains Mono Variable (primary), Inter Variable | @fontsource |
+| Fonts | JetBrains Mono Variable, Inter Variable | @fontsource |
 | Persistence | Dexie (IndexedDB wrapper) | 4 |
 | Geometry | polygon-clipping | 0.15 |
 | Routing | react-router-dom | 7 |
-| ML | SAM (Segment Anything) via web worker |
+| ML | SAM (Segment Anything) via web worker | |
 
-No Tailwind, no shadcn. Styling is MUI `sx` prop + plain CSS files in `flow-nodes/styles/`. The MUI theme (`src/theme.ts`) is a custom dark theme with Geist/Vercel-inspired tokens, monospace typography (JetBrains Mono 700), 6px spacing unit, and dense control sizing.
-
----
-
-## Directory Structure
-
-```
-src/
-├── main.tsx                    # React root + MUI ThemeProvider + CssBaseline
-├── App.tsx                     # BrowserRouter → "/" → NodeEditor
-├── theme.ts                    # Dark MUI theme (Geist palette, JetBrains Mono)
-├── index.css                   # Global reset + body defaults
-│
-├── node-engine/                # ★ Core dataflow engine (framework-agnostic)
-│   ├── types.ts                # SLOT enum, signal types, ProcessorDef, IDataflowEngine
-│   ├── dataflow-engine.ts      # DataflowEngine class — graph, topo sort, tick loop, GPU helpers
-│   ├── scene-store.ts          # Dexie DB (snapshots table + blobs table), SceneStore API
-│   ├── processors/
-│   │   ├── base-processor.ts   # Abstract BaseProcessor — RT management, val/resolveRes helpers
-│   │   ├── index.ts            # PROCESSOR_CATALOG: registry of all processor entries
-│   │   ├── image.ts            # ImageProcessor — load image URL → texture
-│   │   ├── blur.ts             # Box/Gaussian/SDF blur with separable GLSL + ping-pong
-│   │   ├── effect.ts           # EffectProcessor — multi-pass shader compositor (alwaysDirty)
-│   │   ├── segmentation.ts     # SAM web worker → polygon mask
-│   │   ├── envelope.ts         # Pulse → shaped Signal (attack/decay/sustain/release)
-│   │   ├── animation-controller.ts  # Universal 8-slot controller (raw 0..1 → mapped value)
-│   │   ├── noise-visualizer.ts # Pattern-warped fbm preview (chess / stripes), driven by Signal
-│   │   ├── log.ts              # Effect metrics sink — per-pass CPU + GPU dispatch timings (EMA)
-│   │   └── ... (27 processors total — see PROCESSOR_CATALOG)
-│   └── render/
-│       └── instanced-mesh.ts   # Instanced geometry builder for ribbon/particle passes
-│
-├── effects/                    # Named effect presets (PlaygroundConfig manifests + GLSL)
-│   ├── index.ts                # exports effects: PlaygroundConfig[] (8 entries)
-│   ├── marching-ants/          # config.ts + ribbon.vert.ts + ribbon.frag.ts
-│   ├── text-orbit/             # config.ts + ribbon.vert/frag
-│   ├── text-grid-orbit/        # config.ts + fragment.ts
-│   ├── dot-orbit/              # config.ts + dot.vert/frag + dot.glow.frag
-│   ├── dot-grid-orbit/         # config.ts + fragment.ts
-│   ├── god-rays/               # config.ts + fragment.ts
-│   ├── light-beam/             # config.ts + fragment.ts
-│   └── ping-pong-morphing/     # config.ts + fragment.ts
-│
-├── pipeline/                   # Shared shader infrastructure
-│   ├── types.ts                # PlaygroundConfig, EffectPass, FieldDef, SlotDef, TextureSlotDef, ANIMATION_CHANNEL_COUNT, TEXTURE_CHANNEL_COUNT
-│   ├── default-vertex.ts       # Fullscreen quad vertex shader
-│   ├── coords.ts               # Coordinate texture builder
-│   ├── uniforms.ts             # Uniform packing helpers
-│   ├── noise.glsl.ts           # Canonical noise chunk (hash21, valueNoise2D, fbm2D)
-│   └── passes/                 # Reusable fragment shaders (SDF blur, copy-source)
-│
-├── engine/                     # External ML workers
-│   └── sam/                    # SAM (Segment Anything) worker factory + types
-│
-└── components/
-    ├── NodeEditor.tsx           # Main editor: ReactFlow + engine init + toolbar + sidebar
-    ├── node-editor.css          # Editor layout + React Flow chrome overrides
-    │
-    ├── node-editor/             # Editor sub-components and hooks
-    │   ├── constants.ts         # GRID_SIZE (20), snapToGrid, nextId, maxNodeIdNumber, SLOT_COMPAT
-    │   ├── menuGroups.ts        # "Add Node" popover menu structure (9 groups, hidden processors filtered out)
-    │   ├── NodeEditorToolbar.tsx # Toolbar: back, undo/redo, export/import/clear, pin toggle, FPS cap
-    │   ├── AddNodePopover.tsx   # Context-menu popover for adding nodes
-    │   └── hooks/
-    │       ├── usePipelineEngine.ts     # Pixi Application init + DataflowEngine lifecycle + Dexie restore
-    │       ├── useSceneHistory.ts       # Serialize, snapshot, persist blobs, undo/redo
-    │       ├── useNodeEditorShortcuts.ts # Cmd+Z/Y undo/redo, Cmd+C/V copy/paste
-    │       └── useEdgeColouring.ts      # Edge stroke colour from source node category
-    │
-    └── flow-nodes/              # All custom React Flow node infrastructure
-        ├── nodeTypes.ts         # Registry mapping processor id → React component (27 entries)
-        ├── BaseNodeShell.tsx    # Node chrome: coloured header, handles, pin button, NodeResizer
-        ├── EditableStepEdge.tsx # Custom orthogonal edge with draggable bend points
-        ├── NodePinSidebar.tsx   # Right sidebar showing pinned nodes in headless mode
-        ├── categoryColors.ts   # Accent colour per category (8 live categories + 6 legacy aliases)
-        ├── types.ts             # PipelineNodeData interface
-        │
-        ├── context/             # React contexts
-        │   ├── EngineContext.tsx     # DataflowEngine provider + useEngine() hook
-        │   ├── PinContext.tsx        # Pin state provider + usePinning() hook
-        │   ├── NodeIdContext.tsx     # Override node ID for headless rendering
-        │   └── HeadlessNodeContext.tsx # Boolean flag: headless vs graph mode
-        │
-        ├── hooks/               # Reusable hooks for node views
-        │   ├── useSetParam.ts       # Update a single param → engine.updateNodeParams
-        │   ├── useNodeOutputs.ts    # Subscribe to processor outputs (re-render on change)
-        │   └── useCanvasFill.ts     # Canvas sizing + DPR awareness
-        │
-        ├── widgets/             # Form widgets for node parameter UIs
-        │   ├── index.ts             # Barrel re-export
-        │   ├── constants.ts         # CSS variable tokens (text colours, label width)
-        │   ├── Field.tsx            # Label + content grid layout
-        │   ├── NumberField.tsx      # Numeric input with step/min/max
-        │   ├── TextFieldRow.tsx     # Text/multiline input
-        │   ├── SelectField.tsx      # Dropdown select
-        │   ├── SwitchField.tsx      # Boolean toggle
-        │   ├── SliderField.tsx      # Slider + numeric readout
-        │   ├── ColorField.tsx       # Colour picker swatch
-        │   ├── ActionButton.tsx     # Primary / secondary action button
-        │   ├── StatusLine.tsx       # Status text (normal/muted/error)
-        │   └── SectionTitle.tsx     # Uppercase section heading
-        │
-        ├── styles/              # Scoped CSS (non-module, class-based)
-        │   ├── node-card.css        # .pn card chrome, header, handles, widgets, resize handles
-        │   ├── node-card-mui.css    # MUI overrides scoped to .pn nodes
-        │   ├── editable-edge.css    # Orthogonal edge and bend-point styles
-        │   └── pin-sidebar.css      # Sidebar card styles
-        │
-        └── views/               # Per-processor UI components (24 files, one per processor)
-            ├── ImageNodeView.tsx
-            ├── BlurNodeView.tsx
-            ├── EffectNodeView.tsx
-            ├── PreviewNodeView.tsx
-            ├── SegmentationNodeView.tsx
-            ├── AnimationControllerNodeView.tsx
-            └── ... (each wraps BaseNodeShell + widgets)
-```
+No Tailwind, no shadcn. Styling is MUI `sx` + plain CSS files in `flow-nodes/styles/`. Custom dark theme (`packages/ui/src/theme.ts`) — Geist/Vercel-inspired tokens, monospace typography (JetBrains Mono 700), 6px spacing unit, dense control sizing.
 
 ---
 
-## Dataflow Engine (`node-engine/dataflow-engine.ts`)
+## Directory Structure (workspace layout)
+
+```
+/ (npm workspaces root)
+├── package.json                # workspaces: ["apps/*", "packages/*"]; scripts: dev:editor, dev:supplier, dev:player
+├── tsconfig.base.json          # shared compilerOptions (strict + bundler mode)
+├── tsconfig.json               # references to every package/app for IDE
+│
+├── packages/
+│   ├── runtime/                # ★ Framework-agnostic GPU runtime
+│   │   ├── package.json        # @effects/runtime; deps: pixi.js + polygon-clipping ONLY
+│   │   └── src/
+│   │       ├── index.ts        # types, DataflowEngine, processors, effects, publish, sam
+│   │       ├── publish.ts      # `derivePublishedSurface({ nodes, edges })`
+│   │       ├── node-engine/
+│   │       │   ├── types.ts            # SLOT enum, signal types, ProcessorDef, IDataflowEngine
+│   │       │   ├── dataflow-engine.ts  # graph + topo sort + tick loop + GPU helpers
+│   │       │   ├── processors/
+│   │       │   │   ├── base-processor.ts
+│   │       │   │   ├── index.ts        # PROCESSOR_CATALOG (29 entries)
+│   │       │   │   └── image.ts, blur.ts, effect.ts, segmentation.ts, envelope.ts,
+│   │       │   │       animation-controller.ts, noise-visualizer.ts, log.ts,
+│   │       │   │       publish-root.ts, tap-zone.ts, ... (29 total)
+│   │       │   └── render/
+│   │       │       └── instanced-mesh.ts
+│   │       ├── effects/        # PlaygroundConfig manifests + GLSL (8 entries)
+│   │       ├── pipeline/       # Renderer-agnostic shader infra (FieldDef, default-vertex, noise, passes/)
+│   │       └── sam/            # SAM web worker factory + types
+│   │
+│   ├── player/                 # ★ Framework-agnostic Tier-3 web runtime — see player.mdc
+│   │   ├── package.json        # @effects/player; deps: @effects/runtime + pixi.js ONLY (no React)
+│   │   └── src/
+│   │       ├── index.ts             # EffectPlayer, applyOverrides, sinks, SupplierConfig, exporter, createEngine
+│   │       ├── EffectPlayer.ts      # facade (create / setConfig / setField / setImage / setText / emit / pause / resume / destroy)
+│   │       ├── createEngine.ts      # Pixi App + DataflowEngine bootstrap (attached + offscreen modes)
+│   │       ├── applyOverrides.ts    # applyOverride.* granular + applyAllOverrides bulk
+│   │       ├── screen-sink.ts       # streamPublishRootToScreen — direct backbuffer (zero-copy)
+│   │       ├── canvas-sink.ts       # streamPublishRootToCanvas — extract path (supplier preview)
+│   │       ├── supplier-config.ts   # SupplierConfig type + SamPoint + emptyConfig()
+│   │       └── exporter.ts          # serialize / parse / download / pickConfigFile
+│   │
+│   └── ui/                     # ★ Shared MUI widgets + theme
+│       ├── package.json        # @effects/ui; deps: react, mui, emotion ONLY
+│       └── src/
+│           ├── index.ts        # widgets + theme + geist palette
+│           ├── theme.ts        # Dark MUI theme (Geist palette, JetBrains Mono)
+│           └── widgets/        # SliderField, ColorField, NumberField, TextFieldRow,
+│                               #   SelectField, SwitchField, Field, ActionButton,
+│                               #   StatusLine, SectionTitle, constants
+│
+├── apps/
+│   ├── editor/                 # ★ Tier-1 author-side node editor
+│   │   ├── package.json        # @effects/editor; deps: @effects/{runtime,ui} + xyflow + dexie + mui + ...
+│   │   ├── vite.config.ts      # alias @effects/{runtime,ui} → packages source TS
+│   │   └── src/
+│   │       ├── main.tsx, App.tsx, index.css
+│   │       ├── scene-store.ts   # Dexie DB (editor-only); re-exports SerializedNode/Edge from runtime
+│   │       └── components/
+│   │           ├── NodeEditor.tsx           # ReactFlow + engine init + toolbar + tabs
+│   │           ├── node-editor/
+│   │           │   ├── PublishInspector.tsx     # Right rail
+│   │           │   ├── publish-from-pages.ts    # Editor wrapper: PageState[] → derivePublishedSurface
+│   │           │   ├── NodeEditorToolbar.tsx, NodeEditorTabs.tsx, AddNodePopover.tsx,
+│   │           │   ├── SceneContext.tsx, sceneResolver.ts, constants.ts, menuGroups.ts
+│   │           │   └── hooks/
+│   │           │       ├── usePipelineEngine.ts, useSceneHistory.ts, useNodeEditorShortcuts.ts,
+│   │           │       └── useEdgeColouring.ts, useDerivedSurface.ts
+│   │           └── flow-nodes/                  # React Flow node infra
+│   │               ├── nodeTypes.ts             # processor id → React component (30 inc. `clone`)
+│   │               ├── BaseNodeShell.tsx, EditableStepEdge.tsx, NodePinTerminal.tsx,
+│   │               ├── SceneOutlineSidebar.tsx, categoryColors.ts, types.ts
+│   │               ├── context/, hooks/ (useSetParam, useSetNodeLabel, useSetExposed, ...)
+│   │               ├── styles/ (node-card, editable-edge, pin-terminal CSS)
+│   │               └── views/                   # Per-processor UI (one tsx per processor)
+│   │
+│   ├── supplier/               # ★ Tier-2 supplier app (see supplier-app.mdc)
+│   │   ├── package.json        # @effects/supplier; deps: @effects/{runtime,player,ui} + react + mui + pixi
+│   │   └── src/
+│   │       ├── main.tsx, App.tsx, index.css
+│   │       ├── pages/ (ManifestPickerPage, SupplierPage)
+│   │       ├── components/ (SupplierToolbar, ImageSlotInput, SegmentationInput,
+│   │       │                FieldInput, WholeNodeInput, EventTriggerList, TextInput,
+│   │       │                PreviewCanvas)
+│   │       └── runtime/useSupplierRuntime.ts   # thin React adapter over @effects/player → createEngine
+│   │
+│   └── player/                 # ★ Tier-3 player demo (see player.mdc)
+│       ├── package.json        # @effects/player-demo
+│       └── src/
+│           ├── main.tsx, App.tsx, index.css
+│           ├── components/EventEmitterButtons.tsx
+│           ├── hooks/useTapZoneHitTest.ts
+│           └── pages/
+│               ├── ManifestPickerPage.tsx
+│               └── PlayerPage.tsx
+```
+
+> **Old single-package layout (pre-Tier-2)**: prior to the workspace split, everything lived in a single `src/`. Doc/comment references to `src/node-engine/...` or `src/components/...` map to `packages/runtime/src/node-engine/...` and `apps/editor/src/components/...` respectively. Internal structure is unchanged.
+
+### Per-area subtree references
+
+**`packages/runtime/src/effects/`** — 8 effect manifests (`marching-ants`, `text-orbit`, `text-grid-orbit`, `dot-orbit`, `dot-grid-orbit`, `god-rays`, `light-beam`, `ping-pong-morphing`). `index.ts` exports `effects: PlaygroundConfig[]`. See `effects-catalogue.mdc`.
+
+**`packages/runtime/src/pipeline/`** — fully **renderer-agnostic** (no Pixi imports). `types.ts` (`PlaygroundConfig`, `EffectPass`, `FieldDef`, `SlotDef`, `TextureSlotDef`, `ANIMATION_CHANNEL_COUNT`, `TEXTURE_CHANNEL_COUNT`), `default-vertex.ts`, `uniforms.ts`, `noise.glsl.ts`, `passes/` (reusable SDF blur + copy-source). The previous `coords.ts` (returned a Pixi `Texture`) was moved to `node-engine/render/coords-texture.ts`.
+
+**`packages/runtime/src/sam/`** — `create-worker.ts` (lazy SAM web worker factory) + `types.ts`.
+
+**`apps/editor/src/components/node-editor/`** — `constants.ts` (`GRID_SIZE = 20`, `snapToGrid`, `nextId`, `maxNodeIdNumber`, `SLOT_COMPAT`), `menuGroups.ts` (Add-Node popover, 10 groups), `sceneResolver.ts` (`PageState`, `resolveSceneForEngine`, `findOriginAcrossPages`, `buildResolvedAdjacency`, `wouldCreateCycle`, page-id minting), `SceneContext.tsx`, `publish-from-pages.ts` (editor wrapper around `derivePublishedSurface` + `publishStructuralHash`), `PublishInspector.tsx`, `NodeEditorToolbar.tsx`, `NodeEditorTabs.tsx`, `AddNodePopover.tsx`, `hooks/` (`usePipelineEngine`, `useSceneHistory`, `useNodeEditorShortcuts`, `useEdgeColouring`, `useDerivedSurface`).
+
+**`apps/editor/src/components/flow-nodes/`** — `nodeTypes.ts` (30 entries inc. `clone`), `BaseNodeShell.tsx`, `EditableStepEdge.tsx`, `NodePinTerminal.tsx`, `SceneOutlineSidebar.tsx`, `categoryColors.ts`, `types.ts` (`PipelineNodeData` with `cloneOf?`, `label?`, `exposed?`), `context/` (`EngineContext`, `PinContext`, `NodeIdContext`, `HeadlessNodeContext`), `hooks/` (`useSetParam`, `useSetNodeLabel`, `useSetExposed`, `useNodeOutputs`, `useCanvasFill`), `styles/`, `views/` (one tsx per processor).
+
+**`packages/ui/src/widgets/`** (used by editor + supplier) — `Field`, `NumberField`, `TextFieldRow`, `SelectField`, `SwitchField`, `SliderField`, `ColorField`, `ActionButton`, `StatusLine`, `SectionTitle`, `constants.ts`.
+
+**`apps/editor/src/scene-store.ts`** — Dexie DB (snapshots + blobs) + `SceneStore`. Re-exports `SerializedNode` / `SerializedEdge` from `@effects/runtime`; adds editor-only `SceneSnapshot` / `SerializedPage` / `BlobEntry`.
+
+---
+
+## Dataflow Engine
 
 ### Lifecycle
 
-1. `DataflowEngine(app: Application)` — takes a hidden offscreen Pixi app.
-2. `addNode(nodeId, processorType, initialParams)` — instantiates processor from `PROCESSOR_CATALOG`, stores initial params.
+1. `DataflowEngine(app: Application)` — takes a Pixi app (offscreen for editor/supplier preview, attached for the player).
+2. `addNode(nodeId, processorType, initialParams)` — instantiates from `PROCESSOR_CATALOG`.
 3. `setEdges(edges)` — rebuilds adjacency + **Kahn's topological sort**; marks everything dirty.
 4. `start()` — begins `requestAnimationFrame` loop.
 
 ### Tick (every frame)
 
-1. **FPS gate**: if `targetFps > 0`, skip until `now - lastTickAt >= 1000/targetFps - 0.5ms`. The 0.5ms slack stops a 60fps cap from dropping every other frame to 30fps because of rAF jitter.
-2. Mark `alwaysDirty` processors (animation, effect).
+1. **FPS gate**: if `targetFps > 0`, skip until `now - lastTickAt >= 1000/targetFps - 0.5ms`. Slack stops a 60fps cap from dropping every other frame to 30fps because of rAF jitter.
+2. Mark `alwaysDirty` processors.
 3. Skip if no dirty nodes.
 4. For each dirty node in **topological order**:
-   - `gatherInputs()` — reads upstream `outputCache[source][sourceHandle]` into `inputs[targetHandle]`.
-   - `proc.execute(inputs, params, engine)` → returns output record.
-   - Store in `outputCache`; notify React subscribers (`subscribeNode` callbacks).
+   - `gatherInputs()` reads upstream `outputCache[source][sourceHandle]` → `inputs[targetHandle]`.
+   - `proc.execute(inputs, params, engine)` → output record.
+   - Store in `outputCache`; notify React subscribers.
 5. Clear dirty set.
 
-### FPS cap (`setTargetFps`)
+### FPS cap
 
-`DataflowEngine.setTargetFps(fps)` throttles graph evaluation. `0` = uncapped (rAF native rate). Toolbar dropdown drives this; the choice is persisted in `localStorage["nodeEditor.fps.v1"]`. Only graph evaluation is capped — rAF still drives compositing of static frames, so the canvas doesn't stutter visually.
+`setTargetFps(fps)` throttles graph evaluation. `0` = uncapped. Toolbar dropdown drives it; persisted to `localStorage["nodeEditor.fps.v1"]`. Only graph evaluation is capped — rAF still composites, so static frames don't stutter visually.
 
 ### Dirty propagation
 
-`markDirty(nodeId)` — BFS walks downstream via adjacency, marking all descendants dirty. Called on param change, edge change, or by `alwaysDirty` nodes.
+`markDirty(nodeId)` BFSes downstream via adjacency. Called on param change, edge change, or by `alwaysDirty` nodes.
 
 ### Subscriber preservation across snapshots
 
-`engine.subscribeNode(id, cb)` keys listeners by **node id**, not by processor instance. `applySnapshot` (undo/redo, scene import) tears down every processor and immediately re-adds nodes with the same ids; the React views stay mounted with stable `[engine, id]` deps so their subscribe-effects never re-fire. Therefore `removeNode` must **not** drop the `nodeListeners` entry — if it did, the rebuilt processors would publish into an empty set and previews / metrics widgets / output-reading nodes would freeze on the pre-undo frame. The unsubscribe closure deletes the empty Set entry once the last listener detaches, so permanently-removed nodes don't leave dangling state. Don't reintroduce `nodeListeners.delete(id)` inside `removeNode` — it's the cause of the historical "previews freeze after undo" bug.
+`engine.subscribeNode(id, cb)` keys listeners by **node id**, not processor instance. `applySnapshot` tears down every processor and re-adds nodes with same ids; React views with stable `[engine, id]` deps never re-fire. Therefore `removeNode` must **not** drop the `nodeListeners` entry — historical "previews freeze after undo" bug.
 
 ### GPU helpers
 
-- `renderPass(fragment, resources, w?, h?) → RenderTexture` — creates a fullscreen quad `Mesh` with `Shader.from({ gl: { vertex: DEFAULT_VERTEX, fragment }, resources })`, renders to a new RT.
-- `renderPassInto(target, fragment, resources)` — same but renders into an existing RT.
-- Geometry is cached per `(w, h)` key (simple quad: 2 triangles).
+- `renderPass(fragment, resources, w?, h?) → RenderTexture` — fullscreen quad `Mesh` with `Shader.from({ gl: { vertex: DEFAULT_VERTEX, fragment }, resources })`.
+- `renderPassInto(target, fragment, resources)` — renders into an existing RT.
+- Geometry cached per `(w, h)` key.
 
 ---
 
-## Processor System (`node-engine/processors/`)
+## Processor System
 
 ### BaseProcessor (abstract)
 
 - `def: ProcessorDef` — type, title, category, input/output handles, defaultParams.
-- `execute(inputs, params, engine) → Record<string, any>` — pure computation per frame.
-- `alwaysDirty: boolean` — if `true`, the engine marks this node dirty every frame.
-- RT management: `ensureRT(w, h)`, `ensurePing(w, h)`, `ensurePong(w, h)` — reuses `RenderTexture` when dimensions match, destroys on resize.
-- `val(inputs, params, key, fallback)` — priority: connected input > widget param > fallback.
-- `resolveRes(inputs, params, engine)` — resolution priority: explicit width/height > `source` texture > `sdf`/`coords_tex` > any texture > engine defaults (900x1200).
+- `execute(inputs, params, engine) → Record<string, any>`.
+- `alwaysDirty: boolean` — engine marks dirty every frame.
+- RT pool: `ensureRT(w, h)`, `ensurePing(w, h)`, `ensurePong(w, h)`.
+- `val(inputs, params, key, fallback)` — priority: connected input > param > fallback.
+- `resolveRes(inputs, params, engine)` — explicit width/height > `source` texture > `sdf`/`coords_tex` > any texture > engine defaults (900x1200).
 
 ### Slot Types
 
-`TEXTURE`, `NUMBER`, `VEC`, `CONFIG`, `CONTOUR`, `EVENT`, `SIGNAL`, `ANIMATION`, `METRICS`, `TEXT`, `TEXT_STYLE`, `ANY` (wildcard). Connection validation uses `SLOT_COMPAT` table in `node-editor/constants.ts`. `TEXT_STYLE` is intentionally distinct from `CONFIG` so users can't accidentally wire a typography preset into an effect's `config` input. There is no separate `POLYGON` slot — geometry flows as `CONTOUR` (ContourSamples SoA) end-to-end; the legacy `polygon` processor that packed raw points into a coords texture has been removed.
+`TEXTURE`, `NUMBER`, `VEC`, `CONFIG`, `CONTOUR`, `EVENT`, `SIGNAL`, `ANIMATION`, `METRICS`, `TEXT`, `TEXT_STYLE`, `ANY`. Connection validation in `node-editor/constants.ts → SLOT_COMPAT`. `TEXT_STYLE` distinct from `CONFIG` so a typography preset can't be wired into an effect's `config`. There's no `POLYGON` slot — geometry flows as `CONTOUR` (`ContourSamples` SoA) end-to-end.
 
 ### Signal Types
 
-- `EventSignal` — discrete event: `{ count, lastTimestampMs, lastX?, lastY? }`.
-- `Signal` — continuous driver from Timer / Interpolator / Envelope / Combine: `{ value, time, age, state, lastTimestampMs }`. `value` is the user-controlled waveform output (clamped or unbounded depending on mode); `time` is the source-internal monotonic ms clock and is **not** propagated to shaders directly — see "Animation Channels" below.
-- `ChannelSignal` — per-channel packet emitted by `AnimationController`: `{ time, raw, value, state }`. Note: `time` here carries the upstream `Signal.value` (unclamped), **not** the upstream `Signal.time` ms — keeping it as user-controlled drive is what makes a paused Timer actually freeze the channel and `unbounded` mode grow it linearly.
+- `EventSignal` — discrete: `{ count, lastTimestampMs, lastX?, lastY? }`.
+- `Signal` — continuous from Timer / Interpolator / Envelope / Combine: `{ value, time, age, state, lastTimestampMs }`. Consumers read `.value`, never `.time` (time keeps growing through paused intervals — see `animation-system.mdc`).
+- `ChannelSignal` — emitted by AnimationController per channel: `{ time, raw, value, state }`. Note: `time` here carries upstream `Signal.value` (unclamped), NOT `Signal.time`.
 - `AnimationSignal` — `{ channels: Record<string, ChannelSignal> }`.
-- `EffectMetrics` — per-frame profiler payload from EffectProcessor: `{ effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }`. `PassMetric` carries `{ id, kind, cpuMs, skipped }`.
+- `EffectMetrics` — `{ effectName, totalMs, cpuMs, gpuDispatchMs, passes: PassMetric[], timestampMs }`.
 
-### Processor Categories & Catalog (27 types)
+### Processor Catalog (29 types)
 
 **Input** (6): `number`, `constantSignal`, `image`, `text`, `textStyle`, `textStrip`
 **Image ops** (4): `blur`, `remap`, `blend`, `denoise`
-**Contour** (3): `segmentation` (TEXTURE → CONTOUR via SAM), `contourResample` (Chaikin/Laplacian smoothing, arc-length resampling), `sdfFromContour` (CONTOUR → SDF TEXTURE)
-**Animation triggers** (2): `eventEmitter` (on-demand EventSignal source — EMIT button, no canvas listener), `timer` (linear-phase time source: looped saw or unbounded growth, with `paused` toggle)
-**Animation modulators** (4): `envelope` (event → shaped signal), `interpolator` (signal → profile-shaped signal: linear/sine/triangle/bell/gaussian/pulse), `combineSignals` (add/max/min/mul/mix), `signalSwitch` (two SIGNALs cross-faded by an EVENT control — each event toggles A↔B with separate A→B / B→A duration + easing profiles)
-**Animation controllers** (2): `animationController` — universal 8-slot mapper. Inputs `signal_0..signal_7` (raw 0..1) plus optional `config` (CONFIG, supplies per-effect slot labels and default min/max). Output `animation: AnimationSignal` keyed by index strings `'0'..'7'`. Per-slot params `min_i`/`max_i`. (Output handle is named `animation` — not `signal` — so it doesn't visually collide with the SIGNAL-typed `signal` outputs of Timer / Interpolator / Combine / SignalSwitch.) `animationSwitch` — two-input cross-fade between two whole AnimationSignal packets, gated by a discrete EVENT, with per-direction transition duration + easing profile (same UX as `signalSwitch` but applied to every channel of the pool at once); use to swap whole controller presets on a single Emit instead of fanning out 8 SignalSwitches.
-**Output** (3): `effect` (multi-pass shader compositor; emits `texture` + `metrics`), `preview` (pass-through + canvas extract), `contourPreview`
-**Utility** (3): `config` (effect selection + params passthrough), `noiseVisualizer` (pattern-warp preview of canonical fbm), `log` (effect timing inspector)
+**Contour** (3): `segmentation`, `contourResample`, `sdfFromContour`
+**Animation triggers** (3): `eventEmitter`, `tapZone`, `timer`
+**Animation modulators** (4): `envelope`, `interpolator`, `combineSignals`, `signalSwitch`
+**Animation controllers** (2): `animationController`, `animationSwitch`
+**Output** (4): `effect`, `preview`, `contourPreview`, `publishRoot`
+**Utility** (3): `config`, `noiseVisualizer`, `log`
+
+**`alwaysDirty` processors**: `effect`, `eventEmitter`, `tapZone`, `timer`, `envelope`, `combineSignals`, `signalSwitch`, `animationController`, `animationSwitch`. `interpolator` is intentionally NOT alwaysDirty (pure function of input). `log` rides upstream Effect's dirty propagation. `publishRoot` is a pass-through that rides upstream Effect.
+
+See `processors-catalogue.mdc` for per-processor reference. The depth-estimation (`depthEstimate`, `depthBlit`) and AI material/normals (`materialEstimate`, `marigoldDepth`, `marigoldNormals`) processors used to ship but were removed; their category strings (`depth`, `ai`, `marigold`, `dnf`, `source`, `process`) are still tolerated for snapshot back-compat.
 
 #### Text composition
 
-Text rendering used to be a single self-contained node (`textStrip` baking text + font + spacing into its own params). It is now decomposed into three nodes that communicate through the typed `TEXT` and `TEXT_STYLE` slots:
-
-- `text` — emits `text: TEXT`. Single multiline string param. One source can feed several Text Strips with the same copy.
-- `textStyle` — emits `style: TEXT_STYLE` (`{ font, letterSpacing, weight: 'regular' | 'bold', transform: 'none' | 'upper' | 'lower' }`). One preset can drive several Text Strips at once.
-- `textStrip` — consumes `text: TEXT` (required) + `style: TEXT_STYLE` (optional, falls back to a sensible default). Emits a single `texture` output; downstream consumers derive the strip aspect ratio from `texture.width / texture.height` (Effect already exposes this as `uTxcn{i}Aspect`).
-
-The previous `sdfTextAtlas` processor was removed (no live effect consumed it). Old snapshots that contain it will log `Unknown processor type: sdfTextAtlas` from `DataflowEngine.addNode` and skip it — this is intentional, the editor does not auto-migrate. Text-using snapshots saved before the split also stop rendering until the user wires the new pair of source nodes; this is the agreed clean break.
+`text` (TEXT) + `textStyle` (TEXT_STYLE) → `textStrip` (texture). See `text-composition.mdc`. Old `sdfTextAtlas` was removed (no live consumer).
 
 #### Geometry composition
 
-Polygon-shaped data is `CONTOUR` end-to-end. There is no `POLYGON` slot any more.
-
-- `segmentation` emits `contour: CONTOUR` directly — it builds a full `ContourSamples` packet (positions + tangents + arcS + totalLength + aabb + closed) from the raw SAM polygon point list and caches it by reference, so consumers can plug it straight into `contourPreview`, `contourResample`, `sdfFromContour`, or the Effect node's `contour` input without an intermediate adapter.
-- `contourResample` now takes `contour: CONTOUR` and emits a single `contour: CONTOUR` (smoothing + uniform / curvature-adaptive resampling + optional outward offset). Its previous secondary outputs (`smoothed_polygon: POLYGON`, `total_length: NUMBER`) had no live consumers and were dropped — the totalLength lives on `ContourSamples` itself.
-- The legacy `polygon` processor (file-loaded JSON polygon → `coords_tex` / `aabb` / `point_count` / `tex_dim` outputs that the SDF stage used to read) was removed. SDF generation now goes through `sdfFromContour`, which builds the coords texture internally from `ContourSamples`. The dead `coords_tex` / `aabb` / `point_count` / `tex_dim` reads have been deleted from `effect.ts`, `EffectInputName`, `BaseProcessor.resolveRes`, and `pipeline/uniforms.ts` (`applyCoordsUniforms` and the JSON-input `buildCoordsTexture` are gone).
-
-The depth-estimation (`depthEstimate`, `depthBlit`) and AI material/normals processors (`materialEstimate`, `marigoldDepth`, `marigoldNormals`) used to ship in the catalog but were removed. Their category strings (`depth`, `ai`, `marigold`, `dnf`, `source`, `process`) are still tolerated by `ProcessorDef.category` and `categoryColors.ts` as **legacy aliases** so old persisted snapshots continue to load with sensible accent colours; do not remove these aliases until snapshot migration is in place.
-
-**`alwaysDirty` processors**: `effect`, `eventEmitter`, `timer`, `envelope`, `combineSignals`, `signalSwitch`, `animationController`, `animationSwitch`. `interpolator` is intentionally **not** alwaysDirty — it's a pure function of its input and rides upstream propagation (Timer / Envelope / Combine are alwaysDirty). The `log` processor relies on dirty-propagation from upstream Effect — it's not alwaysDirty itself, so an unwired Log node sits idle and adds zero per-frame cost.
+`segmentation` emits `contour: CONTOUR` directly (full `ContourSamples` packet). `contourResample` and `sdfFromContour` chain off it. Legacy `polygon` processor + dead `coords_tex` / `aabb` / `point_count` / `tex_dim` reads were removed. See `geometry-contour.mdc`.
 
 #### Animation composition (Timer + Interpolator)
 
-The previous monolithic `autoTimer` baked clock + waveform into a single node. It is now decomposed into two complementary processors:
-
-- `timer` — pure time source. Two modes: `looped` (phase wraps `[0, 1)` every `durationMs`, saw-tooth with instant reset) and `unbounded` (`elapsed / durationMs`, grows linearly forever, ideal for monotonic shader scroll consumers). Carries `phaseOffsetMs` for staggering and a `paused` toggle that freezes the elapsed-ms accumulator without losing phase.
-- `interpolator` — shape-only complement. Consumes a SIGNAL whose `.value` is a phase, applies one of `linear | sine | triangle | bell | gaussian | pulse` (mirroring the original autoTimer modes minus `constant`), and emits a SIGNAL whose `.value` is the shaped curve sampled at `phase = frac(input.value)`. `linear` profile is a passthrough that preserves unbounded inputs intact. Pure function of input → not `alwaysDirty`.
-
-Minimal animation graph: `Timer → AnimationController → Effect`. Insert an `Interpolator` between the Timer and the controller (or anywhere downstream of any SIGNAL source) when you want a shaped waveform; omit it for raw monotonic phase. To freeze a channel: `Timer.paused = true` (combine with `phaseOffsetMs` for any static phase). Old snapshots referencing `autoTimer` log `Unknown processor type: autoTimer` from `DataflowEngine.addNode` and skip — the editor does not auto-migrate; rebuild the chain manually.
+`autoTimer` was decomposed into `timer` (pure clock — `looped` saw or `unbounded` linear, with `paused` toggle) + `interpolator` (shape-only — `linear / sine / triangle / bell / gaussian / pulse` plus discrete `steps / square / sawTeeth`). Minimal animation graph: `Timer → AnimationController → Effect`. Insert `Interpolator` for shaped waveform; omit for raw monotonic phase. Old `autoTimer` snapshots log `Unknown processor type: autoTimer` and skip — no auto-migration.
 
 ---
 
-## Effect System (`effects/` + `pipeline/`)
+## Effect System
 
 ### PlaygroundConfig (manifest)
 
-Each effect is a `PlaygroundConfig` with: `name`, `canvas` size, `fields` (user-tunable uniforms with slider ranges), optional `staticUniforms`, ordered `passes[]`, and `animation.slots[]` — declarations of which animation pool indices the effect consumes (with UI labels and default min/max for the controller).
+`name`, `canvas`, `fields` (user-tunable uniforms), optional `staticUniforms`, ordered `passes[]`, `animation.slots[]` (which animation pool indices the effect consumes — UI labels + default min/max).
 
 ### Animation Channels (universal pool)
 
-A fixed-size pool of `ANIMATION_CHANNEL_COUNT = 8` generic channels. Effects don't pick names; they pick **indices**. Shaders bind the corresponding `vec4 uChan{i}` uniform; the four components carry the user-controlled drive, its 0..1 form, the controller-mapped value, and the upstream state flag.
+`ANIMATION_CHANNEL_COUNT = 8`. Effects pick **indices**. Shaders bind `vec4 uChan{i}`:
 
 | Component | Source | Notes |
 |-----------|--------|-------|
-| `.x` (drive) | upstream `Signal.value` (unclamped) | `Timer mode=unbounded` grows linearly forever (good for monotonic phase / scroll); `Interpolator` profiles `sine`/`triangle`/`bell`/`gaussian`/`pulse` oscillate 0..1; a paused Timer holds a static phase. To control speed, change `Timer.durationMs`. **NOT** the upstream `Signal.time` ms field — that's intentionally hidden so the user's choice of waveform actually governs what shaders see (otherwise even a paused timer would keep ramping `time` forever and animate everything). |
-| `.y` (raw) | `clamp01(Signal.value)` | 0..1 driver after clamping. Useful when the shader needs a bounded mix factor regardless of upstream mode. |
-| `.z` (value) | `lerp(min, max, .y)` | Physical value mapped through the AnimationController's per-slot `min_i`/`max_i` params. Most shaders use this for amplitude-style modulation (radial offset, size, glow multiplier, intensity). |
-| `.w` (state) | upstream `Signal.state` | 0 = idle, 1 = clip in progress. |
+| `.x` (drive) | upstream `Signal.value` (unclamped) | Timer `unbounded` grows linearly; Interpolator profiles oscillate 0..1; paused Timer holds. NOT `Signal.time` ms. |
+| `.y` (raw) | `clamp01(Signal.value)` | Bounded 0..1 mix factor. |
+| `.z` (value) | `lerp(min, max, .y)` | Physical value via controller's per-slot `min_i`/`max_i`. |
+| `.w` (state) | upstream `Signal.state` | 0 idle / 1 clip in progress. |
 
-Canonical slot layout (convention only, not enforced — any shader can opt into any slot):
+Canonical slot layout (convention only):
 
 | Slot | Role |
 |------|------|
-| 0    | primary phase driver (scroll / phase / progress) |
+| 0    | primary phase (scroll / progress) |
 | 1    | radial offset / phase |
 | 2    | width / size |
 | 3    | spacing / glow |
 | 4    | intensity (alpha multiplier) |
-| 5    | noise time driver (see `src/pipeline/noise.glsl.ts`) |
+| 5    | noise time driver |
 | 6, 7 | free |
 
-The `EffectProcessor` warns once per (effect, slot) when a shader references an undeclared `uChan{i}` so manifest/shader drift surfaces in the console.
+`EffectProcessor` warns once per (effect, slot) when a shader references an undeclared `uChan{i}`.
 
-**Speed is upstream, period.** Effect manifests no longer expose per-uniform speed knobs (`uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uDropPulseSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. — all removed). Animation rate is fully owned by the chain `Timer (mode + durationMs) → optional Interpolator/Envelope/Combine → AnimationController (min/max)`. To pause an effect: set `Timer.paused = true` (the channel freezes at its current phase). To slow / speed up: tune `durationMs` on the Timer (smaller = faster `value` growth in `unbounded` mode, faster cycle in `looped`). To rescale amplitude: expand/contract the controller's `min_i`/`max_i` range for that slot.
+**Speed is upstream, period.** No effect manifest exposes `uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uColorSpeed`, etc. Animation rate fully owned by `Timer (mode + durationMs) → optional Interpolator/Envelope/Combine → AnimationController (min/max)`. To pause: `Timer.paused = true`. To slow/speed: tune `durationMs`. To rescale amplitude: tune controller `min_i`/`max_i`.
 
 ### Pass Types
 
-- **Fullscreen**: fragment shader rendered to a fullscreen quad. Optional `requiresInputs`.
-- **Instanced**: vertex + fragment shaders with per-instance geometry from contour data. Optional `scrolling` config picks `mode` (`glyph` for one-instance-per-glyph, `ribbon` for tilted-quad strip), names the spacing/segment fields it reads, and (via `phaseSlot`, default 0) picks which animation channel's `.value` drives the contour scroll phase in pixels. There is no `speedField` — scroll speed comes from the upstream signal driving the chosen slot.
+- **Fullscreen** — fragment shader to fullscreen quad. Optional `requiresInputs`.
+- **Instanced** — vertex + fragment with per-instance geometry from contour. Optional `scrolling: { mode: 'glyph' | 'ribbon', spacingField | segmentSizeField, phraseLenField?, repeatsField?, phaseSlot? }`.
 
 ### Runtime (EffectProcessor)
 
-Resolves active effect from `config` input, builds `UniformGroup` from fields + static uniforms + the full 8-channel animation pool (`uChan0..uChan7` as `vec4(drive, raw, value, state)`) + the full 8-slot texture pool (`uTxcn0..uTxcn7`, with a 1×1 white fallback for unconnected slots referenced by the shader), and binds the optional `source` and `coords_tex` inputs. Passes execute in order into a single output RT. Uses `Shader.from` with WebGL2 GLSL.
+Resolves active effect from `config.__effectName`, builds `UniformGroup` from fields + static uniforms + the full 8-channel animation pool + the full 8-slot texture pool (`uTxcn0..uTxcn7`, with 1×1 white fallback for unconnected slots referenced by the shader). Passes execute in order into a single output RT. `Shader.from` with WebGL2 GLSL.
 
-### Available Effects
+### Available Effects (8)
 
-Currently shipped (8, see `src/effects/index.ts`): `ping-pong-morphing` (single wave), `god-rays` (single ray), `light-beam` (single ray), `dot-orbit`, `dot-grid-orbit`, `text-orbit`, `text-grid-orbit`, `marching-ants`. Multi-ray / multi-wave compositions are built by **chaining multiple Effect nodes** through the `source` input (with `blend: 'add'`) — one node per ray/wave with its own colour, density, phase offset, etc. The shaders themselves render exactly one instance.
-
-None of these effects expose a speed parameter. The configs only carry geometric / colour / shape uniforms; everything that animates is fed via animation slots and is therefore driven by the user's Timer + (optional Interpolator) + AnimationController graph.
+`ping-pong-morphing` (single wave), `god-rays` (single ray), `light-beam` (single ray), `dot-orbit`, `dot-grid-orbit`, `text-orbit`, `text-grid-orbit`, `marching-ants`. Multi-instance compositions built by **chaining Effect nodes** through `source` with `blend: 'add'`. Shaders themselves render exactly one instance.
 
 ### Texture Channels (universal pool)
 
-In addition to the animation pool, the Effect node exposes a fixed-size pool of generic texture inputs `txcn0..txcn7` (`TEXTURE_CHANNEL_COUNT = 8`, see `pipeline/types.ts`). Each manifest declares which slots it consumes via `PlaygroundConfig.textures.slots`, with a human-readable label that the Effect node UI renders next to the corresponding handle (e.g. `txcn0 · SDF`, `txcn1 · Atlas`). Shaders bind only the channels they need by declaring `uniform sampler2D uTxcn{i};`. Slots the manifest doesn't declare still exist on the node — the user can wire any texture into them, and shaders may opt into any pool index. There is no longer a typed `sdf` / `atlas` boundary at the node level; the same Effect node can host any combination of texture maps. Unconnected `txcn{i}` referenced by a shader fall back to a 1×1 white texture.
+`TEXTURE_CHANNEL_COUNT = 8`. Each manifest declares which slots it consumes via `PlaygroundConfig.textures.slots` with a UI label. Shaders bind only declared channels via `uniform sampler2D uTxcn{i};`. Unconnected `txcn{i}` referenced by a shader → 1×1 white fallback.
 
 ### Noise Standard
 
-Canonical primitives in `src/pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`) are TS-imported and concatenated into every fragment/vertex shader that needs noise. Time-driven noise reads from slot 5 — shaders sample `uv + uChan5.x * driftRate * driftDir`. Drift speed is owned upstream by the Timer wired into slot 5 (`unbounded` mode for steady drift, `paused = true` to freeze it); shaders never invent their own time source and never multiply by a per-effect speed uniform.
+Canonical primitives in `pipeline/noise.glsl.ts` (`hash21`, `valueNoise2D`, `fbm2D`). Time-driven noise reads from slot 5: `fbm2D(uv * uScale + uChan5.x * driftDir)`.
 
-### Noise Visualizer (`noiseVisualizer`)
+### Noise Visualizer
 
-A debug surface for the canonical `fbm2D`. Renders a binary pattern (chess or stripes) sampled at `uv + noise displacement` so the user can *see* what the noise field is doing to a known surface. Two decorrelated `fbm2D` samples form a 2D vector field; amplitude is in UV units (typical 0..0.3).
-
-- Input: `signal: SIGNAL` (typically wired from Timer, optionally through Interpolator). Drift driver = `signal.value`, NOT `signal.time` — that way a paused Timer → static field, `unbounded` → steady drift, Interpolator `sine`/`triangle` profile → breathing. Without an upstream signal `tDrive = 0` and the field is frozen.
-- Output: `texture: TEXTURE`. Wire to a Preview node to inspect.
-- Params: `mode` (chess/stripes), `scale` (noise frequency), `amp` (displacement), `cells`/`stripes` (pattern frequency), `speed` (drift gain).
+Debug surface: chess / stripes pattern warped by two decorrelated `fbm2D` samples. Drift driver = `signal.value`, NOT `signal.time` — paused Timer freezes the field, `unbounded` drifts steadily, Interpolator `sine` breathes.
 
 ### Effect Profiling (`log`)
 
-`EffectProcessor.execute()` records per-pass CPU build time (mesh + shader + uniform setup) and a single GPU dispatch time around `renderer.render()`. Per-pass GPU timing isn't split because the whole stage flushes through one batched draw — true per-pass GPU timing would need `EXT_disjoint_timer_query`, which is unevenly supported. Output `metrics: METRICS` carries `EffectMetrics`.
-
-The `log` node consumes `metrics` and stores both the raw last frame and an EMA-smoothed copy (`smoothing` param, default 0.85). The view shows `total / cpu / gpu dispatch / fps cap`, then a per-pass list with id, kind tag (`inst` for instanced, `full` for fullscreen), `cpuMs`, and a horizontal bar proportional to the heaviest pass. Skipped passes show "skipped" with no bar. React commits are throttled to 100ms regardless of upstream tick rate — the smoothed numbers don't change visibly faster than that.
-
-Logical use: drop a Log node next to an Effect, wire `effect.metrics → log.metrics`, watch which pass dominates the budget while you tweak parameters. With the FPS cap turned down (e.g. 10fps), profiling stays cheap during exploratory work.
+`EffectProcessor.execute()` records per-pass CPU build time + single GPU dispatch around `renderer.render()`. Per-pass GPU timing isn't split (whole stage flushes through one batched draw — true split needs `EXT_disjoint_timer_query`, unevenly supported). `log` consumes `metrics: METRICS`, stores raw + EMA-smoothed (`smoothing` param, default 0.85). View shows `total / cpu / gpu dispatch / fps cap` + per-pass list with id, kind tag, `cpuMs`, bar proportional to heaviest pass. Skipped passes shown without bar. React commits throttled to 100 ms.
 
 ---
 
-## Scene Persistence (`node-engine/scene-store.ts`)
+## Tier-2 Publish Plane
 
-### Dexie Database (`effects-scene-db`)
+Editor exposes scenes to T2/T3 through `derivePublishedSurface(graph) → PublishedPipeline | { errors }` — pure, framework-agnostic. See `publish-plane.mdc`.
+
+- **`publishRoot`** (output, pass-through TEXTURE) marks the scene entry point. Exactly one allowed; zero/multiple → hard error. Params: `name` (display), `version` (author-bumped), `effectId` (slug — primary key consumers route on).
+- **`tapZone`** (animTrigger, CONTOUR → EVENT) is a runtime tap source bounded by an upstream contour. Editor EMIT button stands in for the platform's hit-test. Stable `id` (autogen `tap_<n>`) — Tier-3 routes dispatches on it. `eventEmitter` extended with the same `id` / `label` so both event sources share the dispatch contract.
+- **Per-node `data.exposed`** (`{ mode: 'whole' | 'fields', fields?, label?, hint? }`) decides what the supplier sees. `mode='whole'` renders the existing NodeView in the supplier app (Image, Segmentation); `mode='fields'` (currently only meaningful for `config`) lists individual `FieldDef` checkboxes. Lives on each node so it survives PublishRoot deletion + copy-paste.
+- **Right-rail `PublishInspector`** picks up canvas selection from RF's store; surfaces the right widget per processor — toggle for whole-node nodes, per-FieldDef checkboxes for `config`, live publication summary when PublishRoot is selected.
+- **`derivePublishedSurface`** — `resolveSceneForEngine(pages)` flattens clones, BFS reverse-walks edges from the root, classifies reached nodes into `imageSlots[] / tapZones[] / fields[] / wholeNodes[]`, validates (no orphans, unique tap ids, non-empty effect id), trims graph to reached subgraph. Output is the Tier-2/Tier-3 contract; bumping `PUBLISH_MANIFEST_VERSION` is breaking for both consumers.
+- **Bottom Pin Terminal** replaces the right-rail pin sidebar — pinned nodes stack horizontally as IDE-style terminal cards along the editor's bottom edge. Toolbar gets dedicated Inspect / Pins toggles + Publish button.
+
+---
+
+## Scene Persistence
+
+### Dexie DB (`effects-scene-db`)
 
 Two tables:
-- `snapshots` (`++id, timestamp`): `SceneSnapshot { nodes, edges, nodeIdCounter, timestamp, label }`.
+- `snapshots` (`++id, timestamp`): `SceneSnapshot { pages?, activePageId?, nodeIdCounter, manifestVersion?, timestamp, label, pinnedIds?, /* legacy: */ nodes?, edges?, viewport? }`. New writes always populate `pages` and `manifestVersion: PUBLISH_MANIFEST_VERSION`; legacy snapshots without `manifestVersion` default to `1` on read.
 - `blobs` (`key, updatedAt`): `BlobEntry { key, blob, mime, width?, height? }`.
+
+`SerializedPage = { id, name, nodes: SerializedNode[], edges: SerializedEdge[], viewport? }`. `SerializedNode.data` carries `cloneOf?: string` (UI-only viewer alias — never `engine.addNode`'d) and `exposed?` (Tier-2 supplier-exposure metadata). See `persistence.mdc`.
 
 ### SceneStore API
 
-- **Snapshots**: `pushSnapshot` (auto-trims to MAX_SNAPSHOTS=80), `undo`, `redo`, `currentSnapshot`. Cursor-based navigation.
-- **Blobs**: `putBlob`, `putDataUrl`, `getBlob`, `getBlobUrl`, `getDataUrl`, `deleteBlob`. Used for persisting loaded images and segmentation masks.
-- **Housekeeping**: `clearAll`, `clearSnapshots`.
+Snapshots: `pushSnapshot` (auto-trim to MAX_SNAPSHOTS=80), `undo`, `redo`, `currentSnapshot`. Cursor-based.
+Blobs: `putBlob`, `putDataUrl`, `getBlob`, `getBlobUrl`, `getDataUrl`, `deleteBlob`.
+Housekeeping: `clearAll`, `clearSnapshots`.
 
 ### History Flow
 
-1. `useSceneHistory` debounces (1200ms) after any node/edge change.
-2. Serializes current React Flow state → `SerializedNode[]` + `SerializedEdge[]`.
-3. Persists image blobs (data URLs → IndexedDB) and segmentation masks.
-4. Pushes snapshot. Undo/redo restore from Dexie and re-hydrate the engine.
+1. `useSceneHistory` debounces (1200 ms) after any pages / active-page / pin change.
+2. Serialises multi-page state → `SerializedPage[]` plus global `nodeIdCounter` / `pinnedIds` / `activePageId`. Active page captures fresh viewport via `getViewport()`; inactive pages keep their last-saved viewport.
+3. Persists image blobs (data URLs → IndexedDB) and segmentation masks. Walks every page; clones skipped.
+4. Pushes snapshot. Undo/redo restore via `applySnapshot` → `replaceScene(pages, activePageId)` → re-hydrate engine for non-clone nodes only.
 
 ### Node ID Counter (defensive sync)
 
-Node IDs follow `n_<int>` and are minted by a module-level counter in `node-editor/constants.ts` (`nextId` / `getNodeIdCounter` / `setNodeIdCounter`). The counter must never fall behind the live nodes' max suffix — otherwise `nextId()` would hand out an ID that already exists, and `setNodes([...nds, dup])` would silently drop the original because React Flow dedupes by `id`. This used to surface as "looks like a node-count limit, every add deletes one of the first nodes".
+Node IDs follow `n_<int>`, minted by `nextId` in `node-editor/constants.ts`. Counter must never fall behind the live max suffix — otherwise `nextId()` hands out a duplicate, RF dedupes by `id`, original gets silently dropped.
 
-Three guards keep it consistent:
-
-- `applySnapshot` syncs to `Math.max(snap.nodeIdCounter, maxNodeIdNumber(snap.nodes))` so even a snapshot with `nodeIdCounter: 0` (older imports) heals on restore.
-- `addNode` runs `setNodeIdCounter(Math.max(getNodeIdCounter(), maxNodeIdNumber(nodes)))` just before minting — heals an open session without reload.
-- `exportScene` writes the live `getNodeIdCounter()` value, not `0`.
+Three guards: `applySnapshot` syncs to `Math.max(snap.nodeIdCounter, maxNodeIdNumber(snap.nodes))`, `addNode` runs the same heal just before minting, `exportScene` writes the live counter (not `0`).
 
 ---
 
@@ -388,43 +384,60 @@ Three guards keep it consistent:
 
 ### NodeEditor.tsx
 
-Orchestrates everything: `useNodesState` + `useEdgesState` (React Flow), `engineRef` (DataflowEngine), four custom hooks, toolbar, sidebar, context menu. Loading gate shows "Initializing GPU..." until Pixi is ready.
+Orchestrates: `useSceneState` (multi-page state — `pages`, `activePageId`, page CRUD), `engineRef`, four custom hooks, toolbar, page-tab strip, sidebar, context menu. RF renders the active page only; engine sees the full scene through `resolveSceneForEngine(pages)`. Loading gate shows "Initializing GPU..." until Pixi is ready.
+
+### Multi-page scenes & clones
+
+Named pages (tab strip in `NodeEditorTabs`); each page owns its `nodes/edges/viewport`. Originals live on the page they were created on. Clones (`cloneOf` set) are UI-only viewer aliases of an original anywhere in the scene — no input handles, mirror the original's outputs, never reach the engine. Originals editable inline (double-click header); the new label propagates to clones via `useScene().findOrigin`.
+
+Single engine sync: `useEffect(() => engine.setEdges(resolveSceneForEngine(pages).resolvedEdges), [pagesStructuralHash, engineReady])`. Hash includes only `(node id, processor type, cloneOf, edges)` and ignores viewport / page name / ordering — the gate prevents page-switch freezes. `addNode` / `removeNode` only for real nodes; cycle prevention at connect time via `wouldCreateCycle(pages, source, target)`.
+
+Clone insertion lives in `SceneOutlineSidebar` (left rail) — drag a row onto the canvas. `AddNodePopover` carries only fresh-processor items.
 
 ### BaseNodeShell.tsx
 
-Wraps every node view. Renders: `NodeResizer` (visible when selected, grid-snapped), coloured header (accent from category via CSS `--pn-accent`), input/output `<Handle>`s at 20px row pitch (aligned to editor grid), widget area, pin toggle button.
-
-Two modes: **graph** (full chrome + handles) and **headless** (no handles/resizer — used in pin sidebar).
+Renders `NodeResizer` (selected, grid-snapped), coloured header (accent from category via CSS `--pn-accent`), input/output `<Handle>`s at 20px row pitch, widget area, pin toggle. Header title editable in graph mode (double-click); shows `REF` badge when `isClone`. Two modes: **graph** (full chrome + handles) and **headless** (no handles/resizer — pin terminal). In headless mode `HeadlessNodeDataProvider` reflects renames live.
 
 ### EditableStepEdge.tsx
 
-Custom orthogonal edge with draggable bend points. Segments snap to grid. Bend data persists in `edge.data.bends`. Supports selection, deletion, and hover states.
+Custom orthogonal edge with draggable bend points. Bend data persists in `edge.data.bends`.
 
-### Node Views (`views/`)
+### Node Views
 
-24 components, one per processor type. Each wraps `BaseNodeShell` and renders parameter widgets using the `widgets/` components. They access the engine via `useEngine()` and update params via `useSetParam()`.
+One per processor + `CloneNodeView` (UI alias — viewer-only, derives outputs from the original). Each wraps `BaseNodeShell` and renders parameter widgets via `widgets/`. Engine via `useEngine()`; params via `useSetParam()`.
 
 ### Category Colours
 
-8 live hues with intentional progression: green (input) → gold/orange/pink (animTrigger / animMod / animCtrl) → blue (imageOp) → teal (contour) → red (output) → slate (util). 6 legacy aliases (`depth` sky, `ai`/`marigold`/`dnf` violet, `source` green, `process` blue) keep persisted scenes from going grey but do not appear in the live menu. All accents sit on the dark side of the perceived-luminance line so the unified light header text reads cleanly without per-colour overrides.
+8 live hues: green (input) → gold/orange/pink (animTrigger / animMod / animCtrl) → blue (imageOp) → teal (contour) → red (output) → slate (util). 6 legacy aliases (`depth` sky, `ai`/`marigold`/`dnf` violet, `source` green, `process` blue) keep persisted scenes from going grey but don't appear in the live menu. All accents sit on the dark side of the perceived-luminance line so unified light header text reads cleanly.
 
 ---
 
 ## Build & Dev
 
-- `npm run dev` — Vite dev server with HMR (full reload for non-CSS changes via custom plugin).
-- `npm run build` — `tsc -b && vite build`.
-- Vite config: `@` alias to `src/`, proxies `/api` to `localhost:8000` and `/api/dnf` to `localhost:8001`.
-- Path alias `@` is available but the codebase predominantly uses relative imports.
+Repo is npm workspaces. From the root:
+
+- `npm install` — bootstraps everything (root `node_modules` hoisted; per-app symlinks to `@effects/*` workspace packages).
+- `npm run dev:editor` — Vite dev server for the editor (port 5173).
+- `npm run dev:supplier` — supplier app (port 5174).
+- `npm run dev:player` — player demo (port 5175).
+- `npm run build` — runs `build` in every workspace.
+
+Each app's Vite config aliases `@effects/runtime` / `@effects/player` / `@effects/ui` directly to workspace TS source (`packages/*/src`) — **no separate build step** for the packages. tsconfig wires the same paths so IDE / `tsc --noEmit` resolves identically.
+
+Per-app Vite config:
+- `alias["@"]` → app's own `src/` (editor keeps the `@/*` alias for `scene-store`, etc.).
+- `alias["@effects/runtime"]`, `alias["@effects/player"]`, `alias["@effects/ui"]` → workspace package roots.
+- `optimizeDeps.include: ['pixi.js']`.
+- Editor only: `/api`, `/api/dnf` proxies for legacy endpoints.
 
 ---
 
 ## Conventions
 
-- **Engine ↔ UI separation**: Processors are pure engine-side (`node-engine/`); views are pure UI-side (`flow-nodes/views/`). They communicate only through `EngineContext` + `useNodeOutputs` / `useSetParam` hooks.
+- **Engine ↔ UI separation**: Processors are pure engine-side (`node-engine/`); views are pure UI-side (`flow-nodes/views/`). Communicate only through `EngineContext` + `useNodeOutputs` / `useSetParam`.
 - **No CSS modules**: Plain `.css` files with class-based scoping (`.pn`, `.pn-header`, etc.).
-- **Grid alignment**: All node dimensions, positions, and handle ports snap to 20px grid (`GRID_SIZE`). Handle row pitch = grid step so ports always land on grid dots.
-- **Snapshot-based undo/redo**: Debounced (1200ms) full-scene serialization to Dexie. Max 80 snapshots.
-- **Barrel re-exports**: `widgets/index.ts` and `node-editor/constants.ts` re-export for cleaner imports.
-- **Dense MUI**: 6px spacing, 28px button height, 24px input height, small switches/checkboxes/sliders. Monospace typography throughout.
+- **Grid alignment**: All node dimensions, positions, handle ports snap to 20 px grid. Handle row pitch = grid step so ports always land on grid dots.
+- **Snapshot-based undo/redo**: Debounced (1200 ms) full-scene serialisation to Dexie. Max 80 snapshots.
+- **Barrel re-exports**: `widgets/index.ts` and `node-editor/constants.ts`.
+- **Dense MUI**: 6 px spacing, 28 px button height, 24 px input height. Monospace typography throughout.
 - **ESM-only**: `"type": "module"` in package.json, no CommonJS `require()`.

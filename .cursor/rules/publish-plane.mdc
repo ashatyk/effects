@@ -1,0 +1,161 @@
+---
+description: Tier-2 publish plane — publishRoot / tapZone processors, data.exposed metadata, derivePublishedSurface traversal, PublishedPipeline schema, supplier inspector. Read before editing publish surface, supplier-facing metadata, or T2/T3 contracts.
+alwaysApply: true
+---
+
+# Tier-2 Publish Plane
+
+The editor exposes scenes to the supplier-app (Tier-2) and multi-platform runtime (Tier-3) through a single pure function — `derivePublishedSurface({ nodes, edges }) → PublishedPipeline | { errors }`, exported from `@effects/runtime`. Framework-agnostic (no React, no MUI, no @xyflow/react). Takes a **flat resolved graph** instead of `PageState[]` — editor-side concepts (pages, clones) stay in `apps/editor` via `apps/editor/src/components/node-editor/publish-from-pages.ts → deriveFromPages(pages)` (runs `resolveSceneForEngine` first, then calls into the runtime API). Tier-3 runtimes consume published JSON directly and never see the editor wrapper.
+
+## File map
+
+| File | Role |
+|---|---|
+| `packages/runtime/src/publish.ts` | `derivePublishedSurface({ nodes, edges })`, `PUBLISH_MANIFEST_VERSION`, `Published*` types, `PublishError` union, plus `SerializedNode` / `SerializedEdge` (re-used by editor's `scene-store.ts`). |
+| `packages/runtime/src/node-engine/processors/publish-root.ts` | `publishRoot` (output sink — pass-through TEXTURE, supplier-facing `name` / `version` / `effectId`). |
+| `packages/runtime/src/node-engine/processors/tap-zone.ts` | `tapZone` (CONTOUR → EVENT, supplier-facing `id` / `label` / `hint`). |
+| `packages/runtime/src/node-engine/processors/event-emitter.ts` | `eventEmitter` extended with `id` / `label` for the same dispatch contract. |
+| `apps/editor/src/components/flow-nodes/types.ts` | `PipelineNodeData.exposed?: ExposedMeta`. |
+| `apps/editor/src/components/flow-nodes/hooks/useSetExposed.ts` | Writes `data.exposed` via `SceneContext.updateNodeData`. |
+| `apps/editor/src/components/node-editor/PublishInspector.tsx` | Right-rail UI for `data.exposed` per selected node + PublishRoot live summary. |
+| `apps/editor/src/components/node-editor/publish-from-pages.ts` | `deriveFromPages(pages)` + editor-only `publishStructuralHash(pages)`. |
+| `apps/editor/src/components/node-editor/hooks/useDerivedSurface.ts` | Memoised `deriveFromPages(pages)` keyed on `publishStructuralHash`. |
+| `apps/editor/src/components/flow-nodes/views/PublishRootNodeView.tsx` | Node card for `publishRoot` (text fields + live summary). |
+| `apps/editor/src/components/flow-nodes/views/TapZoneNodeView.tsx` | Node card for `tapZone` (EMIT button + `id`/`label`/`hint` + contour-connected status). |
+| `apps/supplier/src/runtime/applyOverrides.ts` | Tier-2 consumer: maps `SupplierConfig` into engine state. See `supplier-app.mdc`. |
+
+## Per-node `data.exposed`
+
+```ts
+ExposedMeta {
+  mode: 'whole' | 'fields'
+  fields?: string[]   // FieldDef.name keys; only when mode='fields'
+  label?: string      // supplier-facing; default = node label or def.title
+  hint?: string
+}
+```
+
+Two modes:
+- **`mode: 'whole'`** — the entire NodeView renders in the supplier app (headless, mirroring pin terminal). For nodes whose UI doesn't decompose into a flat field list: `image` (file upload), `segmentation` (SAM points), `tapZone` (id + label), and any future irreducible widget.
+- **`mode: 'fields'`** — supplier sees one widget per listed `FieldDef`. Currently meaningful only on `config` nodes (the only processors with a `FieldDef` list). For others use `mode='whole'`.
+
+Why on the node, not on PublishRoot:
+- Survives PublishRoot deletion / re-creation. Author can iterate on publish wiring without losing per-node exposure.
+- Copy-paste preserves it (already part of the `data` spread).
+- A node declares its supplier-facing surface independently of which root happens to consume it — friendlier when authors fork a scene.
+- Traversal filters against the reached set, so an exposed node not connected to PublishRoot is reported as `orphan-exposed` (not silently published).
+
+Supplier-facing `label` / `hint` fall back through `data.label` → `def.title` so the supplier always sees something meaningful.
+
+Persistence: rides through `useSceneHistory.serializeScene` via the existing `data: { ...n.data }` spread — no extra serialisation. Restored as-is by `applySnapshot`.
+
+## Producer processors
+
+### `publishRoot` (output category)
+
+- Inputs: `texture: TEXTURE`. Outputs: `texture: TEXTURE` (pass-through).
+- Params: `name: string`, `version: string`, `effectId: string` (slug).
+- Pure pass-through — upstream Effect produced the final composited frame; this node is just the marked traversal entry point.
+- Not `alwaysDirty` — rides upstream Effect's dirty propagation.
+- **Singleton-ish**: exactly one per scene. `derivePublishedSurface` reports `no-root` (zero) and `multiple-roots` (>1) as hard errors.
+- The `effectId` slug is the primary key consumers (Tier-2 / Tier-3) route on. Renaming `name` doesn't break consumers; the slug is stable.
+
+### `tapZone` (animTrigger category)
+
+- Inputs: `contour: CONTOUR`. Outputs: `event: EVENT`.
+- Params: `id: string` (autogen `tap_<n>` at creation), `label: string`, `hint: string`.
+- `alwaysDirty = true` (same as `eventEmitter`).
+- In editor: EMIT button stands in for runtime hit-test so chains can be tested without a real touch event.
+- In Tier-3: platform's touch handler hit-tests against the connected contour (point-in-polygon over `ContourSamples.positions`) and calls `proc.emit(x, y)` on each tap inside.
+
+### `eventEmitter` extended
+
+Pre-existing `eventEmitter` extended with `id` / `label` (same shape as `tapZone`) so both event sources speak the same dispatch contract. New nodes get autogen `evt_<n>`; legacy snapshots without the field get a deterministic `evt_<n>` derived from the node id at restore (see `persistence.mdc → migration`).
+
+Both flow into `PublishedPipeline.surface.tapZones[]`; the `kind` field differentiates (`'tap'` for tapZone, `'event'` for eventEmitter).
+
+## `derivePublishedSurface({ nodes, edges })`
+
+```ts
+// runtime API
+derivePublishedSurface(graph: { nodes: SerializedNode[], edges: SerializedEdge[] }) =>
+  | { ok: true,  pipeline: PublishedPipeline }
+  | { ok: false, errors: PublishError[] }
+
+// editor wrapper
+deriveFromPages(pages) → resolveSceneForEngine → derivePublishedSurface
+```
+
+Flat input is a deliberate boundary so the runtime depends on nothing editor-specific. Tier-3 native runtimes consume the published JSON via a thin loader and never reproduce `PageState` / `resolveSceneForEngine` logic.
+
+Algorithm:
+1. **Find root** — collect every `publishRoot`. Zero / >1 → hard error (continue with the first to surface other issues in the same pass).
+2. **BFS reverse** — build reverse adjacency once; BFS from root, collecting `reached: Set<nodeId>`.
+3. **Classify reached nodes** into the supplier-facing surface:
+    - `tapZone` / `eventEmitter` → `surface.tapZones[]` (always — the processor IS the supplier-facing object). Both honour their `id` / `label`.
+    - `image` with `exposed.mode='whole'` → `surface.imageSlots[]`.
+    - `segmentation` (or any other) with `exposed.mode='whole'` → `surface.wholeNodes[]`.
+    - `config` with `exposed.mode='fields'` → resolve its active effect, look up each field key in `effectCfg.fields`, push to `surface.fields[]` with full `FieldDef` metadata inlined (so the supplier app doesn't need access to the effect catalog).
+    - Any other node with `exposed.mode='whole'` → `surface.wholeNodes[]` (generic fallback).
+4. **Validate**:
+    - `tapZone.id` / `eventEmitter.id` uniqueness scene-wide → `duplicate-tap-id`.
+    - Every `data.exposed` node must be reached → `orphan-exposed`.
+    - `image` slots need a non-empty supplier label → `image-slot-missing-label`.
+    - `publishRoot.params.effectId` must be non-empty → `effect-id-missing`.
+5. **Trim graph** — copy reached non-clone nodes into `PublishedPipeline.graph.nodes` in input order (stripping local Dexie blob keys like `imageUrl: 'img:n_3'` — no meaning outside the editor process); copy edges whose both endpoints are reached.
+6. Return `PublishedPipeline` (success) or aggregated errors.
+
+## `PublishedPipeline` schema
+
+```ts
+PublishedPipeline {
+  id: string                  // slug from publishRoot.params.effectId
+  name: string                // publishRoot.params.name
+  version: string             // publishRoot.params.version
+  manifestVersion: number     // PUBLISH_MANIFEST_VERSION (currently 1)
+  graph: {
+    nodes: SerializedNode[]   // trimmed to reached subgraph (no clones, no orphans)
+    edges: SerializedEdge[]   // edges between reached nodes only
+  }
+  surface: {
+    imageSlots: { nodeId, label, hint? }[]
+    tapZones:   { nodeId, eventId, label, kind: 'tap'|'event', hint? }[]
+    fields:     { nodeId, paramKey, label, hint?, field: FieldDef }[]
+    wholeNodes: { nodeId, processor, label, hint? }[]
+  }
+}
+```
+
+`SerializedNode` / `SerializedEdge` exported from `@effects/runtime` so supplier-app and any future native runtime can decode published JSON without depending on editor types. Editor's `apps/editor/src/scene-store.ts` re-imports the same types and adds Dexie-only `SceneSnapshot` / `SerializedPage` / `BlobEntry` on top — a `.published.json` is structurally compatible with the per-page snapshot format and can be imported back into the editor for debugging.
+
+`PUBLISH_MANIFEST_VERSION` (currently `1`) is the schema version of `PublishedPipeline`. Bumping it is a **breaking change** for the supplier app and the runtime — both must validate before consuming. Distinct from `PublishRoot.params.version` (author's free-form version string).
+
+## Editor surfaces
+
+- **`PublishRootNodeView`** — text fields for `name` / `version` / `effectId` (slug auto-normalised on input) + live publication summary running `deriveFromPages(pages)` against the current scene with counters + inline error lines. Re-runs on every render against `pages` (cheap because the traversal is pure CPU).
+- **`PublishInspector`** (right rail) — `useStore` selector finds the selected node from RF's store; `SceneContext` resolves to home page; renders the right widget per processor:
+    - `image` / `segmentation` / `tapZone` / `eventEmitter` / unknown → "Expose to supplier" toggle (`mode='whole'`) + label/hint editors.
+    - `config` → per-`FieldDef` checkboxes for the active effect.
+    - `publishRoot` → live publication summary (same data as the node card, scrollable).
+    - `clone` → read-only hint pointing at the original.
+- **Toolbar Publish button** → `deriveFromPages(pages)`; on success downloads `<effectId>.published.json`, on error opens a snackbar with the first error.
+- **`useDerivedSurface()`** — memoises `deriveFromPages(pages)` against `publishStructuralHash(pages)` so PublishRoot cards / inspector summaries don't re-traverse on viewport pans, page renames, or label edits on unrelated nodes.
+
+## Pitfalls
+
+- Missing `data.exposed` on a node you want supplier-visible → reachable from PublishRoot but won't show in the surface. Traversal includes the graph node (so it executes at runtime) but the supplier UI has nothing to bind to. The PublishRoot card's counter summary is the fastest spot.
+- Reusing the same `id` across two `tapZone` / `eventEmitter` → `duplicate-tap-id`. Autogen (`addProcessorNode`) de-dupes scene-wide, but copy-pasting an event source bypasses it. Edit the id in the inspector / node card after pasting.
+- Shipping a `publishRoot` without a slug → `effect-id-missing` blocks publish.
+- Marking a node `mode='whole'` whose NodeView isn't headless-safe → renders in the supplier app with handles + resizer. Currently only Image / Segmentation / TapZone / EventEmitter are tested as `mode='whole'`.
+- Bumping `PUBLISH_MANIFEST_VERSION` without coordinating with T2/T3 → consumers fail-closed. Treat as a breaking-change rollout.
+- Reading `data.exposed.fields` on a non-`config` node → currently a no-op. If you add a future processor with its own `FieldDef` list, extend the `mode='fields'` branch.
+- Adding a new SLOT without considering the publish surface → the surface only enumerates `image` / `segmentation` / `tapZone` / `eventEmitter` / `config` today.
+
+## Maintenance contract
+
+When you change this subsystem — schema bump, new exposed processor, new surface field, validator addition — update this rule in the same change. Also update:
+- `project-overview.mdc → Tier-2 Publish Plane`.
+- `product-vision.mdc → Tier 2`.
+- `processors-catalogue.mdc → publishRoot / tapZone / eventEmitter`.
+- `persistence.mdc → SerializedNode.data.exposed` + migration list.
+- `ui-views.mdc → PublishInspector`.

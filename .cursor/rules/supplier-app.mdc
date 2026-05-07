@@ -1,0 +1,155 @@
+---
+description: Tier-2 supplier app — apps/supplier layout, useSupplierRuntime + applyOverrides + canvas-sink, simplified SAM segmentation widget, SupplierConfig schema, Export/Import contract. Read before changing supplier UX or the SupplierConfig handoff format.
+alwaysApply: true
+---
+
+# Tier-2 Supplier App (`apps/supplier`)
+
+Self-contained Vite/React workspace package. Consumes `PublishedPipeline.json` (output of editor's Publish button) and renders a curated form for the supplier to:
+
+1. Upload images per `surface.imageSlots[]`.
+2. Pick segments per `surface.wholeNodes[].processor === 'segmentation'` via a simplified SAM widget (Click = Include, Shift+Click = Exclude, Right-click marker = remove).
+3. Tweak parameters per `surface.fields[]` (scalar / vec / colour widgets).
+4. See **live preview** in a Canvas2D fed by the same `DataflowEngine` the editor uses.
+5. Export the resulting `SupplierConfig` as `<effectId>-<timestamp>.config.json` for handoff to the Tier-3 runtime.
+
+## File map
+
+```
+apps/supplier/
+├── index.html
+├── package.json              # @effects/supplier; deps: react, mui, pixi, @effects/{runtime,player,ui}
+├── vite.config.ts            # alias @effects/{runtime,player,ui} to TS source
+└── src/
+    ├── main.tsx              # createRoot + ThemeProvider (theme from @effects/ui)
+    ├── App.tsx               # BrowserRouter — '/' picker, '/supplier' form
+    ├── pages/
+    │   ├── ManifestPickerPage.tsx   # drop-zone + file picker; manifestVersion validation
+    │   └── SupplierPage.tsx         # form (left) + preview (right) + toolbar
+    ├── components/
+    │   ├── SupplierToolbar.tsx      # Back / Reset / Import / Export
+    │   ├── ImageSlotInput.tsx       # file → base64 → applyOverride.image; "Use as background" toggle
+    │   ├── SegmentationInput.tsx    # simplified SAM widget
+    │   ├── TextInput.tsx            # whole-node widget for `text` (multiline; placeholder = authored default)
+    │   ├── FieldInput.tsx           # one widget per FieldDef (Slider / Color / vec stack)
+    │   ├── WholeNodeInput.tsx       # generic fallback for unknown whole-node processors
+    │   ├── EventTriggerList.tsx     # one EMIT button per surface.tapZones[] entry
+    │   └── PreviewCanvas.tsx        # Canvas2D fed by streamPublishRootToCanvas; optional CSS background-image
+    └── runtime/
+        └── useSupplierRuntime.ts    # thin React adapter over @effects/player → createEngine
+```
+
+> **SupplierConfig / applyOverrides / canvas-sink / exporter live in `@effects/player`**, not under `apps/supplier/`. The supplier app imports them. Keeps the Tier-2 → Tier-3 data contract and runtime helpers in one framework-agnostic package any future Tier-3 integration can mount without duplicating code. See `player.mdc`.
+
+## Lifecycle
+
+1. **Picker** parses dropped JSON, validates `manifestVersion === PUBLISH_MANIFEST_VERSION`, sets the loaded `PublishedPipeline` into App-level React state (NOT localStorage — fresh session per reload), navigates to `/supplier`.
+2. **`useSupplierRuntime(pipeline)`** is a thin React adapter around `createEngine` from `@effects/player`. Mounts a Pixi `Application` (offscreen, hidden DOM canvas) and `DataflowEngine`, iterates `pipeline.graph.nodes` calling `engine.addNode(id, processor, params)`, then `engine.setEdges(graph.edges)`, then `engine.start()`. Engine identical to the editor's. Supplier doesn't use the higher-level `EffectPlayer` facade — every form widget needs granular `applyOverride.*` calls.
+3. **`SupplierPage`** holds a local `SupplierConfig` (initialised via `emptyConfig(pipeline)`). Every form interaction calls one of (all from `@effects/player`):
+   - `applyOverride.image(engine, nodeId, dataUrl)` → `ImageProcessor.setImageUrl(...)`
+   - `applyOverride.segmentation(engine, nodeId, { points, polygon? })` → if `polygon` supplied, `SegmentationProcessor.setPolygonOverride(polygon)` (no SAM); otherwise `SegmentationProcessor.decode(...)` (interactive SAM). `SegmentationInput`'s poll loop continuously pushes the SAM-computed `polygon` back into config so the exported JSON is self-contained — see `player.mdc → Memory profile`.
+   - `applyOverride.scalar(engine, nodeId, paramKey, value)`
+   - `applyOverride.vector(engine, nodeId, paramKey, value)` — packs `${paramKey}_0..N` keys exactly like `ConfigProcessor`.
+   - `applyOverride.text(engine, nodeId, value)` → drives the typed TEXT slot; downstream `textStrip` re-rasterises on the next tick.
+   - `applyOverride.emit(engine, nodeId, x?, y?)` → `EventEmitterProcessor.emit` or `TapZoneProcessor.emit`. Used by `EventTriggerList`.
+   ...and patches the corresponding slice of `SupplierConfig` so Export captures latest state. Event emits intentionally do NOT touch `SupplierConfig` — transient runtime triggers, not persisted overrides.
+4. **Preview** uses `streamPublishRootToCanvas` — subscribes to the `publishRoot` node via `engine.subscribeNode` and copies pixels into a Canvas2D using `renderer.extract.pixels` (throttled 33 ms — same pattern as `runtime/processors/preview.ts`).
+5. **Export / Import** use `downloadConfig` / `parseConfig` / `pickConfigFile`. Export downloads `${pipelineId}-${ISO timestamp}.config.json`. Import parses, validates against the current pipeline (id + manifestVersion match), `applyAllOverrides` swaps the engine to the imported state. Same JSON roundtrips through `apps/player`'s picker (shared parser).
+
+## SupplierConfig schema
+
+```ts
+SupplierConfig {
+  pipelineId: string                          // must equal pipeline.id
+  pipelineVersion: string                     // captured at export; informational
+  manifestVersion: number                     // captured at export; runtime fail-closed on mismatch
+  imageSlots:   Record<nodeId, { dataUrl }>   // base64 inline
+  segmentation: Record<nodeId, {
+    points: SamPoint[]                        // SAM hint markers (re-edit input)
+    polygon?: number[]                        // baked SAM result — Tier-3 player applies directly (no SAM spawn)
+  }>
+  fields:       Record<`${nodeId}:${paramKey}`, number | number[]>
+  texts:        Record<nodeId, { value: string }>   // exposed `text` overrides
+}
+
+SamPoint { point: [number, number], label: 0 | 1 }   // normalised image coords
+```
+
+`fields` key shape (`${nodeId}:${paramKey}`) collides-proofs the same field name across multiple Config nodes (multi-effect scenes). Vector fields stored as `number[]`; the apply layer reconstructs `${paramKey}_0..N` keys to match the engine's per-component param storage.
+
+`parseConfig(text, pipeline)` returns a tagged result and fails closed on:
+- invalid JSON
+- `pipelineId` mismatch (config prepared for a different effect)
+- `manifestVersion` mismatch (consumer can't safely interpret a future-shape config)
+- missing top-level keys
+
+A pipeline-version mismatch is intentionally **not** an error — version is a free-form author label.
+
+## Simplified Segmentation widget
+
+Trade-offs vs editor's `SegmentationNodeView` (intentionally narrower for non-technical supplier UX):
+
+| Feature                   | Editor                                  | Supplier                          |
+|---------------------------|-----------------------------------------|-----------------------------------|
+| Add Include point         | Click + Include toggle active           | **Click** (default)               |
+| Add Exclude point         | Click + Exclude toggle active           | **Shift+Click**                   |
+| Remove point              | Click delete in list                    | **Right-click on marker**         |
+| Mode toggle button        | Yes (Include / Exclude segmented btn)   | No                                |
+| Hover preview mask        | Yes                                     | No                                |
+| Points list               | Yes (with coordinates)                  | No (just count badge)             |
+| Mask overlay              | Teal `COL_INCLUDE` at α=110             | Same                              |
+| Status line               | Same SegmentationProcessor.statusText   | Same                              |
+
+Reads / writes the same `SegmentationProcessor` instance via `engine.getProcessor<SegmentationProcessor>(nodeId)` — no separate state. Editor's `proc.onChange` callback NOT wired here (editor side may be using it concurrently); supplier polls every 120 ms instead.
+
+## Workspace integration
+
+Depends on:
+- `@effects/runtime` — DataflowEngine, processors, effects[], publish types, SAM worker.
+- `@effects/ui` — MUI widgets (`SliderField`, `ColorField`, `Field`, `TextFieldRow`, etc.) + dark `theme`.
+
+Linked via npm workspaces (`workspaces: ["apps/*", "packages/*"]` in root). Vite resolves `@effects/runtime` and `@effects/ui` directly to TypeScript source via aliases in `apps/supplier/vite.config.ts`; no build step needed for packages.
+
+Run with `npm run dev:supplier`. Default port `5174` (editor stays on 5173).
+
+## Events / tap zones
+
+`surface.tapZones[]` (filled by `derivePublishedSurface` from both `tapZone` AND `eventEmitter` — same shape) drives the **Events** section. Each row: supplier-facing label, stable `eventId`, kind tag (`event` / `tap`), EMIT button.
+
+EMIT calls `applyOverride.emit(engine, nodeId)` → forwards to the running processor's `emit()`. Both processors are `alwaysDirty`, so downstream `Envelope` / `SignalSwitch` / `AnimationSwitch` chains see the bumped `event.count` on the next tick.
+
+Button label shows a per-button counter (`EMIT ·3` after three clicks) for visual feedback when downstream onset is delayed (long-attack envelope etc.).
+
+Supplier-side stand-in for the Tier-3 runtime's hit-tested canvas tap. We deliberately do NOT do real hit-testing in v1 — Events list verifies the chain works; native runtimes own hit-test against live `ContourSamples`.
+
+## Preview background
+
+Each `ImageSlotInput` carries a `Use as background` toggle next to its `Choose image` button. Clicking it selects that slot's `dataUrl` as the preview canvas background; clicking again (or selecting another slot) clears it. Mutually exclusive — at most one slot is the background. State in `SupplierPage.backgroundSlotId: string | null`.
+
+Painted via CSS `backgroundImage` on the preview `<canvas>` itself (not a sibling `<img>`), so the bitmap composites in canvas pixel coordinates with `backgroundSize: contain` matching the canvas's `objectFit: contain`. Transparent pixels in the engine output reveal the bg naturally — no z-index gymnastics. Use cases: outline-only / glow-only / particle-only effects (`marching-ants`, `god-rays`, `text-orbit`) where the pure render reads on a transparent background and the supplier wants to verify it composites readably against the source photo.
+
+NOT persisted into `SupplierConfig` — supplier-side preview affordance, not a runtime parameter; the Tier-3 runtime decides its own background. `onReset` / `onImport` clear `backgroundSlotId` so a stale toggle never points at an empty slot.
+
+## Out of scope (v1)
+
+- **Hit-tested canvas taps** — Events list emits via button. Tier-3 owns hit-test.
+- **Auto-segment one-click** — picked simplified manual widget instead.
+- **IndexedDB persistence** — reload = fresh picker. Use Export/Import for handoff.
+- **"Preview as supplier" button in the editor** — supplier always starts via file-picker.
+- **Multiple draft configs** — one pipeline per session.
+- **Validation of authored defaults** — if the manifest's authored defaults render empty / black before the supplier touches anything, that's the author's bug.
+
+## Pitfalls
+
+- Bumping `PUBLISH_MANIFEST_VERSION` without coordinating → every loaded manifest fails the picker's version check.
+- Vector fields with mixed array lengths between authored default and override → if authored is vec3 but override has length 2, only `${k}_0`, `${k}_1` are set; `${k}_2` retains previous. Fail-loud at parse if this becomes a problem; for now trust the export round-trip.
+- Calling `applyAllOverrides` on every render → pay-per-keystroke. Only Import / Reset call the bulk variant; per-control onChange uses `applyOverride.*` granular helpers.
+- New whole-node processor without supplier widget → `WholeNodeInput.tsx` renders a yellow Alert "no widget for processor X". Graph still uses authored defaults; supplier sees a visible gap. Fix by adding a dedicated `<XInput>`, route from `SupplierPage` (filter `pipeline.surface.wholeNodes` by processor type), persist override in its own `SupplierConfig` channel — never reuse `fields` for non-numeric overrides. References: `TextInput` (`config.texts`), `SegmentationInput` (`config.segmentation`).
+- SAM worker double-mount when editor + supplier loaded in the same session → two SAM workers spin up; CPU saturation during initial model load. Acceptable in v1; if it becomes a problem, hoist worker into a shared `packages/runtime/sam` singleton.
+
+## Maintenance contract
+
+When you change this subsystem (file layout, SupplierConfig shape, Export/Import contract, segmentation UX), update this rule in the same change. Also update:
+- `project-overview.mdc → Directory Structure`.
+- `product-vision.mdc → Tier 2`.
+- `publish-plane.mdc` if the consumer side adds requirements on the published surface.

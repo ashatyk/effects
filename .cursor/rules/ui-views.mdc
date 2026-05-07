@@ -5,143 +5,148 @@ alwaysApply: true
 
 # UI / views layer
 
-Everything React-flavoured lives in `src/components/`. The editor surface is `NodeEditor.tsx`; per-processor UI lives in `flow-nodes/views/`; chrome and widgets live in `flow-nodes/`. The engine is consumed via the `EngineContext` provider — node views never import `DataflowEngine` directly.
+React-flavoured code lives in `src/components/`. Editor surface is `NodeEditor.tsx`; per-processor UI in `flow-nodes/views/`; chrome and widgets in `flow-nodes/`. Engine is consumed via `EngineContext` — node views never import `DataflowEngine` directly.
+
+Scene is multi-page (tabs of independent scenarios) and supports UI-only **clones** (viewer aliases of any node anywhere). Engine sees a single flat dataflow — pages and clones resolved by `sceneResolver.resolveSceneForEngine` before reaching `engine.setEdges`.
 
 ## Top-level structure
 
 ```
 src/
-├── theme.ts                # MUI dark theme (Geist palette, JetBrains Mono)
-├── App.tsx                 # BrowserRouter → '/' → NodeEditor
+├── theme.ts                     # MUI dark theme (Geist palette, JetBrains Mono)
+├── App.tsx                      # BrowserRouter → '/' → NodeEditor
 └── components/
-    ├── NodeEditor.tsx       # Orchestrator
-    ├── node-editor.css
-    ├── node-editor/         # Editor sub-components
-    │   ├── constants.ts            # GRID_SIZE, snapToGrid, nextId, SLOT_COMPAT
-    │   ├── menuGroups.ts           # Add Node menu
+    ├── NodeEditor.tsx           # Orchestrator (multi-page; engine sync via sceneResolver)
+    ├── node-editor/             # Editor sub-components
+    │   ├── constants.ts         # GRID_SIZE, snapToGrid, nextId, SLOT_COMPAT
+    │   ├── menuGroups.ts        # Add Node menu
+    │   ├── sceneResolver.ts     # PageState + resolveSceneForEngine + cycle check + page id minting
+    │   ├── SceneContext.tsx     # Multi-page state provider
+    │   ├── PublishInspector.tsx # right rail: supplier-exposure for selected node + PublishRoot summary
     │   ├── NodeEditorToolbar.tsx
+    │   ├── NodeEditorTabs.tsx
     │   ├── AddNodePopover.tsx
     │   └── hooks/
     │       ├── usePipelineEngine.ts
     │       ├── useSceneHistory.ts
     │       ├── useNodeEditorShortcuts.ts
-    │       └── useEdgeColouring.ts
+    │       ├── useEdgeColouring.ts        # clone-aware
+    │       └── useDerivedSurface.ts       # memoised derivePublishedSurface(pages)
     └── flow-nodes/
-        ├── nodeTypes.ts            # processor type → React component
-        ├── BaseNodeShell.tsx       # chrome
-        ├── EditableStepEdge.tsx    # custom orthogonal edge
-        ├── NodePinSidebar.tsx      # right-side pin panel
+        ├── nodeTypes.ts         # processor type → React component (incl. `clone`)
+        ├── BaseNodeShell.tsx    # chrome + REF badge + inline rename
+        ├── EditableStepEdge.tsx # custom orthogonal edge
+        ├── NodePinTerminal.tsx  # bottom horizontal terminal: pinned nodes (any page)
+        ├── SceneOutlineSidebar.tsx  # left rail: pages → originals; click=jumpTo, drag=create clone
         ├── categoryColors.ts
-        ├── types.ts                # PipelineNodeData
-        ├── context/                # React contexts
-        ├── hooks/                  # node-side hooks
-        ├── widgets/                # form widgets
-        ├── styles/                 # plain CSS files (no modules)
-        └── views/                  # one file per processor
+        ├── types.ts             # PipelineNodeData (+ ExposedMeta)
+        ├── context/             # React contexts
+        ├── hooks/               # node-side hooks (incl. useSetExposed)
+        ├── widgets/             # form widgets
+        ├── styles/              # plain CSS
+        └── views/               # one file per processor (+ PublishRootNodeView, TapZoneNodeView)
 ```
 
-## NodeEditor (`components/NodeEditor.tsx`)
+## NodeEditor
 
-Single page. Three concerns:
+Three concerns:
+1. **State** — `useSceneState()` (pages, activePageId, page CRUD, cross-page mutations), `engineRef`, `pin.state`, `fps`, `sidebarOpen` (pin terminal), `outlineOpen`, `inspectorOpen`, `contextMenu`, `publishMessage`. RF gets `activePage.nodes/edges`; `onNodesChange/onEdgesChange` route through `setActiveNodes/setActiveEdges`.
+2. **Lifecycle** — Pixi `Application` init via `usePipelineEngine`, scene restore via `applySnapshot`, FPS push to engine. Single engine sync effect: `useEffect(() => engine.setEdges(resolveSceneForEngine(pages).resolvedEdges), [pagesStructuralHash, engineReady])`. Hash deliberately excludes viewport / page name / ordering so a tab switch doesn't cascade into `rebuildGraph` + "mark every node dirty" — that was the cause of the user-visible page-switch freeze.
+3. **User actions** — connect (`onConnect` with one-edge-per-target-handle dedupe + `wouldCreateCycle` rejection), validate (`isValidConnection` resolves clones, consults `SLOT_COMPAT`, runs cycle check), add processor (`onAddFromPopover` autogenerates `id` for `tapZone` / `eventEmitter`), add clone (drag-and-drop from outline → `onCanvasDrop` → `addCloneNode`), delete (skip clones), copy/paste/undo/redo, export/import/clear, **Publish** (`derivePublishedSurface(pages)` → download `<effectId>.published.json` or surface first error in snackbar), pan/zoom (`onMoveEnd → pushSnapshot`).
 
-1. **State** — `useNodesState` + `useEdgesState` (React Flow), `engineRef` (DataflowEngine), `pin.state`, `fps`, `sidebarOpen`, `contextMenu`.
-2. **Lifecycle** — Pixi `Application` init via `usePipelineEngine`, scene restore from Dexie via `applySnapshot` from `useSceneHistory`, FPS push to engine.
-3. **User actions** — connect (`onConnect` with one-edge-per-target-handle dedupe), validate (`isValidConnection` consults `SLOT_COMPAT`), add (`addNode` from `AddNodePopover` at the right-click point), delete (`onNodesDelete`), copy/paste/undo/redo (`useNodeEditorShortcuts`), export/import/clear (own callbacks), pan/zoom (`onMoveEnd → pushSnapshot`).
+`<ReactFlow>` wrapped in `<SceneProvider>` + `<EngineProvider>` + `<PinProvider>`. Body is two stacked rows: top region (`outline | flow + tabs | inspector`) plus the bottom `NodePinTerminal`. RF gets `key={activePageId}` to remount on page swaps. Loading gate shows "Initializing GPU..." until `engineReady`.
 
-`<ReactFlow>` is wrapped in `<EngineProvider>` + `<PinProvider>`. The full graph + pin sidebar live inside `node-editor-body`. Loading gate shows "Initializing GPU..." until `engineReady`. The Add Node popover snaps creation positions to the editor grid.
+## Multi-page scenes & clones
+
+- **Pages** — named tabs (`pages: PageState[]`, `activePageId`). Each owns its own `nodes/edges/viewport`. Switching saves the live viewport into the leaving page; rAF-restores incoming viewport (so RF has remounted before `setViewport`).
+- **Clones** (`PipelineNodeData.cloneOf` set) — UI-only viewer aliases of an original node anywhere in the scene: no input handles, output handles derived from `PROCESSOR_CATALOG[origin.processor].def.outputs`, REF badge, dashed `.pn--clone` border. Multiple clones of the same original allowed; clones of clones not (outline excludes them; `findOriginAcrossPages` refuses to follow them).
+- **Clone insertion** — drag-and-drop from `SceneOutlineSidebar` (left rail). Sidebar lists pages → originals; dragging sets `CLONE_DRAG_MIME = 'application/x-effect-clone-of'` (= origin id); canvas `onDrop` decodes + creates a clone via `addCloneNode`. Click navigates (`jumpToNode`); double-click activates host page without toggling collapse. `AddNodePopover` carries only fresh-processor items.
+- **Engine sees only resolved scene.** Single sync effect `engine.setEdges(resolveSceneForEngine(pages).resolvedEdges)` whenever `pages` changes. `engine.addNode` / `engine.removeNode` happen in `onAddFromPopover` / `onNodesDelete` and skip clones unconditionally.
+- **Cycle prevention** — `wouldCreateCycle(pages, source, target)` resolves both endpoints through clone aliases, BFSes forward over resolved adjacency, rejects if it would reach the candidate source. Same check in `isValidConnection` (UI feedback) and `onConnect` (defensive).
+- **Pin terminal** lists pinned nodes from any page; off-active cards show "from <pageName>" caption. Wrapped in `HeadlessNodeProvider` + `NodeIdProvider` + `HeadlessNodeDataProvider` so renames reflect live.
+- **Labels first-class.** `data.label` editable inline by double-clicking the header (graph mode only); empty clears back to `def.title`. CloneNodeView shows the live label of the original, never lets you edit it on the clone.
+- **Broken clones don't cascade-delete.** When the original is deleted the clone keeps existing as a slate-coloured `.pn--clone--broken` placeholder. Edges from broken clones dropped by `resolveSceneForEngine` so the engine doesn't choke.
 
 ### `PipelineNodeData`
 
 ```ts
 type PipelineNodeData = {
-  processor: string                    // matches PROCESSOR_CATALOG key
+  processor: string
   params: Record<string, unknown>
   label?: string
-  imageUrl?: string                    // image processor only
-  segPoints?: SamPoint[]               // segmentation processor only
+  imageUrl?: string         // image processor only
+  segPoints?: SamPoint[]
   segPolygon?: number[]
   segMaskKey?: string
 }
 ```
 
-Engine state lives in the `DataflowEngine`; only persistence-relevant duplicates leak into node data (`imageUrl` / `segPoints` / etc.). Don't store transient runtime state in `data.params` — it'll be undo'd into staleness.
+Engine state lives in `DataflowEngine`; only persistence-relevant duplicates leak into `data`. Don't store transient runtime state in `data.params` — it'll be undo'd into staleness.
 
-## BaseNodeShell (`flow-nodes/BaseNodeShell.tsx`)
+## BaseNodeShell
 
-Wraps every node view. Renders:
+Renders `NodeResizer` (selected, grid-snapped), `.pn-header` (coloured top border via `--pn-accent` from `categoryColor(category)`), `.pn-handles` (input/output `<Handle>`s + labels), `.pn-widgets` (children), `PinToggle`.
 
-- `NodeResizer` (visible when selected, grid-snapped via React Flow's `snapToGrid`).
-- `.pn-header` — coloured top border (driven by CSS variable `--pn-accent` set from `categoryColor(category)`).
-- `.pn-handles` — input / output `<Handle>`s plus aligned labels.
-- `.pn-widgets` — children area (params UI).
-- `PinToggle` — adds/removes the node from the pin sidebar.
-
-### Grid alignment (don't break this)
+### Grid alignment (don't break)
 
 ```
-ROW_H = 20            # pitch of input/output rows (must equal GRID_SIZE)
-ROW_TOP_PAD = 10      # top inset before first port
-.pn-header height = 36px (in node-card.css)
+ROW_H = 20       # row pitch — must equal GRID_SIZE
+ROW_TOP_PAD = 10 # top inset before first port
+.pn-header height = 36px
 .pn top border = 4px
 ```
 
-The first port's centre lands at Y = 60 from the node's top edge, which is exactly 3 grid cells. Subsequent ports inherit this alignment because `ROW_H = GRID_SIZE`. Any change to header height or `ROW_TOP_PAD` must keep the first-port centre on a grid dot, otherwise edges fan off-grid.
+First port centre lands at Y = 60 from the node's top edge — exactly 3 grid cells. Subsequent ports inherit alignment (`ROW_H = GRID_SIZE`). Any change to header height or `ROW_TOP_PAD` must keep first-port centre on a grid dot.
 
 ### Headless mode
 
-`useIsHeadlessNode()` returns `true` when the node is rendered inside the pin sidebar. In that mode `BaseNodeShell` skips:
+`useIsHeadlessNode()` returns `true` when the node renders inside the pin terminal. `BaseNodeShell` skips Handles / `.pn-handles` / `NodeResizer`. Children render. Lets previewable processors (Preview, Log, AnimationController, ContourPreview, NoiseVisualizer) double as live-readout panels.
 
-- `<Handle>`s (no graph wiring).
-- The `.pn-handles` row container.
-- `NodeResizer`.
+## EditableStepEdge
 
-Children (widgets) still render. This is what lets a previewable processor (Preview, Log, AnimationController, ContourPreview, NoiseVisualizer) double as a "live readout" panel.
-
-## EditableStepEdge (`flow-nodes/EditableStepEdge.tsx`)
-
-Custom orthogonal edge with draggable bend points. Bends persist in `edge.data.bends: { x, y }[]`. Hover shows midpoint handles per straight segment that drag perpendicular to the segment direction (horizontal segment → vertical drag; vertical → horizontal). When `bends` is empty, falls back to the React Flow built-in smooth-step HVH path. Replaces the previous `reroute` waypoint node — bends are an edge property, undone/redone with the rest of the scene.
-
-The edge is registered as `editableStep` in `node-editor/constants.ts → pipelineEdgeTypes` and added by default via `defaultEdgeOptions={{ type: 'editableStep' }}`.
+Custom orthogonal edge with draggable bend points. Bends persist in `edge.data.bends: { x, y }[]`. Hover shows midpoint handles per straight segment that drag perpendicular to the segment direction. When `bends` empty, falls back to RF's built-in smooth-step HVH path. Registered as `editableStep` in `node-editor/constants.ts → pipelineEdgeTypes` and applied via `defaultEdgeOptions`.
 
 ## Contexts (`flow-nodes/context/`)
 
-- **`EngineContext`** — `EngineProvider value={engine}` + `useEngine()`. Every view that subscribes to outputs or sets params reads the engine here.
-- **`PinContext`** — `usePinning()` returns `{ isPinned, togglePin, pinnedIds, ... }`. Pin state is captured in snapshots, hence lifted to `usePinState({ liveNodeIds })` above the provider.
-- **`NodeIdContext`** — `useResolvedNodeId()`. Returns the active node's id (React Flow's `useNodeId` in graph mode) or an override id for the pin sidebar (so the same view component can render the same node from two places).
-- **`HeadlessNodeContext`** — `useIsHeadlessNode()` → boolean. Disables handles / resizer when true.
+- **`EngineContext`** — `EngineProvider value={engine}` + `useEngine()`.
+- **`PinContext`** — `usePinning()` returns `{ isPinned, togglePin, pinnedIds, ... }`. Pin state captured in snapshots; lifted to `usePinState({ liveNodeIds })` above the provider. `liveNodeIds` is the union across pages — pins survive page switches and only get reaped on actual deletion.
+- **`NodeIdContext`** — `useResolvedNodeId()` returns RF's `useNodeId` (graph) or override id (pin terminal). Same file exports `HeadlessNodeDataProvider` / `useHeadlessNodeData()` — pin terminal wraps each headless card with the live `data` so `BaseNodeShell` shows renames done elsewhere.
+- **`HeadlessNodeContext`** — `useIsHeadlessNode()` → boolean.
 
-## Hooks (`flow-nodes/hooks/`)
+## SceneContext
 
-- **`useSetParam(id)`** → `(key, value) => engine.updateNodeParams(id, { ...params, [key]: value })`. Used by every widget that drives a single param.
-- **`useNodeOutputs(id)`** → `Record<string, unknown>` — subscribes to `engine.subscribeNode` and returns the latest outputs. Initial state is hydrated synchronously from `engine.getOutputs(id)` so the view sees the latest values immediately on mount (without this, non-`alwaysDirty` processors like Config would show stale data until the user touched an upstream param).
-- **`useCanvasFill`** — Canvas2D sizing helper (DPR-aware). Used by the SegmentationNodeView and any preview that draws on its own canvas.
+```ts
+{
+    pages, activePageId, activePage,
+    addPage(name?), removePage(id), renamePage(id, name), switchPage(id),
+    allRealNodes(), findOrigin(cloneOfId),
+    updateNodeData(id, partial),
+    jumpToNode(nodeId),                  // switches page + centres on node
+    setActiveNodes(updater), setActiveEdges(updater),
+    replaceScene(pages, activePageId),
+}
+```
 
-## Widgets (`flow-nodes/widgets/`)
+Lives inside `<ReactFlowProvider>` because `switchPage` / `jumpToNode` consult `useReactFlow().setViewport / setCenter`. Updates to `pages` trigger the `engine.setEdges` sync effect — single point at which the engine learns about UI changes.
 
-Reusable form components, all exported through the barrel `widgets/index.ts`:
+## Hooks
 
-| Widget | Purpose |
-|--------|---------|
-| `Field` | Label + content grid (one row of the param form). |
-| `NumberField` | Numeric input with `step`/`min`/`max`. |
-| `TextFieldRow` | Single/multiline text input in a `Field`. |
-| `SelectField` | Dropdown. |
-| `SwitchField` | Boolean toggle. |
-| `SliderField` | Slider + numeric readout. |
-| `ColorField` | Colour picker swatch (used when `FieldDef.color = true`). |
-| `ActionButton` | Primary / secondary action button. |
-| `StatusLine` | Status text, three tones (`normal | muted | error`). Used for live node state. |
-| `SectionTitle` | Uppercase section heading. |
+- **`useSetParam(id)`** → `(key, value) => engine.updateNodeParams(id, { ...params, [key]: value })`.
+- **`useSetNodeLabel(id)`** → `(label) => SceneContext.updateNodeData(id, { label })`. Empty clears to `def.title`. Powers inline rename in `BaseNodeShell.HeaderTitle`.
+- **`useSetExposed(id)`** → `(exposed | undefined) => SceneContext.updateNodeData(id, { exposed })`. `undefined` clears. Used by `PublishInspector`.
+- **`useNodeOutputs(id)`** → `Record<string, unknown>`. Subscribes to `engine.subscribeNode`; initial state hydrated synchronously from `engine.getOutputs(id)` so views see latest values immediately on mount (without this, non-`alwaysDirty` processors like Config show stale data until the user touches an upstream param).
+- **`useCanvasFill`** — Canvas2D sizing helper (DPR-aware).
+
+## Widgets
+
+All exported through `widgets/index.ts`: `Field`, `NumberField`, `TextFieldRow`, `SelectField`, `SwitchField`, `SliderField`, `ColorField` (when `FieldDef.color = true`), `ActionButton`, `StatusLine` (`normal | muted | error`), `SectionTitle`.
 
 Conventions:
-
 - `slotProps={{ htmlInput: { className: 'nodrag' } }}` on every text input so dragging text doesn't pan the canvas.
-- Widgets are MUI components styled via `sx` and the `node-card-mui.css` overrides scoped to `.pn`.
-- Spacing unit: 6 px (`theme.spacing(1) = 6`). Buttons are 28 px tall, inputs 24 px, dense everywhere.
+- Styled via MUI `sx` and `node-card-mui.css` overrides scoped to `.pn`.
+- Spacing unit 6 px, buttons 28 px tall, inputs 24 px, dense everywhere.
 
-## Per-processor views (`flow-nodes/views/`)
-
-Pattern (every view uses it):
+## Per-processor views
 
 ```tsx
 export const FooNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
@@ -154,65 +159,63 @@ export const FooNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeD
             <Field label="Param">
                 <NumberField value={data.params.x} onChange={v => set('x', v)} />
             </Field>
-            {/* ... */}
         </BaseNodeShell>
     )
 })
 ```
 
-Connection hints (StatusLines like "wire X to Y") belong on **consumer** nodes only — input nodes (Text, TextStyle, TextStrip) carry no hints because they're the source side of the wire and it's not their concern to teach about downstream wiring.
+Connection hints (`StatusLine` like "wire X to Y") belong on **consumer** nodes only. Input nodes (Text, TextStyle, TextStrip) carry no hints.
 
-Some views read the upstream Config node to get effect-specific labels (`EffectNodeView` for texture slots; `AnimationControllerNodeView` for animation slots). The pattern:
+Some views read the upstream Config for effect-specific labels (`EffectNodeView` for texture slots; `AnimationControllerNodeView` for animation slots):
 
 ```ts
-function selectUpstreamConfigId(nodeId: string) {
-  return (s: ReactFlowState) =>
-    s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
-}
-const upstreamId = useStore(useMemo(() => selectUpstreamConfigId(nodeId), [nodeId]))
+const upstreamId = useStore(useMemo(() => (s: ReactFlowState) =>
+  s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? '', [nodeId]))
 const upstreamOutputs = useNodeOutputs(upstreamId)
 ```
 
-This re-renders both when the wire changes (selector against `s.edges`) and when the upstream Config publishes a new effect name (subscription).
+Re-renders both when the wire changes (selector against `s.edges`) and when the upstream Config publishes a new effect name.
 
-## Pin sidebar (`flow-nodes/NodePinSidebar.tsx`)
+## Pin terminal
 
-Right rail showing pinned nodes in **headless** mode. The sidebar wraps every pinned node in `HeadlessNodeContext` + `NodeIdContext`, then renders the same view components as the graph but without handles/resizer. Lets the user keep a small live-readout panel for Preview / Log / AnimationController / ContourPreview while editing the graph.
+IDE-style **bottom horizontal terminal** showing pinned nodes in headless mode. Wraps each card in `HeadlessNodeContext` + `NodeIdContext` + `HeadlessNodeDataProvider`. Horizontally-scrolling row — each card at intrinsic width (capped via `.pn-terminal-card { max-width }`). Height user-resizable via 4 px hit-strip on the **top** edge; persisted to `localStorage["nodeEditor.pinTerminal.height.v1"]`. Open/close via `localStorage["nodeEditor.sidebarOpen.v1"]` (legacy key kept after sidebar→terminal migration).
 
-State is part of the snapshot — `pinnedIds` field on `SceneSnapshot`, restored by `useSceneHistory.applySnapshot`. Uses `localStorage["nodeEditor.sidebarOpen.v1"]` for the open/closed toggle.
+## Publish Inspector
 
-## Toolbar (`node-editor/NodeEditorToolbar.tsx`)
+**Right rail.** Picks up canvas selection from RF's store; surfaces Tier-2 supplier-exposure controls for the selected node (writes `data.exposed` via `useSetExposed`):
+- `image` / `segmentation` / `tapZone` / `eventEmitter` / other irreducible-UI processors: **"Expose to supplier" toggle** (`mode='whole'`), with optional `label` + `hint` overrides.
+- `config`: per-`FieldDef` checkboxes for the active effect (`mode='fields'` with `fields: string[]`).
+- `publishRoot`: live publication summary — `derivePublishedSurface(pages)` results (image-slot count, tap-zone list, exposed fields, whole nodes, graph trim sizes, validation errors).
+- `clone`: read-only hint — clones aren't part of the published surface (the original is).
 
-Buttons: back link, undo/redo, export/import/clear, sidebar toggle, FPS dropdown. The FPS dropdown lists `FPS_OPTIONS` (typically `[0, 5, 10, 24, 30, 60]`) and persists to `localStorage["nodeEditor.fps.v1"]`. `0` = uncapped.
+Width via 4 px hit-strip on the **left** edge; persisted to `localStorage["nodeEditor.inspector.width.v1"]`. Open/close persisted to `localStorage["nodeEditor.inspectorOpen.v1"]`.
 
-## Theme (`src/theme.ts`)
+## Toolbar
 
-Custom dark MUI theme:
+Buttons: back link, FPS dropdown, **Outline** toggle (left rail), **Inspect** toggle (right Publish Inspector), **Pins** toggle (bottom Pin Terminal), undo/redo, **Publish** (downloads `<effectId>.published.json` via `derivePublishedSurface`; first error → snackbar), export/import/clear. FPS dropdown lists `FPS_OPTIONS` (`[0, 5, 10, 24, 30, 60]`); persisted to `localStorage["nodeEditor.fps.v1"]`. `0` = uncapped.
 
-- Geist/Vercel-inspired palette.
-- Monospace primary typography (JetBrains Mono Variable 700; Inter Variable as fallback).
-- 6 px spacing unit.
-- 28 px button height, 24 px input height.
-- Dense switches/checkboxes/sliders.
+## Theme
 
-`@fontsource` packages ship the variable fonts; loading happens in `main.tsx`. No Tailwind, no shadcn, no CSS-in-JS framework beyond MUI's `sx`.
+Custom dark MUI theme: Geist/Vercel-inspired palette, JetBrains Mono Variable 700 (Inter Variable fallback), 6 px spacing unit, 28 px buttons, 24 px inputs, dense switches/checkboxes/sliders. `@fontsource` packages ship variable fonts; loaded in `main.tsx`. No Tailwind, no shadcn, no CSS-in-JS beyond MUI `sx`.
 
 ## CSS conventions
 
-- `flow-nodes/styles/` holds plain `.css` files (not modules), class-prefixed (`.pn`, `.pn-header`, `.pn-body`, `.pn-handles`, `.pn-widgets`, `.pn-resize-line`, `.pn-resize-handle`, `.pn-edge-*`).
-- `node-card.css` — card chrome, header, handles, widgets, resize handles.
+- Plain `.css` files in `flow-nodes/styles/` (not modules), class-prefixed (`.pn`, `.pn-header`, `.pn-body`, `.pn-handles`, `.pn-widgets`, `.pn-resize-line`, `.pn-resize-handle`, `.pn-edge-*`).
+- `node-card.css` — chrome, header, handles, widgets, resize handles.
 - `node-card-mui.css` — MUI overrides scoped under `.pn`.
-- `editable-edge.css` — orthogonal edge + bend-point styles.
-- `pin-sidebar.css` — sidebar card styles.
+- `editable-edge.css` — orthogonal edge + bend-points.
+- `pin-terminal.css` — pin-terminal cards.
 
-Don't add CSS modules, Emotion `styled`, or Tailwind. The dense scoping under `.pn` is intentional and makes per-processor view CSS unnecessary.
+Don't add CSS modules, Emotion `styled`, or Tailwind. The dense `.pn` scoping is intentional and makes per-processor view CSS unnecessary.
 
-## Common pitfalls
+## Pitfalls
 
-- **Importing `DataflowEngine` directly in a view** → breaks the engine/UI separation. Use `useEngine()` and the typed handle hooks.
-- **Storing transient state in `data.params`** → it'll be persisted, undone, and restored. Keep it in component state or processor instance fields.
-- **Missing `nodrag` on a text input** → the canvas pans while typing.
-- **Returning a new array reference from `useNodeOutputs` consumer's `useMemo`** without proper deps → unnecessary re-renders. Prefer `useNodeOutputs(id).foo` directly when only one field is needed.
-- **Hard-coding `ROW_H`** in a view → if the value drifts from `GRID_SIZE` everything goes off-grid. Always `BaseNodeShell` for the chrome; if you need a fixed-pixel layout, snap to `GRID_SIZE` from `node-editor/constants.ts`.
-- **Not setting `minWidth` on a wide widget area** → the resizer's default min (160) is too small for some processor views (effect, log, animationController). Pass `minWidth={...}` to `BaseNodeShell`.
-- **Forgetting `memo` on a view** → React Flow re-renders all visible nodes on every interaction. The base pattern wraps the view in `memo`; do the same for any new one.
+- Importing `DataflowEngine` directly in a view → breaks engine/UI separation. Use `useEngine()`.
+- Storing transient state in `data.params` → persisted, undone, restored. Keep in component state or processor instance fields.
+- Missing `nodrag` on a text input → canvas pans while typing.
+- New array reference from `useNodeOutputs` consumer's `useMemo` without proper deps → unnecessary re-renders. Prefer `useNodeOutputs(id).foo` directly when only one field is needed.
+- Hard-coding `ROW_H` in a view → drifts from `GRID_SIZE` and edges fan off-grid. Always use `BaseNodeShell` for chrome; if you need a fixed-pixel layout, snap to `GRID_SIZE`.
+- Not setting `minWidth` on a wide widget area → resizer's default min (160) too small for some views (effect, log, animationController). Pass `minWidth={...}`.
+- Forgetting `memo` on a view → RF re-renders all visible nodes on every interaction.
+- `engine.addNode` for a clone → phantom processor. Only `onAddFromPopover({ kind: 'processor', ... })` and `applySnapshot`'s non-clone branch may invoke `engine.addNode`. Copy/paste preserves `cloneOf`.
+- Operating on `nodes`/`edges` instead of `pages` in editor-level effects → only the active page is observed; changes on inactive pages get missed. Use `pages` (or `useScene().allRealNodes()`).

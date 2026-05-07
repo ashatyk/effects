@@ -1,278 +1,221 @@
 ---
-description: Animation pipeline — Pulse → Signal → ChannelSignal → uChan{i}; Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool, slot conventions. Read before changing animation processors, signal types, or shader-side animation contracts.
+description: Animation pipeline — Pulse → Signal → ChannelSignal → uChan{i}; Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool. Read before changing animation processors, signal types, or shader-side animation contracts.
 alwaysApply: true
 ---
 
 # Animation system — from input to shader uniforms
 
-The platform's animation contract is a small, opinionated chain. Every effect is animated by feeding numeric drivers into a fixed pool of 8 channel uniforms (`uChan0..uChan7`); every channel is a `vec4(drive, raw, value, state)`. **Speed is upstream.** No effect manifest exposes a `*Speed` field.
+Every effect is animated by feeding numeric drivers into a fixed pool of 8 channel uniforms (`uChan0..uChan7`); each is a `vec4(drive, raw, value, state)`. **Speed is upstream** — no manifest exposes a `*Speed` field.
 
-## Pipeline overview
+## Pipeline
 
 ```
-EventEmitter (EVENT)                 ─┐
-                                      ├──► Envelope (EVENT→SIGNAL)
-Timer (SIGNAL) ─► Interpolator? ─────┤                                  ─┐
-                                      ├──► Combine Signals (SIGNAL→SIGNAL)
-                                      │                                  ─┤
-                                      ├──► Signal Switch (SIGNAL+SIGNAL gated by EVENT → SIGNAL)
-                                      │                                  ─┘
-                                      └──────────────────────────────────► Animation Controller (8× SIGNAL → ANIMATION)
-                                                                                                     │
-                                                                                                     ▼
-                                                                                                 Effect (uChan0..uChan7)
+EventEmitter / TapZone (EVENT) ─┐
+                                 ├──► Envelope (EVENT→SIGNAL)
+Timer (SIGNAL) ─► Interpolator? ┤                                  ─┐
+                                 ├──► CombineSignals (SIGNAL→SIGNAL)
+                                 │                                  ─┤
+                                 ├──► SignalSwitch (A,B gated by EVENT → SIGNAL)
+                                 │                                  ─┘
+                                 └──► AnimationController (8× SIGNAL → ANIMATION)
+                                                                     │
+                                                                     ▼
+                                                            Effect (uChan0..uChan7)
 ```
 
-The chain is purely data — every step lives in a separate processor and can be swapped or omitted. Minimal animation graph: `Timer → AnimationController → Effect`. To shape the timer's linear phase into a waveform (sine, triangle, bell, …) insert `Interpolator` between the timer and whatever consumes the signal. To pick between two complete sub-chains based on a third signal, route them through `Signal Switch` (see below).
+Every step is a separate processor — swap or omit any. Minimal: `Timer → AnimationController → Effect`. Insert `Interpolator` to shape phase. Use `SignalSwitch` / `AnimationSwitch` to gate sub-chains by an event.
 
 ## Event — discrete signal
 
-`EVENT` is the only discrete signal in the chain. It carries an ever-growing `count`, a wall-clock `lastTimestampMs`, and an optional `(lastX, lastY)` event coordinate.
+`EventSignal { count, lastTimestampMs, lastX?, lastY? }`. Producers (both `alwaysDirty`, share the same `id` / `label` contract → both appear in `PublishedPipeline.surface.tapZones[]`):
 
-Producer: `eventEmitter` (on-demand event source — bumps `count` on every `emit()` call; the NodeView surfaces this through an **EMIT** button). No DOM listener is attached — the node is decoupled from the canvas so it works equally from a node-card button, a future hotkey, or an external integration.
+- **`eventEmitter`** — on-demand source; `emit()` bumps `count`. EMIT button on the NodeView. Decoupled from the canvas. Tier-3 dispatches programmatically by `params.id`.
+- **`tapZone`** — supplier-facing tap region; consumes `contour: CONTOUR`. Runtime hit-tests against the live `ContourSamples` (point-in-polygon) and calls `emit(x, y)` on hits. Editor's EMIT button stands in for testing. Contour is a hard publish dependency.
 
-Consumer: `envelope` (turns each new event into a clip), `signalSwitch` (each new event toggles A↔B), and any processor that watches `event.count` for change. `eventEmitter` is `alwaysDirty` so downstream propagation happens every frame.
+Both carry stable `params.id` (autogenerated `evt_<n>` / `tap_<n>`; deterministic migration for legacy snapshots).
 
-## Signal — continuous driver (single channel)
+Consumers: `envelope`, `signalSwitch`, `animationSwitch`, anything watching `event.count`.
 
-`SIGNAL` is a continuous `0..1`-ish driver (sources may emit unbounded values; the controller is responsible for clamping at the end). Fields:
+## Signal — continuous driver
 
 ```ts
 Signal { value, time, age, state: 0 | 1, lastTimestampMs }
 ```
 
-`value` is the user-controlled waveform output. `time` and `age` are diagnostic ms clocks (since clip start / since last event). `state = 1` while a clip is in progress.
+`value` = user-controlled waveform. `time` / `age` = diagnostic ms clocks. `state = 1` while a clip is running.
 
-> Downstream nodes consume **`value`**, never `time`. `time` is a raw ms clock — it grows linearly in `Timer mode=unbounded` even when an Interpolator turned the user-facing `value` into a clean 0..1 cycle, and it would still grow under a `Combine` that the user expects to "freeze". The Interpolator is also a no-op on `time`: shaping only touches `value`, so a node reading `time` ignores the entire user-tunable shape. Always drive from `value`. The single exception is the `noiseVisualizer` UI label which uses `value` as a "drift driver". See the comment block in `animation-controller.ts → execute` for the long-form rationale.
+> **Always consume `value`, never `time`.** `time` is a raw ms clock — it grows linearly in `Timer mode=unbounded` even when an Interpolator turned `value` into a clean cycle, and would still grow under a paused/frozen `Combine`. Interpolator is a no-op on `time`. The single allowed reader of `value` (and never `time`) outside this rule is `noiseVisualizer`'s UI label. See `animation-controller.ts → execute` for full rationale.
 
 ### Producers
 
-The clock and the waveform are deliberately split into two nodes — `timer` is a pure time source (linear phase), `interpolator` shapes that phase. Old snapshots that referenced the monolithic `autoTimer` log `Unknown processor type: autoTimer` and skip; rebuild as `Timer → Interpolator`.
+#### `constantSignal` (input)
 
-For static drivers (no clock), use `constantSignal` (input category) — emits a fixed `Signal { value, time: 0, age: 0, state, lastTimestampMs: 0 }`. Pure function of params, not `alwaysDirty`. Use to pin an AnimationController channel to a static value without spinning a Timer + Interpolator pair, or to deliberately disable a channel by feeding `0` (vs leaving it unwired, which already yields 0 — but a wired Constant makes the intent explicit on the canvas).
+Fixed `Signal { value, state, time:0, age:0, lastTimestampMs:0 }`. Pure, not `alwaysDirty`. Use to pin a channel to a static value (vs leaving unwired which also yields 0 — Constant makes intent explicit).
 
 #### `timer` (`alwaysDirty`)
 
-Self-running, no inputs. Emits `signal: SIGNAL` every frame.
+Self-running, no inputs. Emits `signal: SIGNAL`.
 
-Params:
-
-| Param | Type / Range | Default | Purpose |
+| Param | Range | Default | Purpose |
 |---|---|---|---|
-| `mode` | `'looped' \| 'unbounded'` | `'looped'` | `looped` wraps phase to `[0, 1)` every period (saw with instant reset); `unbounded` returns `elapsed / durationMs` and grows linearly forever. |
-| `durationMs` | `≥ 1` | `2000` | Period in ms. Smaller = faster phase growth. |
-| `phaseOffsetMs` | float | `0` | Shifts the internal clock so multiple timers can phase-lock or stagger (e.g. several rays each with a constant offset). |
-| `paused` | bool | `false` | Freeze elapsed-ms accumulator. The phase resumes from where it left off — no jump on un-pause. `state` becomes 0 while paused. |
+| `mode` | `looped \| unbounded` | `looped` | `looped` wraps phase to `[0,1)`; `unbounded` returns `elapsed/durationMs` and grows linearly forever. |
+| `durationMs` | ≥ 1 | 2000 | Period; smaller = faster. |
+| `phaseOffsetMs` | float | 0 | Stagger multiple timers (e.g. several rays). |
+| `paused` | bool | false | Freeze the elapsed-ms accumulator. Phase resumes from where it left off — no jump on un-pause. `state` becomes 0 while paused. |
 
-Output:
+Output: `value` per mode; `time = age = elapsed`; `state = paused ? 0 : 1`.
 
-- `value` — phase: `looped` → `frac(elapsed / durationMs)` ∈ [0, 1); `unbounded` → `elapsed / durationMs` ∈ [0, ∞).
-- `time` / `age` — elapsed ms (excluding paused intervals).
-- `state` — `1` while running, `0` while paused.
-
-Internally the timer accumulates `dt` only when `!paused`, which keeps `unbounded` mode monotonic across pauses without surprising jumps.
+Internally accumulates `dt` only while `!paused`, keeping `unbounded` mode monotonic across pauses.
 
 #### `interpolator`
 
-Shape-only complement to `timer`. Inputs `signal: SIGNAL`, outputs `signal: SIGNAL`. Pure function of input — **not** `alwaysDirty`; relies on dirty propagation from upstream `alwaysDirty` sources (Timer / Envelope / Combine).
+Shape-only. `signal: SIGNAL → signal: SIGNAL`. Pure, not `alwaysDirty` (rides upstream propagation).
 
-Profiles (`params.profile`):
+Continuous profiles (`params.profile`):
 
-| Profile | Output | Use case |
-|---|---|---|
-| `linear` | passthrough — `output.value = input.value` (no `frac`). | Preserves unbounded inputs intact (e.g. shader scroll-phase consumers that apply their own `mod()`). |
-| `sine` | `(1 − cos(2π·phase)) / 2`. | Seamless 0→1→0 oscillation. |
-| `triangle` | `sampleShape('triangle', phase, peakTime, ...)`. | Linear up/down. `peakTime ∈ [0, 1]` is the asymmetric peak position. |
-| `bell` | `sampleShape('bell', phase, ...)`. | Smooth half-sine pulse over the period. |
-| `gaussian` | `sampleShape('gaussian', phase, ...)`. | Bell with soft tails. |
-| `pulse` | `sampleShape('plateau', phase, peakTime, plateauHold, ...)`. | Attack–hold–decay; `plateauHold ∈ [0, 1]` controls hold width as a fraction of the period. |
+| Profile | Output |
+|---|---|
+| `linear` | passthrough — `output.value = input.value` (no `frac`). Preserves unbounded inputs intact. |
+| `sine` | `(1 − cos(2π·phase)) / 2`. |
+| `triangle` | `sampleShape('triangle', phase, peakTime, ...)`. `peakTime ∈ [0,1]` is the asymmetric peak. |
+| `bell` | `sampleShape('bell', ...)`. Smooth half-sine pulse. |
+| `gaussian` | `sampleShape('gaussian', ...)`. Bell with soft tails. |
+| `pulse` | `sampleShape('plateau', phase, peakTime, plateauHold, ...)`. Attack–hold–decay. |
 
-Discrete / toothed profiles drive **stepped** animation (sprite frame counters, dashed marquees, anything that wants visible quantisation). Every discrete profile shares a single `smoothness ∈ [0, 1]` knob that fades from hard discrete edges (`0`) to a fully smoothed equivalent (`1`).
+Discrete profiles drive stepped animation (frame counters, dashed marquees). All share `smoothness ∈ [0, 1]` (0 = hard, 1 = fully smoothed equivalent).
 
-| Profile | Output | Shared smoothness behaviour |
-|---|---|---|
-| `steps` | Staircase quantizer with `stepCount ∈ [2, 64]` levels evenly spaced from 0 to 1. Each step holds for `1/stepCount` of the period. | `0` = flat plateaus with hard jumps. Intermediate values smoothstep the last `smoothness × (1/stepCount)` of every step into the next level. `1` collapses the staircase back into a perfectly linear ramp. |
-| `square` | Pulse train with `teethCount ∈ [1, 64]` cycles per period. `dutyCycle ∈ [0, 1]` controls the fraction of each cycle spent at `1`. | `0` = pure square wave. Larger values feather both edges with a smoothstep of half-width `smoothness × 0.5` (in cycle units); the rising edge wraps across the cycle boundary so neighbouring cycles connect smoothly. |
-| `sawTeeth` | Sawtooth pulse train with `teethCount ∈ [1, 64]` cycles per period. Each cycle ramps 0→1 then drops back to 0. | `0` = pure saw with instant drop. Larger values widen the falling slope at the expense of the rising slope. `1` = perfectly symmetric triangle. |
+| Profile | Output |
+|---|---|
+| `steps` | Staircase with `stepCount ∈ [2, 64]` levels. `smoothness` smoothsteps the last `s × (1/stepCount)` of every step; `1` collapses to a linear ramp. |
+| `square` | Pulse train; `teethCount ∈ [1, 64]` cycles per period, `dutyCycle ∈ [0,1]`. `smoothness` feathers both edges with half-width `s × 0.5` (rising edge wraps across the cycle boundary). |
+| `sawTeeth` | Sawtooth pulse train; `teethCount` cycles per period. `smoothness` widens the falling slope at the expense of the rising slope; `1` = symmetric triangle. |
 
-For every non-`linear` profile the input value is wrapped first: `phase = input.value − floor(input.value)`. So a `Timer mode=unbounded` feeding `Interpolator profile=sine` still yields a clean 0..1..0 cycle — equivalent to the legacy `autoTimer mode=sine`. The same applies to `steps` / `square` / `sawTeeth`: their `teethCount` / `stepCount` count cycles **per timer period**, so a 2 s `Timer` plus `square` with `teethCount=4` blinks 4 times every 2 seconds. To change the blink rate, change `Timer.durationMs` (speed contract — see below).
+Every non-`linear` profile wraps first: `phase = input.value − floor(input.value)`. So `Timer mode=unbounded → Interpolator profile=sine` yields a clean 0..1..0 cycle. Discrete `teethCount`/`stepCount` count cycles **per Timer period** — to change the rate, change `Timer.durationMs`.
 
-`reverse: boolean` mirrors the output (`v → 1 − v`) uniformly across every profile. `easing` (one of `linear | easeIn | easeOut | easeInOut`) is honoured by the shaped continuous profiles via `sampleShape`'s attack/decay arms; discrete profiles ignore it.
+`reverse: boolean` mirrors output uniformly. `easing` (`linear | easeIn | easeOut | easeInOut`) is honoured by continuous shaped profiles via `sampleShape`'s attack/decay arms; discrete profiles ignore it.
 
-The `applyProfile` function is exported so the Interpolator node UI can preview the curve at sub-frame resolution without duplicating the formula. It now takes a single `ProfileParams` bag (`{ peakTime, plateauHold, easing, reverse, stepCount, teethCount, dutyCycle, smoothness }`) — keep all callers in sync if you add a new param.
+`applyProfile` is exported (NodeView preview); takes a single `ProfileParams` bag — keep callers in sync.
 
-> **No upstream signal wired** → the interpolator emits the idle signal `{ value: 0, state: 0, … }`. To produce a frozen non-zero value, pause a `Timer`, dial `phaseOffsetMs`, and use `profile=linear`.
+> No upstream signal → idle `{ value: 0, state: 0, … }`. For a frozen non-zero value: pause Timer, dial `phaseOffsetMs`, profile `linear`.
 
 #### `envelope` (`alwaysDirty`)
 
-Event → shaped signal. Each new `EventSignal.count` spawns an `EnvelopeClip { startMs }`. Per-frame it samples `sampleShape(shape, t, peakTime, plateauHold, attackEasing, decayEasing)` for every active clip and folds them through `retriggerMode`:
+Event → shaped signal. Each new `event.count` spawns an `EnvelopeClip { startMs }`. Per-frame samples `sampleShape(...)` for active clips and folds via `retriggerMode`:
 
-- `restart` — only the most recent clip survives; new event aborts the previous.
-- `add` — sum of contributions, clamped to 1.
+- `restart` — only the most recent clip survives.
+- `add` — sum, clamped to 1.
 - `max` — peak across active clips. Best for "cap" behaviours that should not pump on retrigger.
 
-Shapes (`params.shape`):
+Shapes: `bell` (`sin(π·t)`), `rise` (climb 0→1, drop instantly at `t=1`), `fall` (start at 1, decay), `plateau` (Attack-Hold-Decay), `gaussian` (`exp(-((t-peak)/σ)²)`, σ=0.25), `triangle`. Easings `linear | easeIn | easeOut | easeInOut` apply separately to attack and decay.
 
-- `bell` — symmetric `sin(π·t)`.
-- `rise` — climb 0→1 with `attackEasing`, drop to 0 instantly at `t = 1`. Use for a sharp upbeat.
-- `fall` — start at 1 (at t = 0+), decay with `decayEasing`. Use for "boom and decay".
-- `plateau` — Attack-Hold-Decay; `peakTime` is the centre of the plateau, `plateauHold` is its width.
-- `gaussian` — `exp(-((t - peak) / σ)²)` with σ = 0.25.
-- `triangle` — symmetric triangle peaking at `peakTime`.
-
-Easings: `linear | easeIn | easeOut | easeInOut`. Apply separately to attack and decay legs.
-
-The processor exposes `getSnapshot()` returning `EnvelopeSnapshot` (active clips + last value + shape params) so the NodeView draws the live curve and play-head.
+`getSnapshot()` exposes active clips + last value + shape params for the NodeView curve preview.
 
 #### `combineSignals` (`alwaysDirty`)
 
-Two SIGNAL inputs (`signal_a`, `signal_b`) → one SIGNAL output. Modes:
+Two SIGNAL → one. Modes: `add` (no clamp), `max`, `min`, `multiply`, `a_overrides_b` (use `a.value` when `a.state=1`, else `b.value`), `b_overrides_a`, `mix` (lerp via static `mixFactor ∈ [0,1]`).
 
-- `add` — `a + b` (no clamp).
-- `max` — `max(a, b)`. Idle floor + active spikes.
-- `min` — `min(a, b)`.
-- `multiply` — `a * b`.
-- `a_overrides_b` — when `a.state = 1` use `a.value`, else `b.value`.
-- `b_overrides_a` — mirror of above.
-- `mix` — `lerp(a, b, mixFactor)` with static `mixFactor ∈ [0,1]`.
-
-Output `state = 1` if either input is active. `lastTimestampMs` = max of both. `time` = max, `age` = min (the more recent activity wins).
-
-Idle inputs (no upstream) default to `{ value: 0, state: 0, ... }` so a one-leg Combine still produces sensible output.
+Output `state = a.state | b.state`. `lastTimestampMs = max`. `time = max`, `age = min` (most recent activity wins). Idle inputs default to `{ value:0, state:0 }`.
 
 Canonical use: layer user input over an idle drive.
 
 ```
 Timer → Interpolator ──┐
-                       ├── Combine (mode: a_overrides_b) ──► AnimationController slot N
+                       ├── Combine (a_overrides_b) ──► AnimationController slot N
 Envelope ──────────────┘
 ```
 
-While the user isn't emitting, the timer drives the channel. Each event takes over for the envelope's duration, then the timer rejoins.
+Timer drives idle; events take over for the envelope's duration; timer rejoins.
 
 #### `signalSwitch` (`alwaysDirty`)
 
-Two SIGNAL inputs (`signal_a`, `signal_b`) and one EVENT input (`event`) → one SIGNAL output. **Each new event toggles the side A↔B** and starts a fresh cross-fade. The two directions own independent durations and easing profiles, so an A→B fade can rush in fast with `easeOut` while B→A returns slowly with `easeInOut`. Profiles: `instant | linear | easeIn | easeOut | easeInOut | smoothstep | sine`. `instant` snaps without morphing regardless of the configured duration.
+Two SIGNAL inputs + one EVENT control → one SIGNAL. Each new event toggles A↔B and starts a fresh cross-fade. Per-direction `transitionAbMs` / `transitionBaMs` + `profileAb` / `profileBa` (`instant | linear | easeIn | easeOut | easeInOut | smoothstep | sine` — `instant` snaps regardless of duration).
 
-```
-Timer A ─► Interpolator A ─┐
-                            ├─ signal_a ─┐
-Timer B ─► Interpolator B ─►─ signal_b ─┤
-                                         │
-EventEmitter (EMIT) ───────────► event ─┴── Signal Switch ─► AnimationController slot N
-```
+True cross-fade (both inputs keep evolving): `output = lerp(from.value, to.value, applyEasing(profile, t))`. Re-emit mid-morph captures the visible output as the new from-value, so a rapid double-emit stays visually continuous.
 
-The cross-fade is a *true* cross-fade — both inputs keep evolving while the morph is in flight: `output = lerp(from.value, to.value, applyEasing(profile, t))`. After settle, output equals `to.value`. Re-emitting mid-morph captures the currently-visible output value and crossfades from that captured constant to the new target's live value — so a rapid double-emit stays visually continuous instead of snapping to a stale upstream value.
+`state = 1` if either input is active OR a transition is in flight (keeps downstream ticking through the morph). Without an event source, holds the current side. On first execute bootstraps `lastSeenEventCount` from the wired control so a saved-and-restored graph doesn't trigger a phantom flip.
 
-`state = 1` if either input is active OR a transition is in flight (the latter is what keeps downstream nodes ticking through the morph even when both sides are momentarily quiet). Without a control wired the switch holds whatever side it was on; on first execute the processor also bootstraps `lastSeenEventCount` from the wired control so a saved-and-restored graph doesn't trigger a phantom flip on mount.
+Both branches keep computing every frame even when unselected — the switch is non-destructive.
 
-Generic toggle-mux uses: hot-swap a "calm" Timer for an "intense" Timer when the user emits; pick between two Interpolator profiles on demand; gate idle drift vs envelope-driven activity. Any `EVENT` source works — `eventEmitter` (Emit button), or any future event source. Both inputs' upstream chains continue to compute every frame even when unselected — the switch is non-destructive.
-
-## ChannelSignal — what the controller publishes
-
-`AnimationController` packs every channel into a `ChannelSignal` packet:
+## ChannelSignal — what AnimationController publishes
 
 ```ts
 ChannelSignal {
-  time:  Signal.value,           // unclamped drive (NOT Signal.time ms)
-  raw:   clamp01(Signal.value),  // 0..1 form
-  value: lerp(min_i, max_i, raw),// physical mapped value
+  time:  Signal.value,            // unclamped drive (NOT Signal.time ms)
+  raw:   clamp01(Signal.value),
+  value: lerp(min_i, max_i, raw),
   state: Signal.state | 0,
 }
 ```
 
-The `time` field name is historical — it is the unclamped drive, NOT a ms clock. Renaming would touch every shader. Treat it semantically as `drive` and keep the field name.
+`time` field name is historical (renaming would touch every shader). Treat it as `drive`.
 
 ## AnimationSignal & the 8-channel pool
 
-`AnimationSignal { channels: Record<string, ChannelSignal> }` — keyed by channel index strings `'0'..'7'`.
-
-Pool size: `ANIMATION_CHANNEL_COUNT = 8` (`pipeline/types.ts`). Effects don't pick names; they pick **indices**. Shaders bind one uniform per channel — `uniform vec4 uChan{i};` where:
+`AnimationSignal { channels: Record<'0'..'7', ChannelSignal> }`. `ANIMATION_CHANNEL_COUNT = 8` (`pipeline/types.ts`). Effects pick **indices**, not names. Shaders bind `uniform vec4 uChan{i};`:
 
 | Component | Source | Notes |
-|-----------|--------|-------|
-| `.x` (drive) | `ChannelSignal.time` (= upstream `Signal.value`, unclamped) | `Timer mode=unbounded` grows linearly forever. `Interpolator` profiles `sine`/`triangle`/`bell`/`gaussian`/`pulse` oscillate 0..1. A paused Timer holds a static phase. To control speed, change `Timer.durationMs` upstream. |
-| `.y` (raw) | `clamp01(Signal.value)` | Bounded 0..1 mix factor regardless of upstream mode. |
-| `.z` (value) | `lerp(min_i, max_i, raw)` | Physical mapped value. Most amplitude-like uniforms (radial offset, size, glow multiplier, intensity) read this. |
-| `.w` (state) | `Signal.state | 0` | 0 = idle, 1 = clip in progress. |
+|---|---|---|
+| `.x` (drive) | `ChannelSignal.time` (unclamped) | `Timer unbounded` grows linearly. Continuous Interpolator profiles oscillate 0..1. Paused Timer holds static phase. |
+| `.y` (raw) | `clamp01(value)` | Bounded mix factor. |
+| `.z` (value) | `lerp(min_i, max_i, raw)` | Physical mapped value. Most amplitude-like uniforms read this. |
+| `.w` (state) | `Signal.state \| 0` | 0 idle, 1 clip in progress. |
 
 Canonical slot layout (convention only — any shader can opt into any slot):
 
 | Slot | Role |
-|------|------|
+|---|---|
 | 0 | primary phase driver (scroll / phase / progress) |
 | 1 | radial offset / phase |
 | 2 | width / size |
 | 3 | spacing / glow |
 | 4 | intensity (alpha multiplier) |
-| 5 | noise time driver (`pipeline/noise.glsl.ts`) |
+| 5 | noise time driver |
 | 6, 7 | free |
 
-**Speed contract — speed is upstream, period.** No effect manifest exposes `uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, `uNoiseSpeed`, `uSlideSpeed`, `uColorSpeed`, `uAnimationSpeed`, etc. Animation rate is fully owned by `Timer (mode + durationMs) → optional Interpolator/Envelope/Combine → AnimationController (min/max)`.
+**Speed contract — speed is upstream.** No manifest exposes `uOrbitSpeed`, `uRaySpeed`, `uWaveSpeed`, etc. To pause: `Timer.paused = true`. To slow/speed: `Timer.durationMs`. To rescale amplitude: controller's `min_i`/`max_i`.
 
-- To pause an effect → set `Timer.paused = true` (the channel freezes at its current phase).
-- To slow / speed up → tune `Timer.durationMs`. Smaller = faster.
-- To rescale amplitude → expand the controller's `min_i`/`max_i` range for that slot.
+## AnimationController (`alwaysDirty`)
 
-## AnimationController
+Universal 8-slot mapper.
 
-Universal 8-slot mapper. Inputs:
+- Inputs: `signal_0..signal_7: SIGNAL`, optional `config: CONFIG` (passes through `ConfigProcessor.outputs.config` so the UI can pull `defaultMin/defaultMax/label` from `effect.animation.slots[]`).
+- Output: `animation: ANIMATION` keyed by `'0'..'7'`. Per-slot params `min_i` / `max_i` override manifest defaults (priority `params.min_i ?? slot.defaultMin ?? 0`).
 
-- `signal_0..signal_7: SIGNAL` — one driver per channel.
-- `config: CONFIG` (optional) — passes through the upstream `ConfigProcessor.outputs.config` so the controller's UI can pull `defaultMin`/`defaultMax` and `label` from `effect.animation.slots[]` for the active effect.
+> Output handle is named **`animation`** (not `signal`) so it doesn't collide with the SIGNAL-typed `signal` outputs of Timer/Interpolator/Combine/SignalSwitch in the editor. Old snapshots with `sourceHandle: 'signal'` from `animationController` won't reconnect — no auto-migration; rewire.
 
-Outputs `animation: ANIMATION` keyed by `'0'..'7'`. Per-slot params `min_i` and `max_i` override the slot's manifest defaults (priority: `params.min_i ?? slot.defaultMin ?? 0`, same for max).
+Slots without an upstream `signal_i` still emit `ChannelSignal { time:0, raw:0, value: lerp(min, max, 0), state:0 }` — the channel uniform always exists. Always `alwaysDirty` so `value = lerp(min, max, 0)` tracks param edits without waiting for structural changes.
 
-> The output handle is named **`animation`**, not `signal`. The earlier name collided visually with the SIGNAL-typed `signal` output of every modulator (Timer / Interpolator / Combine / SignalSwitch) and was a frequent source of confusion in the editor — the rename makes the slot type and handle name match. Old snapshots that recorded edges with `sourceHandle: 'signal'` from an `animationController` won't reconnect after restore — there is no auto-migration; rewire to the new `animation` handle.
+## AnimationSwitch (`alwaysDirty`)
 
-Slots without an upstream `signal_i` produce `ChannelSignal { time: 0, raw: 0, value: lerp(min, max, 0), state: 0 }`. They are still emitted — the channel uniform always exists.
+Toggle between **two whole `ANIMATION` packets** on each EVENT. Same UX as `signalSwitch` (event flips A↔B, per-direction durations + profiles, re-emit captures visible output) but applied to the multi-channel pool at once.
 
-The controller is `alwaysDirty` because at least one upstream Signal node usually is, and even when nothing is wired we want `value = lerp(min, max, 0)` to track param edits without waiting for a structural change.
+Inputs `animation_a`, `animation_b`, `event`. Cross-fade is per channel and per scalar field — `time/raw/value` lerp, `state` is OR. Channels missing on one side lerp against an idle channel (active channels never drop).
 
-## AnimationSwitch
+Use to swap entire control surfaces (calm preset ↔ intense preset on a single Emit) instead of fanning out 8 SignalSwitches.
 
-Companion node to `AnimationController` that toggles between **two whole `ANIMATION` packets** on each EVENT, with per-direction duration + easing profiles. Same UX as `signalSwitch` (event flips A↔B, A→B and B→A own independent transitions, re-emit captures the visible output) but applied to the multi-channel pool at once.
+## Effect node uniform binding
 
-Inputs `animation_a`, `animation_b`, `event`. Output `animation: ANIMATION`. Cross-fade is per channel and per scalar field — `time`, `raw`, `value` are lerped, `state` is the OR of from/to. Channels missing on one side lerp against an idle channel so a partial side doesn't drop active channels from the other side.
-
-Use to swap entire control surfaces — e.g. cross-fade from a "calm" controller preset (slow Timers + small min/max) to an "intense" preset (fast Timers + large min/max + active envelopes) on a single Emit. The alternative is a fan of 8 `signalSwitch` nodes between two controllers, which is harder to read and rewire.
-
-```
-ControllerA (8× SIGNAL → ANIMATION) ─┐
-                                      ├── AnimationSwitch ─► Effect.animation
-ControllerB (8× SIGNAL → ANIMATION) ─┤
-                                      │
-EventEmitter (EMIT) ────────► event ─┘
-```
-
-## How the Effect node uses the pool
-
-`EffectProcessor.makeUniformGroup` walks `i ∈ [0, ANIMATION_CHANNEL_COUNT)`:
-
-1. Look up `slotByIndex.get(i)` from the active effect's `animation.slots[]`. If the slot is missing, fall back to `value: slot?.defaultMin ?? 0` so unconnected, undeclared channels still publish a sane uniform.
-2. Read `animation?.channels?.[String(i)]` from the upstream `AnimationController`.
+`EffectProcessor.makeUniformGroup` walks `i ∈ [0, 8)`:
+1. `slotByIndex.get(i)` from active manifest's `animation.slots[]`. Missing → fallback `value: slot?.defaultMin ?? 0`.
+2. Read `animation?.channels?.[String(i)]`.
 3. Bind `uChan{i} = vec4(time, raw, value, state)`.
 
-`warnUndeclaredChannels` scans every shader source on the active manifest for `\\buChan(\\d+)\\b` and warns once per `(effect, slot)` when:
-
-- The index is outside `[0, ANIMATION_CHANNEL_COUNT)`.
-- The slot is referenced but not declared in `animation.slots`. The runtime falls back to defaults; the warning surfaces manifest/shader drift.
+`warnUndeclaredChannels` scans every shader for `\buChan(\d+)\b`, warns once per `(effect, slot)` if the index is OOB or undeclared (runtime falls back to defaults; the warning surfaces drift).
 
 ## Slot 5 — noise time
 
-`pipeline/noise.glsl.ts` defines the canonical `hash21 / valueNoise2D / fbm2D` chunk. By convention, time-driven shaders sample it as:
+`pipeline/noise.glsl.ts` defines `hash21 / valueNoise2D / fbm2D`. Convention:
 
 ```glsl
 fbm2D(uv * uScale + uChan5.x * driftDir);
 ```
 
-where `driftDir` is shader-local (often `vec2(driftRate, 0.0)`). Drift speed lives upstream on whatever Timer is wired into slot 5 — `unbounded` for steady drift, `paused = true` to freeze it.
+`driftDir` is shader-local (often `vec2(driftRate, 0.0)`). Drift speed = upstream Timer in slot 5.
 
-The `noiseVisualizer` processor (utility category) renders this exact contract on a known surface (chess / stripes pattern) so a designer can see what the field is doing at a given Timer setting before plugging it into a real shader.
+`noiseVisualizer` (utility) renders this contract on a known surface (chess / stripes) so designers can preview the field.
 
-## Common pitfalls
+## Pitfalls
 
-- **Reading `Signal.time` instead of `Signal.value`** in a Combine or any custom processor → channel keeps growing even when the Timer is paused (the elapsed clock continues to tick when read this way). Always consume `value`.
-- **Hard-coding speed in a shader uniform** → breaks the upstream-only speed contract. If you need a constant scaling, fold it into `min_i`/`max_i` on the controller. If you need a non-linear curve, insert an Interpolator (or layer with Combine).
-- **Multiple shaders racing for the same slot** → slot allocation is per-effect, but if you fan a single Timer into multiple Effects via the same controller, every controller slot maps to the same channel for both — usually what you want.
-- **Adding a new slot beyond 7** → bump `ANIMATION_CHANNEL_COUNT`, then update every effect manifest, every shader, the AnimationController default params, and the maintenance docs. Don't do this casually; the canonical layout is intentionally fixed.
+- Reading `Signal.time` instead of `Signal.value` — the channel keeps growing even when Timer is paused.
+- Hard-coding speed as a shader uniform — breaks the contract; use controller `min/max` for constants, Interpolator for non-linear curves.
+- Adding a slot beyond 7 — bump `ANIMATION_CHANNEL_COUNT`, update every manifest, every shader, controller defaults, docs.

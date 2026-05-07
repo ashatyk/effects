@@ -1,48 +1,74 @@
 ---
-description: Persistence — Dexie schema, SceneSnapshot shape, undo/redo cursor, blob storage, debounced auto-save, ID counter healing, image/segmentation persistence. Read before changing snapshot shape, history flow, or any persisted field.
+description: Persistence — Dexie schema, SceneSnapshot shape, undo/redo cursor, blob storage, debounced auto-save, ID counter healing. Read before changing snapshot shape, history flow, or any persisted field.
 alwaysApply: true
 ---
 
 # Scene persistence
 
-The editor uses Dexie (IndexedDB wrapper) to persist:
-
-1. A linear history of `SceneSnapshot`s for undo/redo (capped at 80).
+Editor uses Dexie (IndexedDB) for:
+1. Linear history of `SceneSnapshot`s for undo/redo (capped at 80).
 2. Binary blobs (image data URLs, segmentation masks) keyed by node id.
 
-Database name: `effects-scene-db`. Two tables (single migration, version 1):
+DB: `effects-scene-db`. Two tables (single migration, version 1):
 
 ```ts
 snapshots: '++id, timestamp'
 blobs:     'key, updatedAt'
 ```
 
-## Snapshot shape (`node-engine/scene-store.ts`)
+## Snapshot shape (`apps/editor/src/scene-store.ts`)
+
+> Editor-only (Dexie). Supplier-app is in-memory + Export/Import. Re-exports `SerializedNode` / `SerializedEdge` from `@effects/runtime` so the wire format is shared with `PublishedPipeline.graph`.
 
 ```ts
 SceneSnapshot {
-  id?: number                // primary key, auto-increment
+  id?: number                // primary key
   timestamp: number          // Date.now()
   label: string              // 'edit' | 'import' | ...
+  nodeIdCounter: number      // see "ID counter healing"
+  manifestVersion?: number   // PUBLISH_MANIFEST_VERSION at write time;
+                             //   defaults to 1 on read for legacy snapshots
+  pinnedIds?: string[]
+  pages?: SerializedPage[]
+  activePageId?: string
+
+  // DEPRECATED legacy flat fields. Read only by applySnapshot's
+  // migration path when `pages` is missing — wraps into a single 'Main' page.
+  // New writes always populate `pages`.
+  nodes?: SerializedNode[]
+  edges?: SerializedEdge[]
+  viewport?: { x, y, zoom }
+}
+
+SerializedPage {
+  id: string                 // 'p_<int>'
+  name: string
   nodes: SerializedNode[]
   edges: SerializedEdge[]
-  nodeIdCounter: number      // see "ID counter healing" below
-  pinnedIds?: string[]       // optional UX state
-  viewport?: { x, y, zoom }  // optional UX state
+  viewport?: { x, y, zoom }  // each page remembers its own zoom/pan
 }
 
 SerializedNode {
   id: string                 // 'n_<int>'
-  type: string               // matches PROCESSOR_CATALOG key (and React Flow node type)
+  type: string               // PROCESSOR_CATALOG key OR 'clone' for UI-only aliases
   position: { x, y }
   data: {
-    processor: string        // duplicate of `type` for engine init
+    processor: string        // 'clone' for clones, otherwise a real processor key
     params: Record<string, unknown>
-    label?: string
-    imageUrl?: string        // image processor: 'img:<nodeId>' blob key
-    segPoints?: SamPoint[]   // segmentation processor: positive/negative markers
-    segPolygon?: number[]    // segmentation processor: SAM polygon (flat x/y pairs)
-    segMaskKey?: string      // segmentation processor: 'seg:<nodeId>' blob key
+    label?: string           // user-given display name
+    cloneOf?: string         // UI-only viewer alias of another node anywhere in the scene;
+                             //   engine NEVER sees clones — sceneResolver rewrites
+                             //   clone-source edges to point at the original
+    exposed?: {              // Tier-2 supplier metadata — see publish-plane.mdc
+      mode: 'whole' | 'fields'
+      fields?: string[]      // FieldDef.name keys when mode='fields' (config nodes)
+      label?: string
+      hint?: string
+    }
+    imageUrl?: string        // 'img:<nodeId>' blob key
+    segPoints?: SamPoint[]
+    segPolygon?: number[]    // SAM polygon, flat xy
+    segMaskKey?: string      // 'seg:<nodeId>' blob key
     [key: string]: unknown
   }
   width?: number             // React Flow v12: NodeResizer writes top-level
@@ -61,143 +87,113 @@ SerializedEdge {
   data?: Record<string, unknown>   // EditableStepEdge: { bends: { x, y }[] }
 }
 
-BlobEntry {
-  key: string                // 'img:n_3' or 'seg:n_5'
-  blob: Blob
-  mime: string
-  width?: number
-  height?: number
-  updatedAt: number
-}
+BlobEntry { key, blob, mime, width?, height?, updatedAt }
 ```
 
-> **Width/height go top-level**, not into `style`. React Flow v12's `NodeResizer` writes the explicit dimensions on `node.width` / `node.height`. Persisting them top-level is what stops a resized card from collapsing back to its content-intrinsic size on reload/undo.
+> **Width/height go top-level**, not into `style`. RF v12's `NodeResizer` writes them on `node.width` / `node.height`. Persisting top-level prevents a resized card collapsing back to content-intrinsic size on reload/undo.
 
 ## `SceneStore` API
 
-`sceneStore` (singleton) wraps the Dexie tables.
+`sceneStore` singleton wraps the Dexie tables.
 
-### Initialisation
-
-`await sceneStore.init()` — counts existing snapshots, sets `cursor` to the highest id (latest). Called once from `usePipelineEngine` after the engine is ready.
-
-### Snapshots (`undo`/`redo` are cursor-based)
-
-- `pushSnapshot(snap)` — write a new snapshot:
-  - If `cursor > 0`, delete every snapshot `> cursor` first (forward history is wiped on a new edit, classic VCS behaviour).
-  - Insert with `Date.now()` as timestamp.
-  - Update cursor to the new id.
-  - Trim to `MAX_SNAPSHOTS = 80` by deleting the oldest excess.
-- `undo()` — find the latest snapshot `< cursor`, move cursor to it, return the snapshot.
-- `redo()` — find the lowest snapshot `> cursor`, move cursor to it, return the snapshot.
-- `currentSnapshot()` — fetch by current cursor, or last snapshot if cursor is unset.
-
-### Blobs
-
-- `putBlob(key, blob, meta?)` — upsert, with optional `width`/`height`.
-- `putDataUrl(key, dataUrl, meta?)` — fetch the data URL, blob it, store.
-- `getBlob(key)` → `BlobEntry | undefined`.
-- `getDataUrl(key)` → `string | null` (FileReader → base64).
-
-### Housekeeping
-
+- `await sceneStore.init()` — counts snapshots, sets `cursor` to highest id (latest). Called once from `usePipelineEngine`.
+- `pushSnapshot(snap)` — if `cursor > 0` delete every snapshot `> cursor` (forward history wiped on new edit, classic VCS) → insert with `Date.now()` → cursor = new id → trim to `MAX_SNAPSHOTS = 80`.
+- `undo()` / `redo()` — find latest snapshot `<` / lowest `>` cursor, move cursor, return.
+- `currentSnapshot()` — fetch by current cursor, or last snapshot if cursor unset.
+- Blobs: `putBlob(key, blob, meta?)`, `putDataUrl(key, dataUrl, meta?)`, `getBlob(key)`, `getDataUrl(key)` (FileReader → base64).
 - `clearAll()` — drop both tables, reset cursor.
 
 ## History flow (`useSceneHistory`)
 
-`useSceneHistory({ nodes, setNodes, edges, setEdges, engineRef, pinnedIds, setPinnedIds, getViewport, setViewport })` returns:
-
-- `serializeScene()` → `ScenePayload` (everything except id/timestamp).
-- `persistBlobs()` — writes image/segmentation blobs to the `blobs` table keyed by node id.
-- `pushSnapshot(label?)` — debounced (`SNAPSHOT_DEBOUNCE_MS = 1200`). Skips when `isRestoringRef.current === true` (we're applying a snapshot, don't re-snapshot it).
-- `applySnapshot(snap, engine)` — restore.
-- `handleUndo()` / `handleRedo()` — convenience wrappers.
+`useSceneHistory({ pages, activePageId, replaceScene, engineRef, pinnedIds, setPinnedIds, getViewport, setViewport })` returns:
+- `serializeScene()` → `ScenePayload`. Active page captures fresh viewport via `getViewport()`; inactive keep stored viewport. Stamps `manifestVersion: PUBLISH_MANIFEST_VERSION` so consumers can fail-closed on future bumps.
+- `persistBlobs()` — writes image/segmentation blobs to the `blobs` table. Walks every page; clones skipped.
+- `pushSnapshot(label?)` — debounced (`SNAPSHOT_DEBOUNCE_MS = 1200`). Skips when `isRestoringRef.current === true`.
+- `applySnapshot(snap, engine)` — restore. Migrates legacy flat snapshots into a single `Main` page → `replaceScene(pages, activePageId)`.
+- `handleUndo()` / `handleRedo()`.
 
 ### Auto-save trigger
 
-`NodeEditor.useEffect([nodes, edges, pin.pinnedIds, engineReady])` calls `pushSnapshot()` on every change. Pan/zoom doesn't observe `nodes`/`edges`, so `onMoveEnd` from React Flow also calls `pushSnapshot()`. Both paths debounce through the same timer ref.
+`NodeEditor.useEffect([pages, activePageId, pin.pinnedIds, engineReady])` calls `pushSnapshot()`. Pan/zoom doesn't observe `pages` (RF drives viewport through its own store), so `onMoveEnd` from RF also calls `pushSnapshot()`. Both paths share the same debounce timer.
 
 ### Serialisation
 
-`serializeScene()`:
-
-1. Walk every `Node`, copy `id` / `type` / `position` / `data` (deep-copy `params`).
-2. Pull explicit `width`/`height` from React Flow node fields.
-3. For `image` nodes, look up the running `ImageProcessor` and write `imageUrl: 'img:<nodeId>'` if a URL is loaded. The blob payload itself goes through `persistBlobs()`.
-4. For `segmentation` nodes, look up the running `SegmentationProcessor` and write `segPoints` (markers), `segPolygon` (last decoded SAM polygon), `segMaskKey: 'seg:<nodeId>'` if a mask exists.
-5. Cast edges directly to `SerializedEdge` (they have all the fields React Flow needs).
-6. Capture `viewport` via `getViewport()` (with try/catch — may not be ready on the first mount).
-7. Return `{ nodes, edges, nodeIdCounter, pinnedIds, viewport }`.
-
-`persistBlobs()`:
-
-- For each `image` node: read the live processor's `loadedUrl`. If it starts with `data:`, call `sceneStore.putDataUrl('img:<id>', url)`. Pre-existing remote URLs are persisted by their string in `data.imageUrl` directly (no blob needed).
-- For each `segmentation` node: pack the running mask into a `Uint8Array` (1 / 0 per pixel), wrap as `Blob(application/octet-stream)`, store under `'seg:<id>'` with `width`/`height` meta.
+For each page, walk every node, copy `id / type / position / data` (deep-copy `params`). Skip the `imageUrl / segPoints / etc.` processor-state copy for clones. Pull explicit `width / height` from RF node fields. For `image` nodes, look up running `ImageProcessor` and write `imageUrl: 'img:<nodeId>'` if a URL is loaded (blob payload via `persistBlobs()`). For `segmentation` nodes, look up `SegmentationProcessor` and write `segPoints / segPolygon / segMaskKey` if a mask exists. Cast edges directly to `SerializedEdge`. Active page: `getViewport()`; inactive: keep `page.viewport`.
 
 ### Restore (`applySnapshot`)
 
 ```
 isRestoringRef.current = true
-for n of liveNodes: engine.removeNode(n.id)
-setNodeIdCounter(max(snap.nodeIdCounter, maxNodeIdNumber(snap.nodes)))   // see ID healing
-for sn of snap.nodes:
-    if (!PROCESSOR_CATALOG[sn.data.processor]) continue                  // unknown type → skip
-    engine.addNode(sn.id, sn.data.processor, { ...sn.data.params })
-    if image: load blob → setImageUrl
-    if segmentation: restore points/polygon/mask
-    push to restoredNodes
-setNodes(restoredNodes)
-filter snap.edges to only those whose endpoints survived → setEdges (also stamps type='editableStep')
-restore pinnedIds, viewport (each guarded)
+for page of currentPages, n of page.nodes: if (!n.data.cloneOf) engine.removeNode(n.id)
+
+incomingPages = snap.pages ?? [{ id:'p_1', name:'Main', nodes:snap.nodes, edges:snap.edges, viewport:snap.viewport }]
+setNodeIdCounter(max(snap.nodeIdCounter, maxNodeIdAcrossPages(incomingPages)))
+setPageIdCounterFromPages(incomingPages)
+
+for page of incomingPages, sn of page.nodes:
+    isClone = !!sn.data.cloneOf
+    if (!isClone && !PROCESSOR_CATALOG[sn.data.processor]) continue   // unknown processor → skip
+    if (!isClone):
+        engine.addNode(sn.id, sn.data.processor, { ...sn.data.params })
+        if image: load blob → setImageUrl
+        if segmentation: restore points/polygon/mask
+    push to restoredPage.nodes
+filter page.edges to only endpoints that survived ON THIS PAGE → restoredPage.edges (stamps type='editableStep')
+
+replaceScene(restoredPages, snap.activePageId ?? restoredPages[0].id)
+restore pinnedIds, set viewport from active page (rAF-deferred to wait for ReactFlow remount)
 isRestoringRef.current = false
 ```
 
-Two important properties:
+In-place migrations (mutates `sn.data.params` before engine sees them):
+- **`eventEmitter` / `tapZone` event ids.** Pre-publish-plane snapshots didn't carry `id` / `label`. Empty/missing → deterministic defaults keyed off the node id (`evt_<n>` / `tap_<n>` from `n_<int>`) so external glue / restored snapshots stay stable and the publish duplicate-id check stays satisfied.
 
-- **Skip unknown processor types.** If a snapshot mentions a processor that no longer exists (e.g. `sdfTextAtlas` after the text refactor), `addNode` warns and the node is dropped. Edges connected to a dropped node are filtered out by the `aliveIds` check.
-- **Subscribers stay attached.** `removeNode` + `addNode` of the same id never tears down React subscribers because `nodeListeners` is keyed by id (see `node-engine.mdc → Subscriber preservation`). The view re-renders against the new processor as soon as it executes.
+Three invariants:
+- **Skip unknown processor types.** `addNode` warns; node dropped. Edges to dropped nodes filtered by per-page `aliveIds` check; `resolveSceneForEngine` later drops clone-source edges.
+- **Subscribers stay attached.** `removeNode + addNode` of the same id never tears down React subscribers (`nodeListeners` keyed by id — see `node-engine.mdc`).
+- **Clones never reach `engine.addNode`.** Restoring with clones produces RF nodes only; engine sees clone-rewritten edges through the next `engine.setEdges` from the engine-sync effect.
 
 ## ID counter healing
 
-Node IDs follow `n_<int>`, minted by a module-level counter in `node-editor/constants.ts`:
+Node IDs `n_<int>`, page IDs `p_<int>`. Module-level counters in `node-editor/constants.ts` (nodes) and `node-editor/sceneResolver.ts` (pages):
 
 ```ts
-let nodeIdCounter = 0
-nextId()             // returns `n_${++nodeIdCounter}`
-getNodeIdCounter()   // current
-setNodeIdCounter(v)  // explicit override
-maxNodeIdNumber(nodes)  // walk SerializedNode[] / Node[], return max numeric suffix
+nextId(); getNodeIdCounter(); setNodeIdCounter(v); maxNodeIdNumber(nodes)
+nextPageId(); setPageIdCounterFromPages(pages); maxNodeIdAcrossPages(pages)
 ```
 
-The counter must never fall behind the live nodes' max suffix — otherwise `nextId()` would hand out an ID that already exists, and `setNodes([...nds, dup])` would silently drop the original because React Flow dedupes by `id`. This used to surface as "looks like a node-count limit, every add deletes one of the first nodes."
+Both counters MUST never fall behind the live max suffix — otherwise `nextId()` hands out an existing id and `setNodes([...nds, dup])` silently drops the original (RF dedupes by `id`). Historical bug: "looks like a node-count limit, every add deletes one of the first nodes."
 
-Three guards keep it consistent:
+Guards:
+- `applySnapshot` syncs node counter to `Math.max(snap.nodeIdCounter, maxNodeIdAcrossPages(incomingPages))` and page counter via `setPageIdCounterFromPages(incomingPages)` — heals even snapshots with counter at 0.
+- `NodeEditor.onAddFromPopover` runs `setNodeIdCounter(Math.max(getNodeIdCounter(), maxNodeIdNumber(allNodes_acrossPages)))` just before minting — heals an open session without reload, and uses **all pages** so a node minted on page B can't collide with one from page A.
+- `exportScene` writes the live `getNodeIdCounter()`, not 0.
 
-- `applySnapshot` syncs to `Math.max(snap.nodeIdCounter, maxNodeIdNumber(snap.nodes))` so even a snapshot with `nodeIdCounter: 0` (older imports) heals on restore.
-- `addNode` runs `setNodeIdCounter(Math.max(getNodeIdCounter(), maxNodeIdNumber(nodes)))` just before minting — heals an open session without reload.
-- `exportScene` writes the live `getNodeIdCounter()` value, not `0`.
+## Export / Import
 
-If you persist an externally-generated graph (CLI, fixture) and forget to set `nodeIdCounter`, the import path's healing covers it.
+`NodeEditor.exportScene()` → `SceneFile { pages, activePageId, nodeIdCounter, pinnedIds }` downloaded as `scene.json`. Each `image` node's URL preserved from the live processor (`proc.loadedUrl`), not the blob key — JSON portable across tabs/users only when URL is public (data URLs inlined fully).
 
-## Export / Import (JSON files)
+`importScene()` accepts both shapes:
+- new: `pages[]`, `activePageId`;
+- legacy: flat `nodes / edges / viewport` — wrapped into a single `Main` page (same migration path as Dexie restore).
 
-`NodeEditor.exportScene()` builds a `SceneData { nodes, edges, nodeIdCounter, pinnedIds, viewport }` and downloads as `scene.json`. The `image` URL is preserved from the live processor (`proc.loadedUrl`), not from the blob key — so the JSON is portable across tabs/users only when the URL is a public one (data URLs are inlined fully).
+After load: `applySnapshot` → `persistBlobs` → `pushSnapshot('import')` so the imported scene becomes a real history entry.
 
-`importScene()` reads the file, calls `applySnapshot`, then `persistBlobs` + `pushSnapshot('import')` so the imported scene becomes a real history entry.
+`clearScene()` removes every real engine node, resets to a single empty `Main` page, clears both Dexie tables.
 
-`clearScene()` removes every node + edge and clears both Dexie tables (`sceneStore.clearAll()`).
+## Not persisted
 
-## What is NOT persisted
+- Engine internals (output cache, dirty set, RT pool, geometry cache).
+- Ephemeral processor state (`EnvelopeProcessor.clips`, `LogProcessor.lastSmoothed`).
+- Pixi assets cache — image URLs reload via `Assets.load` on restore.
 
-- Engine internals (output cache, dirty set, RT pool, geometry cache) — recomputed on next tick.
-- Processor instance state that's ephemeral or recoverable (e.g. `EnvelopeProcessor.clips`, `LogProcessor.lastSmoothed`). Some of this would be nice to persist for "save and resume" UX but currently lives in memory only.
-- Pixi assets cache — image URLs are reloaded on restore via `Assets.load`.
+## Pitfalls
 
-## Common pitfalls
-
-- **Adding a new field to `data` without updating `serializeScene`** → field is lost on the next snapshot. Most fields go through `data: { ...n.data }` automatically, but anything sourced from a live processor (image URL, segmentation mask, etc.) needs an explicit copy.
-- **Adding a SLOT or processor type without considering snapshot compatibility** → the maintenance contract requires updating `project-overview.mdc` and `product-vision.mdc`. Old snapshots referring to a removed type log a warning and skip; this is acceptable for breaking changes, but document them. Auto-migration would live in `applySnapshot` (no current example).
-- **Forgetting that `nodeIdCounter: 0` is a real value** — older exports may have shipped this. The healing logic in `applySnapshot` handles it; don't add code that treats `0` as "missing".
-- **Persisting a blob without writing its key into `data`** → `applySnapshot` won't know to load it. Pair every `putBlob('foo:<id>', ...)` with a `data.fooKey = 'foo:<id>'` (or equivalent).
-- **Bypassing the debounce** by calling `pushSnapshot` directly instead of through the hook → multiple rapid pushes hit the `MAX_SNAPSHOTS = 80` cap and older history is trimmed faster than expected. The hook's debounce is the contract.
-- **Bumping `SceneDB.version`** without a migration callback → existing users will fail to open the database. If schema changes, add `db.version(2).stores({ ... }).upgrade(tx => ...)` and bump `MANIFEST_VERSION` in `SceneSnapshot` per the future Tier-2 roadmap (currently absent — listed as pre-T2 plumbing in `product-vision.mdc`).
+- New `data` field without `serializeScene` update → lost on next snapshot. Most fields go through `data: { ...n.data }` auto, but processor-sourced fields (image URL, segmentation mask) need explicit copy.
+- New SLOT or processor → update `project-overview.mdc` and `product-vision.mdc`. Old snapshots with removed types log warning and skip (acceptable breaking change, document). Auto-migration would live in `applySnapshot` (`pages` migration is the canonical example).
+- `engine.addNode` for a clone → phantom processor that never executes. Always check `if (!n.data.cloneOf)` in snapshot/restore/copy-paste paths.
+- Treating `nodeIdCounter: 0` as missing → it's a real value from older exports. `applySnapshot`'s healing handles it.
+- `putBlob('foo:<id>', ...)` without `data.fooKey = 'foo:<id>'` → `applySnapshot` won't load it.
+- Bypassing the debounce by calling `pushSnapshot` directly → hits `MAX_SNAPSHOTS = 80` cap; older history trimmed faster than expected.
+- New top-level snapshot field without `serializeScene` AND `applySnapshot` → silently dropped on undo/redo. `pages` / `activePageId` is the canonical pattern.
+- Bumping `SceneDB.version` without a migration callback → existing users fail to open the DB. Add `db.version(2).stores({ ... }).upgrade(tx => ...)`.

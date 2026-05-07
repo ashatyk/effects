@@ -1,0 +1,16 @@
+{
+  "name": "@effects/runtime",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "pixi.js": "^8.11.0",
+    "polygon-clipping": "^0.15.7"
+  }
+}
