@@ -5,17 +5,8 @@ import { SLOT, type ProcessorDef, type IDataflowEngine, type ContourSamples } fr
 import SdfFragment from '../../pipeline/passes/sdf-pure'
 import { buildCoordsTextureFromContour, type CoordsTexture } from '../render/coords-texture'
 
-/**
- * Renders an SDF map directly from a {@link ContourSamples} input — i.e. the
- * smoothed/offset contour produced by ContourResample. Unlike the generic
- * `SDF` node (which has a dual polygon/contour mode), this one has a single,
- * explicit contract: contour in → distance field out.
- *
- * The output texture stores the unsigned distance to the contour, packed in
- * RGB (24-bit fixed point, normalized by max(W,H)) with `inside`-flag in A,
- * exactly like the original SDF processor — so the same fragment shaders
- * (e.g. WavePingPong, glow effects) consume it transparently.
- */
+// SDF map from a ContourSamples ring. Output texture format matches sdf-pure.ts
+// (signed 24-bit distance in RGB, A=1) so all SDF consumers read it transparently.
 export const sdfFromContourDef: ProcessorDef = {
     pure: true,
     type: 'sdfFromContour',

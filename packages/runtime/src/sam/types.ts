@@ -7,9 +7,8 @@ export type SamWorkerResponse =
     | {
           type: 'decode_result'
           data: {
-              /* Compact mask (1 byte per pixel, transferred from the
-                 worker via `postMessage(..., [buffer])`). Previously we
-                 sent it as `number[]` which is ~8x bigger in main heap. */
+              /* Uint8Array (1 byte/pixel) transferred via postMessage([buffer])
+                 — number[] was ~8x larger in the main heap. */
               mask: Uint8Array
               width: number
               height: number

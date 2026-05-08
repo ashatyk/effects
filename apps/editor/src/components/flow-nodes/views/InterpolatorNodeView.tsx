@@ -14,11 +14,6 @@ import type { PipelineNodeData } from '../types'
 const PREVIEW_H = 60
 const SAMPLES = 256
 
-/**
- * Graph card: live profile curve + play-head. The full param surface
- * (profile, peak/plateau/easing, discrete steps/teeth, smoothness,
- * reverse) lives in `InterpolatorNodeSettings`.
- */
 export const InterpolatorNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const profile = (data.params.profile ?? 'sine') as InterpolatorProfile

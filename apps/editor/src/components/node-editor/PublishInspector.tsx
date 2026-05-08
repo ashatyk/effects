@@ -5,42 +5,17 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import Checkbox from '@mui/material/Checkbox'
 import FormControlLabel from '@mui/material/FormControlLabel'
-import SettingsIcon from '@mui/icons-material/Settings'
 import { PROCESSOR_CATALOG, effects } from '@effects/runtime'
 import type { DerivePublishedSurfaceResult, PublishError } from '@effects/runtime'
 import { useScene } from './SceneContext'
 import { useSetExposed } from '../flow-nodes/hooks/useSetExposed'
+import { useSetRuntimeDynamic } from '../flow-nodes/hooks/useSetRuntimeDynamic'
 import { TextFieldRow, SwitchField, SectionTitle, StatusLine } from '@effects/ui'
 import { deriveFromPages, publishStructuralHash } from './publish-from-pages'
 import { pipelineNodeSettings } from '../flow-nodes/settingsTypes'
 import { pipelineNodeActions } from '../flow-nodes/actionsTypes'
 import type { PipelineNodeData, ExposedMeta } from '../flow-nodes/types'
 
-/**
- * Right-rail Settings panel. **Permanent** surface — no `onClose`
- * prop, no close button in the header. The toolbar carries no toggle
- * for it either; the Settings panel is always visible alongside the
- * canvas (rail width is the only user control, owned by `RightRail`).
- *
- * Two responsibilities:
- *
- *   1. Surface the per-node Settings pane of the currently-selected
- *      node. Each processor ships an independent `*NodeSettings`
- *      component (registered in `pipelineNodeSettings`) — distinct
- *      from the in-graph `*NodeView`. Authors control the two visual
- *      surfaces independently: the graph card stays visual + handles,
- *      the Settings pane carries the editable controls (and any extra
- *      readouts the author wants on this surface).
- *
- *   2. Tier-2 supplier-exposure controls — toggles `data.exposed` per
- *      the processor's nature (whole-node toggle for image / segmentation
- *      / tap-zone / event / generic; per-FieldDef checkboxes for config
- *      nodes), plus a live publication summary on the PublishRoot.
- *      These are unique to Settings.
- *
- * Selection is read straight from the React Flow store so the panel
- * picks up clicks without threading state through every parent.
- */
 export const PublishInspector = memo(function PublishInspector() {
     const { pages } = useScene()
 
@@ -72,39 +47,6 @@ export const PublishInspector = memo(function PublishInspector() {
                 overflow: 'hidden',
             }}
         >
-            <Box
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    /* Match the Scene Outline header height (32 px) so
-                     * both rails line up across the editor's top edge.
-                     * If you change this, change `SceneOutlineSidebar`'s
-                     * header in lockstep. */
-                    height: 32,
-                    flexShrink: 0,
-                    px: 1.5,
-                    bgcolor: 'background.default',
-                    borderBottom: 1,
-                    borderColor: 'divider',
-                }}
-            >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, lineHeight: 1 }}>
-                    <SettingsIcon sx={{ fontSize: 14, color: 'text.secondary', display: 'block' }} />
-                    <Typography
-                        variant="caption"
-                        component="span"
-                        sx={{
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.6,
-                            fontWeight: 700,
-                            color: 'text.primary',
-                            lineHeight: 1,
-                        }}
-                    >
-                        Settings
-                    </Typography>
-                </Box>
-            </Box>
             <Box sx={{ flex: 1, overflowY: 'auto' }}>
                 {selectedNode
                     ? <NodeInspector node={selectedNode} pages={pages} />
@@ -146,19 +88,12 @@ const NodeInspector = memo(function NodeInspector({ node, pages }: NodeInspector
 
     const titleFallback = (node.data.label ?? '').trim() || def?.title || proc
 
-    /* PublishRoot is the publication itself — no exposure toggle.
-       Its summary is rendered by PublishRootSummary below. */
-    const showExposure = proc !== 'publishRoot'
+    const showExposure = isSupplierExposable(proc)
+    const showBakeBehaviour = isBakeEligibleProcessor(proc)
 
     const SettingsComp = pipelineNodeSettings[proc]
     const ActionsComp = pipelineNodeActions[proc]
-    /* Skip the `Parameters` section entirely when the processor only
-     * carries actions (e.g. `preview`'s Save image). Otherwise the
-     * panel would print "No editable parameters" right above an
-     * `Actions` block that clearly proves it has *something* to
-     * offer — confusing and noisy. If both registries miss the
-     * processor we still render the Parameters section so the
-     * empty-state hint surfaces (covers `effect`, `clone`, etc.). */
+    // Skip Parameters section when processor is actions-only (avoids "No editable parameters" above an Actions block).
     const showParameters = !!SettingsComp || !ActionsComp
 
     return (
@@ -172,25 +107,15 @@ const NodeInspector = memo(function NodeInspector({ node, pages }: NodeInspector
                 </Box>
             </SectionBlock>
 
-            {/* Per-node Settings pane — each processor ships its own
-                `*NodeSettings` component, registered in
-                `pipelineNodeSettings`. Independent from the in-graph
-                `*NodeView` so authors can control the visual layout of
-                each surface separately. */}
             {showParameters && (
                 <SectionBlock heading="Parameters">
                     <NodeSettingsPane node={node} SettingsComp={SettingsComp} />
                 </SectionBlock>
             )}
 
-            {/* Per-node Actions pane — export / snapshot / reset
-                buttons that produce side-effects (file download,
-                clipboard write) but do NOT mutate scene state. Kept
-                in its own section so users don't read "Save image"
-                as a tunable parameter. */}
             {ActionsComp && (
                 <SectionBlock heading="Actions">
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <ActionsComp id={node.id} data={node.data} />
                     </Box>
                 </SectionBlock>
@@ -210,33 +135,67 @@ const NodeInspector = memo(function NodeInspector({ node, pages }: NodeInspector
                     <SharedExposureFields exposed={exposed} setExposed={setExposed} />
                 </SectionBlock>
             )}
+
+            {showBakeBehaviour && (
+                <SectionBlock heading="Bake behaviour">
+                    <BakeBehaviourInspector
+                        nodeId={node.id}
+                        runtimeDynamic={node.data.runtimeDynamic === true}
+                    />
+                </SectionBlock>
+            )}
         </Box>
     )
 })
 
-/**
- * Visually-divided section in the right rail. Each block carries an
- * uppercase heading + a top divider so the parameters / publish-summary
- * / supplier-exposure groups read as distinct concerns instead of one
- * flat scroll of widgets. The first block in the panel passes no
- * `heading` so the per-node title group sits flush against the panel
- * header without a redundant divider above it.
- */
+function BakeBehaviourInspector({ nodeId, runtimeDynamic }: {
+    nodeId: string
+    runtimeDynamic: boolean
+}) {
+    const setRuntimeDynamic = useSetRuntimeDynamic(nodeId)
+    return (
+        <SwitchField
+            label="Compute live in player"
+            checked={runtimeDynamic}
+            onChange={v => setRuntimeDynamic(v)}
+        />
+    )
+}
+
+// Excludes publishRoot/frame, processors with no Settings widgets, and terminal sinks (no outputs).
+function isSupplierExposable(processor: string): boolean {
+    if (processor === 'publishRoot') return false
+    if (processor === 'frame') return false
+    if (!pipelineNodeSettings[processor]) return false
+    const def = PROCESSOR_CATALOG[processor]?.def
+    if (!def) return false
+    if (def.outputs.length === 0) return false
+    return true
+}
+
+// Mirror of bakePipeline's pure+bakeable-output check (editor cannot depend on @effects/player).
+// segmentation is included: the bake treats it as pure-equivalent when an override polygon exists.
+// When in doubt return true — a false positive is a no-op toggle, a false negative hides a real choice.
+function isBakeEligibleProcessor(processor: string): boolean {
+    if (processor === 'segmentation') return true
+    const def = PROCESSOR_CATALOG[processor]?.def
+    if (!def?.pure) return false
+    for (const out of def.outputs) {
+        if (out.type === 'CONTOUR' || out.type === 'TEXTURE') return true
+    }
+    return false
+}
+
 function SectionBlock({ heading, children }: { heading?: string; children: ReactNode }) {
     return (
         <Box
             sx={{
                 display: 'flex',
                 flexDirection: 'column',
-                /* Generous vertical rhythm: dividers + heading need air on
-                 * both sides so blocks parse as distinct concerns rather
-                 * than a continuous scroll. The heading also gets a bit
-                 * more bottom margin (`mb: 1`) to separate it from the
-                 * first row of controls. */
                 gap: 1,
-                px: 2,
-                pt: 2,
-                pb: 2,
+                px: 3,
+                pt: 3,
+                pb: 3,
                 ...(heading && {
                     borderTop: 1,
                     borderColor: 'divider',
@@ -264,19 +223,6 @@ function SectionBlock({ heading, children }: { heading?: string; children: React
     )
 }
 
-/**
- * Renders the resolved per-processor Settings component inline.
- * Resolution happens in the parent (`NodeInspector`) so it can also
- * decide whether to skip the surrounding `Parameters` SectionBlock
- * altogether — see the `showParameters` gate. The surrounding
- * `SectionBlock` already supplies padding, gap, and the upper
- * divider, so the pane carries no card frame of its own — controls
- * sit flush with the section heading.
- *
- * Falls back to a friendly placeholder when the processor has no
- * Settings entry AND no Actions entry (covers pure visualisers
- * `effect`, `clone`, `contourPreview`, `textStrip`, `sdfFromContour`).
- */
 const NodeSettingsPane = memo(function NodeSettingsPane({ node, SettingsComp }: {
     node: { id: string; data: PipelineNodeData; type?: string }
     SettingsComp: ComponentType<{ id: string; data: PipelineNodeData }> | undefined
@@ -289,7 +235,7 @@ const NodeSettingsPane = memo(function NodeSettingsPane({ node, SettingsComp }: 
         )
     }
     return (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <SettingsComp id={node.id} data={node.data} />
         </Box>
     )

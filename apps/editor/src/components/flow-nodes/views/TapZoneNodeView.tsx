@@ -7,13 +7,8 @@ import { StatusLine } from '@effects/ui'
 import { tapZoneDef, TapZoneProcessor } from '@effects/runtime/node-engine/processors/tap-zone'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: supplier-facing identity, live event counter, contour
- * status, plus a manual EMIT button. Tier-3 runtime owns hit-testing
- * — the editor stand-in fires the same `emit()` from the canvas so
- * downstream chains can be tested without leaving the graph. Editable
- * id / label / hint live in `TapZoneNodeSettings`.
- */
+/* Tier-3 owns hit-testing; the editor stand-in EMIT button fires the same
+   `emit()` so downstream chains can be tested without leaving the graph. */
 export const TapZoneNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
 

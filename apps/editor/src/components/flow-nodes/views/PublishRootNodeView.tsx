@@ -9,11 +9,6 @@ import { useScene } from '../../node-editor/SceneContext'
 import { deriveFromPages } from '../../node-editor/publish-from-pages'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: visual-only — supplier-facing identity readout + live
- * publication summary (counters + validation errors). The text editors
- * for `name` / `version` / `effectId` live in `PublishRootNodeSettings`.
- */
 export const PublishRootNodeView = memo(function PublishRootNodeView(
     { data }: NodeProps & { data: PipelineNodeData },
 ) {

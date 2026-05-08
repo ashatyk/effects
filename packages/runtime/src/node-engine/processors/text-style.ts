@@ -19,12 +19,6 @@ export const textStyleDef: ProcessorDef = {
     },
 }
 
-/**
- * Typography source. Pure data node — emits a `TextStyle` packet that
- * downstream nodes consume alongside a `text` payload. Centralising the
- * style here lets one preset drive several Text Strips at once and keeps
- * the consumers free of font-picker UI.
- */
 export class TextStyleProcessor extends BaseProcessor {
     readonly def = textStyleDef
 

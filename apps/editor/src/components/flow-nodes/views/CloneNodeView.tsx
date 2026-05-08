@@ -6,26 +6,9 @@ import { BaseNodeShell } from '../BaseNodeShell'
 import { StatusLine, ActionButton } from '@effects/ui'
 import { useScene } from '../../node-editor/SceneContext'
 import type { PipelineNodeData } from '../types'
-/* StatusLine is still used by the BrokenCloneShell error path below. */
 
-/**
- * UI-only viewer alias of an original node. Shows the original's
- * outputs (so it can be wired downstream as if it were the original)
- * but accepts no inputs — inputs are edited in one place, on the
- * original.
- *
- * The cells of the contract:
- *   - `data.cloneOf` is the original's id (any page in the scene).
- *   - The clone has no React processor; engine never sees it.
- *   - Output handles are derived dynamically from the original's
- *     processor `def.outputs`, so changes on the original (rare —
- *     processor type is fixed at creation, but a manifest could expose
- *     more outputs in a future release) flow through automatically.
- *   - When the original is missing (deleted, unknown processor type
- *     after a snapshot import), we render a "broken reference" shell
- *     in slate. Edges that pointed at the broken clone get filtered
- *     out by `resolveSceneForEngine` so the engine doesn't choke.
- */
+// UI-only viewer alias. data.cloneOf = origin id; engine never sees the clone. Outputs derive
+// from origin's def. Missing origin → BrokenCloneShell (resolveSceneForEngine drops dead edges).
 export const CloneNodeView = memo(function CloneNodeView({ data }: NodeProps & { data: PipelineNodeData }) {
     const { findOrigin, jumpToNode } = useScene()
     const cloneOf = data.cloneOf

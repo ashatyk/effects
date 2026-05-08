@@ -4,15 +4,8 @@ import type { PublishedPipeline } from '@effects/runtime'
 import { ManifestPickerPage } from './pages/ManifestPickerPage'
 import { SupplierPage } from './pages/SupplierPage'
 
-/**
- * Supplier-app shell.
- *
- * State design: the loaded `PublishedPipeline` lives in App-level
- * state instead of being persisted to localStorage. Reload = fresh
- * picker. This matches the v1 contract — supplier prepares one config
- * per session, downloads `<effectId>.config.json`, and hands it to
- * the runtime team. No background draft persistence.
- */
+// Pipeline lives in App state (not localStorage): reload = fresh picker.
+// Matches the v1 contract — one config per session, no draft persistence.
 export default function App() {
     const [pipeline, setPipeline] = useState<PublishedPipeline | null>(null)
 

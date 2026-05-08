@@ -10,10 +10,8 @@ void main() {
 }
 `
 
-/**
- * Stock first-pass that draws the Effect node's `source` input as the canvas
- * background. Skipped automatically when `source` is not connected.
- */
+/** Stock first-pass that draws the Effect node's `source` as background.
+ *  Auto-skipped when `source` isn't connected. */
 export const copySourcePass: FullscreenPass = {
     id: 'background',
     kind: 'fullscreen',

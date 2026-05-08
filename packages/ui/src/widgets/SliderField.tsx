@@ -26,15 +26,9 @@ export const SliderField = memo(function SliderField({
         <Field label={label}>
             <Stack
                 direction="row"
-                /* `alignItems: 'center'` (via sx — MUI 8's `Stack` typing
-                 * dropped the top-level `alignItems` prop) puts the
-                 * slider's vertical mid-line (the thumb) on the same
-                 * horizontal line as the value text. Without it Stack
-                 * defaults to `stretch` and the readout floats relative
-                 * to the thumb, which the user sees as mis-centred
-                 * values right of every slider. The slider also carries
-                 * its own ~16 px small-size height; flex centring keeps
-                 * us robust to that without hard-coding a row height. */
+                /* `alignItems` lives in `sx` because MUI 8's `Stack` typing
+                 * dropped the top-level prop. Centring keeps the readout on
+                 * the thumb's mid-line without hard-coding a row height. */
                 sx={{ width: '100%', alignItems: 'center' }}
             >
                 <Slider
@@ -57,11 +51,9 @@ export const SliderField = memo(function SliderField({
                         fontFamily: 'ui-monospace, Menlo, monospace',
                         color: COL_SECONDARY,
                         fontVariantNumeric: 'tabular-nums',
-                        /* `lineHeight: 1` makes the text box its own
-                         * tight glyph height so flex centring lands
-                         * the visual midline of the digits exactly on
-                         * the slider's thumb, not the caption's full
-                         * 1.66 line-box midline. */
+                        /* `lineHeight: 1` collapses the caption's line-box
+                         * to its glyph height so flex centring lands on the
+                         * digits' midline, not the caption's 1.66 midline. */
                         lineHeight: 1,
                     }}
                 >

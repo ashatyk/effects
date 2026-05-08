@@ -8,12 +8,6 @@ import {
 } from '@effects/runtime/node-engine/processors/noise-visualizer'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: visual-only — declares its current surface mode.
- * Surface picker + parameter sliders live in
- * `NoiseVisualizerNodeSettings`. Wire to a Preview node to see the
- * texture itself.
- */
 export const NoiseVisualizerNodeView = memo(function NoiseVisualizerNodeView(
     { data }: NodeProps & { data: PipelineNodeData },
 ) {

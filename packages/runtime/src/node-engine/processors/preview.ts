@@ -20,13 +20,9 @@ export class PreviewProcessor extends BaseProcessor {
     private lastExtractTime = 0
     private static THROTTLE_MS = 33
 
-    /* A SINGLE Texture wrapper is reused between extracts. Previously this
-       processor allocated `new Texture({ source: src })` ~30 times per
-       second (THROTTLE_MS) and never destroyed any of them — at one Pixi
-       Texture wrapper per call this was the dominant memory leak driving
-       multi-GB tab usage over a session. We rewrap only when the upstream
-       source identity changes, destroying the old wrapper but NOT its
-       source (the source is owned by the upstream node). */
+    // Reuse one Texture wrapper across extracts; per-tick allocation here previously
+    // leaked GBs. Rewrap only when upstream source identity changes; the source is
+    // owned by the upstream node so we never destroy it.
     private extractTex: Texture | null = null
     private extractTexSrc: any = null
 
@@ -45,9 +41,8 @@ export class PreviewProcessor extends BaseProcessor {
             return { texture: null, _canvas: null }
         }
 
-        /* The texture must ALWAYS pass through downstream regardless of whether
-           we extract pixels this tick — otherwise a Preview placed mid-graph
-           silently drops data on every throttled tick. */
+        // Always pass the texture through; throttling only the pixel extract avoids
+        // dropping data when Preview sits mid-graph.
         const passthrough = { texture: src, _canvas: this.imgCanvas }
 
         if (this.extracting) return passthrough

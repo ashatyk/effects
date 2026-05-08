@@ -1,13 +1,8 @@
 import Dexie, { type EntityTable } from 'dexie'
 import type { SerializedNode, SerializedEdge } from '@effects/runtime'
 
-/* ── Schema types ── */
-
-/* `SerializedNode` and `SerializedEdge` are the wire format also used
-   by `PublishedPipeline.graph` (consumed by Tier-2/Tier-3). They live
-   in the runtime package so supplier-app and any future native runner
-   can decode them without depending on the editor. Re-export here so
-   editor code can keep importing one name. */
+/* Re-exported so editor code imports one name; the canonical wire
+   format lives in `@effects/runtime` for Tier-2/Tier-3 consumers. */
 export type { SerializedNode, SerializedEdge }
 
 export interface SceneSnapshot {
@@ -15,39 +10,26 @@ export interface SceneSnapshot {
     timestamp: number
     label: string
     nodeIdCounter: number
-    /* Tier-2 publish-plane manifest schema version. Default `1` — the
-       value future Tier-2 supplier-app and Tier-3 runtime check before
-       loading a `PublishedPipeline` derived from this snapshot. Bump
-       only on breaking changes to the published surface (new required
-       fields, removed slots, or anything else that breaks consumers
-       compiled against an older shape). Reads default to `1` via `??`
-       so legacy snapshots are still loadable. See
+    /* Tier-2 publish-plane manifest schema version. Bump only on
+       breaking changes to the published surface; reads default to `1`
+       via `??` so legacy snapshots stay loadable. See
        `@effects/runtime → PUBLISH_MANIFEST_VERSION`. */
     manifestVersion?: number
-    /* Pinned nodes are global across pages — pin is a UX preference, not
-       a per-page setting. */
+    /* Pin is a UX preference, global across pages — not per-page. */
     pinnedIds?: string[]
-    /* ── Pages (current source of truth) ───────────────────────────── */
-    /* The scene is a list of named pages, each owning its own
-       nodes/edges/viewport. The DataflowEngine sees the union of all
-       real (non-clone) nodes and the resolved edges across pages — it
-       knows nothing about pages itself. `pages` is optional only to
-       allow legacy snapshots (no `pages` field) to migrate transparently
-       — see `applySnapshot` in `useSceneHistory.ts`. */
+    /* `pages` is optional only so legacy snapshots (no `pages` field)
+       migrate transparently via `applySnapshot` in `useSceneHistory.ts`.
+       The DataflowEngine sees the union of real nodes/resolved edges
+       across pages and knows nothing about pages itself. */
     pages?: SerializedPage[]
     activePageId?: string
-    /* ── Legacy flat fields (DEPRECATED) ───────────────────────────── */
-    /* Read by the migration path in `applySnapshot` only when `pages`
-       is missing. New writes should always populate `pages` instead. */
+    /* Legacy flat fields — read by `applySnapshot`'s migration path
+       only when `pages` is missing. New writes always populate `pages`. */
     nodes?: SerializedNode[]
     edges?: SerializedEdge[]
     viewport?: { x: number; y: number; zoom: number }
 }
 
-/**
- * One scenario tab in the editor. Contains its own slice of the graph
- * plus a viewport so each page remembers where the user was zoomed.
- */
 export interface SerializedPage {
     id: string                 // 'p_<int>'
     name: string               // user-given; defaults to 'Main'
@@ -65,8 +47,6 @@ export interface BlobEntry {
     updatedAt: number
 }
 
-/* ── Dexie DB ── */
-
 class SceneDB extends Dexie {
     snapshots!: EntityTable<SceneSnapshot, 'id'>
     blobs!: EntityTable<BlobEntry, 'key'>
@@ -82,8 +62,6 @@ class SceneDB extends Dexie {
 
 const db = new SceneDB()
 
-/* ── SceneStore: public API ── */
-
 const MAX_SNAPSHOTS = 80
 
 export class SceneStore {
@@ -97,8 +75,6 @@ export class SceneStore {
             this.cursor = last?.id ?? -1
         }
     }
-
-    /* ── Snapshots (undo / redo) ── */
 
     async pushSnapshot(snap: Omit<SceneSnapshot, 'id' | 'timestamp'>): Promise<number> {
         if (this.cursor > 0) {
@@ -150,8 +126,6 @@ export class SceneStore {
         return await db.snapshots.get(this.cursor) ?? null
     }
 
-    /* ── Blob storage (images, textures) ── */
-
     async putBlob(key: string, blob: Blob, meta?: { width?: number; height?: number }): Promise<void> {
         await db.blobs.put({
             key,
@@ -183,8 +157,6 @@ export class SceneStore {
             reader.readAsDataURL(entry.blob)
         })
     }
-
-    /* ── Housekeeping ── */
 
     async clearAll(): Promise<void> {
         await db.snapshots.clear()

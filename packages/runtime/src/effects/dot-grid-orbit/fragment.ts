@@ -11,18 +11,17 @@ export default `
     uniform vec2  uResolution;
 
     /* Animation channels — vec4(drive, raw, value, state).
-       Slot 0: scroll — uChan0.z is the controller-mapped scroll-time in
-               seconds (slot label "Scroll (sec)", default range 0..6).
-               Drives the discrete orbit-step counter.
-       Slot 1: radial — uChan1.z additive offset on orbit centre (px).
-       Slot 2: size   — uChan2.z multiplier on dot radius.
-       Slot 4: intensity — uChan4.z alpha multiplier. */
+       Slot 0: scroll-time in seconds (slot default 0..6) — uChan0.z drives
+               the discrete orbit-step counter.
+       Slot 1: radial offset (px) on orbit centre — uChan1.z.
+       Slot 2: dot-radius multiplier — uChan2.z.
+       Slot 4: alpha multiplier — uChan4.z. */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan2;
     uniform vec4 uChan4;
 
-    /* SDF wired through generic texture channel 0. */
+    // SDF wired through generic texture channel 0.
     uniform sampler2D uTxcn0;
 
     uniform float uOrbitCenter;
@@ -41,10 +40,9 @@ export default `
     uniform float uNoiseAmount;
     uniform float uNoiseScale;
 
-    /* See pipeline/passes/sdf-pure.ts for the format. RGB packs a
-       signed normalised distance in [-1, +1] biased to [0, 1];
-       A=1 always. Return signed pixels — negative inside,
-       positive outside. */
+    /* SDF format (pipeline/passes/sdf-pure.ts): RGB packs 24-bit biased
+       distance in [-1,+1]→[0,1]; A=1 always. Returns signed pixels —
+       negative inside, positive outside. */
     float unpackSignedFloat24(vec3 rgb, float maxD) {
         float n = (rgb.r * 255.0) * 65536.0 +
                   (rgb.g * 255.0) *   256.0 +
@@ -64,11 +62,9 @@ ${NOISE_GLSL}
         if (sdist < 0.0) { discard; }
 
         float interval = max(0.03, uStepInterval);
-        /* Slot 0 is the controller-mapped scroll-time in seconds (slot
-           label "Scroll (sec)", default range 0..6). Read .z so the
-           controller's min/max actually drives the rate — earlier code
-           read .x * 0.001, which was a stale ms→sec hack from the old
-           autoTimer that always emitted milliseconds. */
+        /* Read slot-0 .z (controller-mapped seconds) — earlier code did
+           '.x * 0.001', a stale ms→sec hack from the old autoTimer that
+           bypassed the controller's min/max. */
         float tSec = uChan0.z;
         float step = floor(tSec / interval);
         float orbit = uOrbitCenter + uOrbitAmplitude * sin(step) + uChan1.z;

@@ -1,6 +1,5 @@
 ---
 description: Geometry pipeline — segmentation → contourResample → sdfFromContour / contourPreview / instanced effects, ContourSamples format, signed SDF format. Read before changing any contour/SDF/instanced pass.
-alwaysApply: true
 ---
 
 # Geometry & contour pipeline

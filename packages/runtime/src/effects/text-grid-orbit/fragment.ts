@@ -10,20 +10,17 @@ export default `
 
     uniform vec2  uResolution;
     /* Animation channels — vec4(drive, raw, value, state).
-       Slot 0: scroll — uChan0.z is the controller-mapped scroll-time in
-               seconds (slot label "Scroll (sec)", default range 0..6).
-               Drives the discrete orbit-step counter.
-       Slot 1: radial — uChan1.z additive orbit offset (px).
-       Slot 3: glow   — uChan3.z multiplier on glow intensity.
-       Slot 4: intensity — uChan4.z alpha multiplier. */
+       Slot 0: scroll-time in seconds (slot default 0..6) — uChan0.z drives
+               the discrete orbit-step counter.
+       Slot 1: radial offset (px) — uChan1.z.
+       Slot 3: glow multiplier — uChan3.z.
+       Slot 4: alpha multiplier — uChan4.z. */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan3;
     uniform vec4 uChan4;
 
-    /* SDF wired through generic texture channel 0; SDF text atlas
-       through channel 1. Manifest declares both slots so the Effect
-       node UI captions the txcn0 / txcn1 handles for the user. */
+    // txcn0 = scene SDF, txcn1 = glyph atlas SDF.
     uniform sampler2D uTxcn0;
     uniform sampler2D uTxcn1;
 
@@ -45,10 +42,9 @@ export default `
     uniform float uGlyphScale;
     uniform float uGlyphCount;
 
-    /* See pipeline/passes/sdf-pure.ts for the format. RGB packs a
-       signed normalised distance in [-1, +1] biased to [0, 1];
-       A=1 always. Return signed pixels — negative inside,
-       positive outside. */
+    /* SDF format (pipeline/passes/sdf-pure.ts): RGB packs 24-bit biased
+       distance in [-1,+1]→[0,1]; A=1 always. Returns signed pixels —
+       negative inside, positive outside. */
     float unpackSignedFloat24(vec3 rgb, float maxD) {
         float n = (rgb.r * 255.0) * 65536.0 +
                   (rgb.g * 255.0) *   256.0 +
@@ -68,10 +64,8 @@ ${NOISE_GLSL}
         if (sdist < 0.0) { discard; }
 
         float interval = max(0.03, uStepInterval);
-        /* Slot 0 is the controller-mapped scroll-time in seconds (slot
-           label "Scroll (sec)", default range 0..6). Read .z so the
-           controller's min/max actually drives the rate — earlier code
-           read .x * 0.001, a stale ms→sec hack from the old autoTimer. */
+        /* Read slot-0 .z (controller-mapped seconds); '.x * 0.001' was a
+           stale ms→sec hack from the old autoTimer. */
         float tSec = uChan0.z;
         float step = floor(tSec / interval);
         float orbit = uOrbitCenter + uOrbitAmplitude * sin(step) + uChan1.z;
@@ -92,36 +86,31 @@ ${NOISE_GLSL}
         float proximity = 1.0 - clamp(cellDistToOrbit / max(1.0, uOrbitWidth), 0.0, 1.0);
         proximity *= exp(-uFalloff * sdfAtCell);
 
-        // Binary visibility: cell is either on or off
         if (proximity < 0.15) { discard; }
 
-        // Fixed glyph size within cell
         float glyphFill = uGlyphScale;
         vec2 localUV = (vUV - cell * cellSizeUV) / cellSizeUV;
         vec2 scaledUV = (localUV - 0.5) / glyphFill + 0.5;
 
-        // Outside glyph bounding box (with margin for glow)
         float margin = uGlowSpread / (cellSizePx * glyphFill);
         if (scaledUV.x < -margin || scaledUV.x > 1.0 + margin || scaledUV.y < -margin || scaledUV.y > 1.0 + margin) { discard; }
         vec2 clampedUV = clamp(scaledUV, vec2(0.001), vec2(0.999));
 
-        // Pick glyph index from cell + step hash (changes each discrete step)
         float glyphHash = hash21(cell * 13.37 + 3.71 + step * 0.17);
         float count = max(1.0, floor(uGlyphCount));
         float glyphIdx = floor(glyphHash * count);
 
-        // Atlas UV: 4x4 grid
+        // Atlas is a 4x4 grid (16 glyphs).
         float col = mod(glyphIdx, 4.0);
         float row = floor(glyphIdx / 4.0);
         vec2 atlasUV = (vec2(col, row) + clampedUV) / 4.0;
 
-        // SDF sampling: R channel contains the distance (0.5 = edge, spread = 24 atlas px)
+        // R channel = SDF distance, 0.5 = edge, spread = 24 atlas px.
         float sd = texture(uTxcn1, atlasUV).r;
         float atlasPerScreen = 128.0 / max(cellSizePx * glyphFill, 1.0);
         float edgeWidth = atlasPerScreen / 48.0;
         float glyphMask = smoothstep(0.5 - edgeWidth, 0.5 + edgeWidth, sd);
 
-        // Neon glow: use SDF distance from edge for soft outer glow
         float distFromEdge = (sd - 0.5) * 48.0 / max(atlasPerScreen, 0.1);
         float glowFalloff = uGlowSpread * uGlowSpread * 0.5;
         float glowMask = exp(-distFromEdge * distFromEdge / max(glowFalloff, 0.1));

@@ -5,10 +5,6 @@ import { StatusLine } from '@effects/ui'
 import { numberDef } from '@effects/runtime/node-engine/processors/number'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: visual-only — shows the live numeric value.
- * Editable input lives in `NumberNodeSettings` (right-rail / pinned).
- */
 export const NumberNodeView = memo(({ data }: NodeProps & { data: PipelineNodeData }) => {
     const value = (data.params.value ?? 0) as number
     return (

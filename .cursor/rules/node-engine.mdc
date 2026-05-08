@@ -1,6 +1,5 @@
 ---
 description: Dataflow engine internals — DataflowEngine, BaseProcessor, GPU helpers, signal types, lifecycle invariants. Read before touching node-engine/* or before adding/refactoring a processor.
-alwaysApply: true
 ---
 
 # Node Engine — Dataflow runtime

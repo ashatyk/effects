@@ -7,25 +7,12 @@ import type { PublishedField, FieldDef } from '@effects/runtime'
 
 interface Props {
     field: PublishedField
-    /** Current scalar / vector value as stored in SupplierConfig. */
     value: number | number[] | undefined
-    /** Default value computed from the manifest (FieldDef.default).
-     *  Used when no override is set yet so widgets still have a
-     *  starting position equal to the authored default. */
+    // Manifest default; used as starting position when no override is set.
     defaultValue: number | number[]
     onChange: (v: number | number[]) => void
 }
 
-/**
- * Render one supplier-facing parameter as the appropriate widget.
- *
- * Scalar (`f32` / `i32`) → SliderField.
- * Vector with `color: true` → ColorField (+ alpha slider for vec4).
- * Other vectors → stack of SliderFields (one per component).
- *
- * Mirrors the editor's `ConfigNodeView` rendering, kept in lockstep
- * so what supplier sees corresponds 1:1 to what the author tunes.
- */
 export function FieldInput({ field, value, defaultValue, onChange }: Props) {
     const def: FieldDef = field.field
     const isScalar = def.kind === 'f32' || def.kind === 'i32'

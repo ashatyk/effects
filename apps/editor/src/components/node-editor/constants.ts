@@ -13,11 +13,7 @@ export const SNAPSHOT_DEBOUNCE_MS = 1200
 export const IMAGE_BLOB_PREFIX = 'img:'
 export const SEG_BLOB_PREFIX = 'seg:'
 
-/* Custom MIME type used by drag-and-drop from the SceneOutlineSidebar
-   onto the canvas. Payload is the original node id; the canvas-side
-   `onDrop` decodes it and creates a viewer-only clone at the drop
-   coordinates via `addCloneNode`. Using a custom subtype avoids
-   conflicts with browser-native drops (text, files, urls). */
+// Drag payload from SceneOutlineSidebar → canvas onDrop; payload body is the original node id.
 export const CLONE_DRAG_MIME = 'application/x-effect-clone-of'
 
 export const pipelineEdgeTypes: EdgeTypes = { editableStep: EditableStepEdge }
@@ -42,14 +38,7 @@ export function nextId(): string { return `n_${++nodeIdCounter}` }
 export function setNodeIdCounter(v: number) { nodeIdCounter = v }
 export function getNodeIdCounter(): number { return nodeIdCounter }
 
-/**
- * Walk a list of serialised nodes and return the highest numeric suffix
- * found in IDs of the form `n_<int>`. Used to defensively bump the
- * shared node-id counter past any imported / restored scene's nodes —
- * otherwise `nextId()` could hand out an ID that already exists, and
- * `setNodes([...nds, dup])` then silently drops the original because
- * React Flow dedupes by `id`.
- */
+// Bumps the counter past restored ids so nextId() can't hand out a duplicate (RF dedupes by id).
 export function maxNodeIdNumber(nodes: { id: string }[]): number {
     let max = 0
     for (const n of nodes) {

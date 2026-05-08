@@ -21,31 +21,12 @@ export const combineSignalsDef: ProcessorDef = {
 
 const idleSignal = (): Signal => ({ value: 0, time: 0, age: 0, state: 0, lastTimestampMs: 0 })
 
-/**
- * Combines two SIGNAL inputs into one. Use to layer user input (envelope)
- * over an idle drive (timer + interpolator):
- *
- *   Timer → Interpolator ──┐
- *                          ├── Combine (mode = a_overrides_b) ──> Controller
- *   Envelope ──────────────┘
- *
- * Modes:
- *   - `add`            -> a + b (no clamping; controller handles range mapping).
- *   - `max`            -> max(a, b). Idle floor + active spikes on top.
- *   - `min`            -> min(a, b).
- *   - `multiply`       -> a * b.
- *   - `a_overrides_b`  -> when signal_a is active (state=1) use a, else b.
- *   - `b_overrides_a`  -> mirror of above.
- *   - `mix`            -> lerp(a, b, mixFactor). Static blend.
- *
- * Output `state` is 1 if either input is active.
- * Output `lastTimestampMs` is the more recent of the two.
- */
+// Output state=1 when either input is active; lastTimestampMs is the newer of the two.
+// `add` does NOT clamp — the downstream controller handles range mapping.
 export class CombineSignalsProcessor extends BaseProcessor {
     readonly def = combineSignalsDef
     alwaysDirty = true
 
-    /** Last emitted signal + the resolved inputs, exposed for UI preview. */
     lastSignal: Signal | null = null
     lastA: Signal | null = null
     lastB: Signal | null = null

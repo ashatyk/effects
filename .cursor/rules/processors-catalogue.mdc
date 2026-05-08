@@ -1,6 +1,5 @@
 ---
 description: Reference for every shipped processor (28 nodes) — type, category, inputs, outputs, params, behaviour, caches. Read before editing or wiring any processor.
-alwaysApply: true
 ---
 
 # Processor catalogue

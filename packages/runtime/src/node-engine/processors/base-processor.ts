@@ -17,25 +17,14 @@ export abstract class BaseProcessor {
         engine: IDataflowEngine,
     ): Record<string, any>
 
-    /** Get a value from connected input, else from params widget, else fallback. */
     protected val(inputs: Record<string, any>, params: Record<string, any>, key: string, fallback?: number): number {
         if (inputs[key] != null) return inputs[key] as number
         if (params[key] != null) return params[key] as number
         return fallback ?? 0
     }
 
-    /**
-     * Resolve rendering resolution.
-     * Priority order (most specific first):
-     *   1. explicit `width`/`height` NUMBER inputs (or params)
-     *   2. dimensions of the `source` input (background image — the canvas of the effect)
-     *   3. dimensions of the `sdf` input (size of the segmentation field)
-     *   4. dimensions of any other texture-like input (last resort)
-     *   5. engine defaults
-     *
-     * This avoids accidentally adopting the size of a small auxiliary texture
-     * (e.g. a 512×512 glyph atlas) as the canvas resolution.
-     */
+    // Priority: explicit width/height → source → sdf → any texture-like input → engine defaults.
+    // Order avoids adopting auxiliary textures (e.g. glyph atlas) as the canvas resolution.
     protected resolveRes(inputs: Record<string, any>, params: Record<string, any>, engine: IDataflowEngine): [number, number] {
         const w = this.val(inputs, params, 'width', 0)
         const h = this.val(inputs, params, 'height', 0)
@@ -56,16 +45,8 @@ export abstract class BaseProcessor {
         return [engine.defaultWidth, engine.defaultHeight]
     }
 
-    /**
-     * Acquire (or reuse) the processor's primary output `RenderTexture`.
-     *
-     * On dimension change the previous RT is destroyed with
-     * `destroy(true)` — the `true` is **mandatory**: Pixi v8 defaults
-     * `destroyTextureSource: false`, which leaks the underlying
-     * GPU `TextureSource` every time the canvas resolution changes.
-     * The same applies to `ensurePing` / `ensurePong` / `destroy`
-     * below — keep all four in lockstep.
-     */
+    // destroy(true) is mandatory: Pixi v8 defaults destroyTextureSource:false and would leak
+    // the GPU TextureSource on every resize. Keep ensureRT/ensurePing/ensurePong/destroy in lockstep.
     protected ensureRT(w: number, h: number): RenderTexture {
         if (this._outputRT && this._outputRT.width === w && this._outputRT.height === h) {
             return this._outputRT

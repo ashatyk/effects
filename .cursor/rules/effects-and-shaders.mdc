@@ -1,6 +1,5 @@
 ---
 description: Effect manifest format, EffectProcessor runtime, fullscreen vs instanced passes, ribbon scrolling, texture pool, animation pool, canonical noise, shader conventions. Read before adding/editing effects, passes, or any GLSL.
-alwaysApply: true
 ---
 
 # Effects, manifests, and shaders

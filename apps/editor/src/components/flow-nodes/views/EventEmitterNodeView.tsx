@@ -7,14 +7,8 @@ import { StatusLine } from '@effects/ui'
 import { eventEmitterDef, EventEmitterProcessor } from '@effects/runtime/node-engine/processors/event-emitter'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: identity readout + a prominent EMIT button. The button
- * needs to be on the canvas itself — the most common authoring loop
- * is "wire envelope/switch → click EMIT → watch downstream pulse",
- * and ducking into the right rail for every test would defeat the
- * point. Editable id / label / throttle live in
- * `EventEmitterNodeSettings`.
- */
+/* EMIT must live on the canvas: the common loop is wire → click EMIT → watch
+   downstream pulse, and ducking into the right rail per test would defeat it. */
 export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const eventId = (data.params.id as string | undefined) ?? ''
@@ -56,10 +50,8 @@ export const EventEmitterNodeView = memo(({ id, data }: NodeProps & { data: Pipe
                     fontSize: 14,
                     fontWeight: 800,
                     letterSpacing: 2,
-                    /* Explicit dark-on-light styling — the theme's primary
-                       palette is white-ish (geist.gray900) which collapses
-                       to invisible against the light card body. Keep the
-                       button inverted regardless of theme. */
+                    /* Theme's primary palette (white-ish geist.gray900) collapses
+                       to invisible on the light card; keep button inverted. */
                     backgroundColor: 'var(--pn-text)',
                     color: 'var(--pn-bg-input)',
                     boxShadow: '0 1px 2px rgba(0, 0, 0, 0.30), inset 0 -1px 0 rgba(255, 255, 255, 0.10)',

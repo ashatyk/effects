@@ -20,24 +20,23 @@ function fullReloadNonCss(): Plugin {
 
 export default defineConfig({
   resolve: {
-    /* Array-form aliases with regex `find` — required for deep imports
-       like `@effects/runtime/node-engine/processors/blur`. The
-       object-form trailing-slash hack (`'@effects/runtime/': '...'`) is
-       only consulted by some Rollup-plugin-alias variants and Vite 8
-       silently ignores it for prefix matching, so deep imports fall
-       through to npm resolution which then 404s because the package
-       has no `./*` exports map. Regex captures handle root + deep
-       cases explicitly. */
+    /* Array-form aliases with regex `find` are required for deep
+       imports like `@effects/runtime/node-engine/processors/blur`:
+       Vite 8 ignores the object-form trailing-slash hack for prefix
+       matching, so deep imports would 404 (the package has no `./*`
+       exports map). Regex captures handle root + deep cases. */
     alias: [
       { find: /^@effects\/runtime$/,       replacement: path.resolve(REPO_ROOT, 'packages/runtime/src/index.ts') },
       { find: /^@effects\/runtime\/(.*)$/, replacement: path.resolve(REPO_ROOT, 'packages/runtime/src') + '/$1' },
+      { find: /^@effects\/player$/,        replacement: path.resolve(REPO_ROOT, 'packages/player/src/index.ts') },
+      { find: /^@effects\/player\/(.*)$/,  replacement: path.resolve(REPO_ROOT, 'packages/player/src') + '/$1' },
       { find: /^@effects\/ui$/,            replacement: path.resolve(REPO_ROOT, 'packages/ui/src/index.ts') },
       { find: /^@effects\/ui\/(.*)$/,      replacement: path.resolve(REPO_ROOT, 'packages/ui/src') + '/$1' },
       { find: '@',                         replacement: path.resolve(__dirname, './src') },
     ],
   },
-  /* Pixi reads its own version banner; ensure both apps share the
-     same Pixi instance from the hoisted root node_modules. */
+  /* Force pre-bundling so both apps share the same Pixi instance from
+     the hoisted root node_modules (Pixi reads its own version banner). */
   optimizeDeps: {
     include: ['pixi.js'],
   },

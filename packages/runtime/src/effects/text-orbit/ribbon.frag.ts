@@ -5,10 +5,8 @@ precision highp float;
 in vec2 vUV;
 out vec4 fragColor;
 
-/* Text strip atlas wired through generic texture channel 1 (white text
-   on black). uTxcn1Aspect = atlas.width / atlas.height, populated by the
-   Effect processor from the connected texture's dimensions; replaces the
-   old typed 'uTextAspect' uniform. */
+/* Text strip atlas (white-on-black) on txcn1. uTxcn1Aspect = w/h, set
+   by EffectProcessor from connected texture dimensions. */
 uniform sampler2D uTxcn1;
 uniform float uTxcn1Aspect;
 
@@ -22,38 +20,25 @@ uniform float uTextRepeats;   // how many phrase copies per contour (baseline)
 uniform float uTextRepeatPadding; // px gap between phrase repeats along contour
 uniform float uTextEdgeAA;        // softness of the glyph alpha cutoff (0..0.5)
 
-/* Animation channels — vec4(drive, raw, value, state).
-   Slot 3: uChan3.z — multiplier on phrase length (more spacing = fewer repeats).
-   Slot 4: uChan4.z — alpha multiplier.
-   .z is the controller-mapped value (lerp(min, max, raw)). */
+/* uChan3.z = phrase-length multiplier (more spacing = fewer repeats).
+   uChan4.z = alpha multiplier. */
 uniform vec4 uChan3;
 uniform vec4 uChan4;
 
 void main() {
-    /* Phrase arc length used for UV mapping.
-       If repeats > 0, fit "repeats" phrases around the entire contour.
-       Otherwise use the natural aspect-driven length (1 phrase). */
     float natural = max(1.0, uTextHeight * uTxcn1Aspect);
     float repeats = max(1.0, uTextRepeats);
     float requested = (uContourLen / repeats) * uChan3.z;
     if (requested <= 1.0) requested = natural;
 
-    /* Snap the period to a whole number of phrases around the contour.
-       Without this, totalLength / phraseArc is generally non-integer, so
-       the value of u at the end of the last ribbon segment
-       (vUV.x = totalLength + phasePx) does not match its value at the
-       start of the first segment (vUV.x = phasePx). Those two segments
-       share the same geometric position (the contour is closed) but
-       their fragments sample different uTex; the user sees one chopped
-       letter right at the seam. Rounding the requested period to the
-       nearest whole phraseCount makes mod() wrap exact and the seam
-       invisible. Same trick marching-ants uses for its dashes. */
+    /* Snap period to a whole number of phrases — otherwise the seam where
+       the closed contour wraps shows a chopped letter (last segment's u
+       at totalLength+phasePx doesn't match the first segment's at phasePx
+       even though they share geometry). Same trick as marching-ants. */
     float periodsCount = max(floor(uContourLen / max(requested, 1.0) + 0.5), 1.0);
     float phraseArc = max(uContourLen / periodsCount, 1.0);
 
-    /* Reserve a fraction of the slot for inter-repeat padding. The text
-       texture is mapped onto [0 .. 1 - padFrac] of each slot; the remaining
-       [1 - padFrac .. 1] is discarded so adjacent phrases dont touch. */
+    // Reserve padFrac of each slot for inter-phrase padding (discarded).
     float padFrac = clamp(uTextRepeatPadding / max(phraseArc, 1.0), 0.0, 0.95);
     float u = mod(vUV.x / phraseArc, 1.0);
     if (u > 1.0 - padFrac) discard;
@@ -62,13 +47,12 @@ void main() {
     float v = clamp(vUV.y, 0.0, 1.0);
     float lum = texture(uTxcn1, vec2(uTex, v)).r;
 
-    /* Soft alpha cutoff. uTextEdgeAA sets the width (in lum-units) of the
-       transition where the glyph fades to transparent. 0 = hard threshold. */
+    // Soft alpha cutoff — uTextEdgeAA = transition width in lum-units.
     float aa = max(uTextEdgeAA, 1e-3);
     float alphaMask = smoothstep(0.0, aa, lum);
     if (alphaMask <= 0.0) discard;
 
-    /* Inner glow: pixels close to text edge get extra glow color. */
+    // Inner glow on near-edge pixels.
     float glow = (1.0 - lum) * uGlowIntensity;
     vec3 color = uTextColor.rgb * lum + uGlowColor.rgb * glow;
     float alpha = uTextColor.a * (lum + glow * 0.5) * alphaMask * uChan4.z;

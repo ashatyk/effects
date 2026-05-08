@@ -1,40 +1,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * Tier-2 publish-plane: walk a flat resolved scene from the
- * `publishRoot` back through reverse adjacency, collect the supplier-
- * facing surface (image slots, tap zones, exposed fields, whole nodes),
- * and trim the graph to the reachable subgraph.
- *
- * This module is **framework-agnostic**: no React, no MUI, no
- * @xyflow/react, no editor-side imports. It depends on:
- *  - the runtime's processor catalog (`PROCESSOR_CATALOG`) — for type
- *    classification (image / segmentation / etc.).
- *  - the runtime's effect catalogue (`effects[]`) — for resolving
- *    `config.fields` keys to their `FieldDef` metadata.
- *
- * Editor consumes via a thin wrapper that runs `resolveSceneForEngine`
- * on the multi-page scene first, then passes the flat resolved view in
- * here. Tier-3 runtime consumes the published JSON directly — no need
- * to pull in editor concepts (pages, clones).
+ * Tier-2 publish-plane: BFS reverse-adjacency from `publishRoot`,
+ * collect the supplier-facing surface (image slots, tap zones, exposed
+ * fields, whole nodes), and trim the graph to the reachable subgraph.
+ * Framework-agnostic; depends only on PROCESSOR_CATALOG and effects[].
  */
 
 import { PROCESSOR_CATALOG } from './node-engine/processors'
 import { effects } from './effects'
 import type { FieldDef } from './pipeline/types'
 
-/** Bump on any breaking change to `PublishedPipeline` shape. Snapshots
- *  written with a higher version than the consumer knows about should
- *  be rejected (fail-closed, not silently re-interpret). */
+/** Bump on breaking changes to PublishedPipeline. Loaders should
+ *  fail-closed on a higher-than-known version. */
 export const PUBLISH_MANIFEST_VERSION = 1
 
-/* ── Serialized graph types ──────────────────────────────────────
-   These types are the wire format consumers see in
-   `PublishedPipeline.graph`. They mirror the editor's `SerializedNode`
-   / `SerializedEdge` shape so a `.published.json` is structurally a
-   trimmed snapshot — useful for debugging by importing one back into
-   the editor. The editor's `scene-store.ts` re-exports these types
-   verbatim and only adds Dexie-specific bits (SceneSnapshot, BlobEntry)
-   on top. */
+/* Serialized graph types — wire format mirrors the editor's
+   SerializedNode/SerializedEdge so a `.published.json` is structurally
+   a trimmed snapshot; scene-store.ts re-exports these verbatim. */
 
 export interface SerializedNode {
     id: string
@@ -52,6 +34,14 @@ export interface SerializedNode {
             label?: string
             hint?: string
         }
+        /**
+         * When true, @effects/player's bake step seeds taint here so
+         * this node and everything downstream stays dynamic in the
+         * trimmed graph. Used to keep large-output processors live
+         * (e.g. sdfFromContour) and avoid the texture payload cost.
+         * Set from the right-rail "Bake behaviour" toggle.
+         */
+        runtimeDynamic?: boolean
         [key: string]: unknown
     }
     width?: number
@@ -69,8 +59,6 @@ export interface SerializedEdge {
     targetHandle?: string | null
     data?: Record<string, unknown>
 }
-
-/* ── PublishedPipeline surface types ────────────────────────────── */
 
 export interface PublishedImageSlot {
     nodeId: string
@@ -135,18 +123,10 @@ export type DerivePublishedSurfaceResult =
     | { ok: false; errors: PublishError[] }
 
 /**
- * Walk a flat resolved graph: find publishRoot, BFS reverse-adjacency
- * to collect the reachable subgraph, classify reached nodes into the
- * supplier-facing surface, validate, and return either a
- * `PublishedPipeline` or aggregated errors.
- *
- * Caller responsibility: pass already-resolved nodes/edges. Editor
- * supplies these by running its `resolveSceneForEngine(pages)` first
- * (which flattens clones and dedupes nodes). Other callers (tests,
- * fixtures) can construct flat inputs directly.
- *
- * Pure function — does NOT mutate the input, does NOT touch any
- * runtime engine. Safe to call from a memo / live preview.
+ * Walk a flat resolved graph: find publishRoot, BFS reverse-adjacency,
+ * classify nodes into the supplier-facing surface, validate, return a
+ * PublishedPipeline or aggregated errors. Pure — caller passes already-
+ * resolved (flattened, deduped) nodes/edges; safe in memos / live previews.
  */
 export function derivePublishedSurface(graph: {
     nodes: SerializedNode[]
@@ -155,7 +135,6 @@ export function derivePublishedSurface(graph: {
     const errors: PublishError[] = []
     const { nodes, edges } = graph
 
-    /* ── 1. Locate the publishRoot ─────────────────────────────── */
     const roots = nodes.filter(n => n.data.processor === 'publishRoot')
     if (roots.length === 0) {
         errors.push({ kind: 'no-root' })
@@ -164,12 +143,10 @@ export function derivePublishedSurface(graph: {
     if (roots.length > 1) {
         errors.push({ kind: 'multiple-roots', nodeIds: roots.map(r => r.id) })
         /* Continue with the first root so the rest of the validation
-           still surfaces — the author gets one error report covering
-           every issue, not a chain of single-blocker reports. */
+           surfaces in one report instead of a chain of single-blocker reports. */
     }
     const root = roots[0]
 
-    /* ── 2. BFS backward from the root ─────────────────────────── */
     const reverseAdj = new Map<string, string[]>()
     for (const e of edges) {
         const set = reverseAdj.get(e.target)
@@ -189,11 +166,9 @@ export function derivePublishedSurface(graph: {
         }
     }
 
-    /* ── 3. Index nodes for downstream lookups ─────────────────── */
     const nodeById = new Map<string, SerializedNode>()
     for (const n of nodes) nodeById.set(n.id, n)
 
-    /* ── 4. Classify reached nodes into the surface ────────────── */
     const surface: PublishedSurface = {
         imageSlots: [],
         tapZones: [],
@@ -269,30 +244,26 @@ export function derivePublishedSurface(graph: {
         }
     }
 
-    /* ── 5. Orphan-exposed (exposed but unreachable) ───────────── */
+    // Orphan-exposed (exposed but unreachable from the root).
     for (const n of nodes) {
         if (!n.data.exposed) continue
         if (reached.has(n.id)) continue
         errors.push({ kind: 'orphan-exposed', nodeId: n.id })
     }
 
-    /* ── 6. Duplicate tap event ids ────────────────────────────── */
     for (const [eventId, ids] of tapIds) {
         if (ids.length > 1) errors.push({ kind: 'duplicate-tap-id', eventId, nodeIds: ids })
     }
 
-    /* ── 7. Effect id ──────────────────────────────────────────── */
     const effectId = String(root.data.params.effectId ?? '').trim()
     if (!effectId) errors.push({ kind: 'effect-id-missing' })
 
     if (errors.length > 0) return { ok: false, errors }
 
-    /* ── 8. Trim graph to reached subgraph ─────────────────────── */
     const trimmedNodes: SerializedNode[] = []
-    /* Preserve input order. The trimmed graph drops Dexie blob keys
-       (`imageUrl: 'img:n_3'`) — those are local IndexedDB keys that
-       have no meaning outside the editor process. Image content
-       travels via `surface.imageSlots` + `SupplierConfig.imageSlots`. */
+    /* Trimmed graph drops Dexie blob keys (`imageUrl: 'img:n_3'`) — those
+       are editor-local IndexedDB keys. Image content travels via
+       surface.imageSlots + SupplierConfig.imageSlots. */
     for (const n of nodes) {
         if (n.data.cloneOf) continue
         if (!reached.has(n.id)) continue

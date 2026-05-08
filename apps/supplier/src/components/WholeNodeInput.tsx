@@ -7,14 +7,7 @@ interface Props {
     node: PublishedWholeNode
 }
 
-/**
- * Generic fallback for `surface.wholeNodes` entries that aren't
- * Image (handled by ImageSlotInput) and aren't Segmentation (handled
- * by SegmentationInput). In v1 this should rarely render — the
- * editor's exposable processors today are Image / Segmentation /
- * tap zones. Future processors with `mode='whole'` exposure get a
- * loud "wire me up" message until a dedicated widget exists.
- */
+// Fallback for surface.wholeNodes processors without a dedicated widget.
 export function WholeNodeInput({ node }: Props) {
     return (
         <Box>

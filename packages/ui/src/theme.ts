@@ -1,30 +1,9 @@
 import { createTheme, alpha } from '@mui/material/styles'
 
-/**
- * Dark theme tuned for a node-editor / dev-tool look — closer to Linear /
- * Vercel than to default Material. Key moves:
- *   - dense baseline: 6px spacing unit, reduced control heights, lower
- *     border-radius (6) so node cards still read as cards.
- *   - subdued surfaces with very thin borders (alpha(white, 0.07)) instead of
- *     elevation shadows. Material elevations look out of place in editor UI.
- *   - Inter Variable font from @fontsource — predictable across OSes.
- *   - palette.text.secondary slightly higher contrast than MUI default for
- *     dense forms where labels read fast.
- *
- * Customise by editing the tokens below; component overrides at the bottom
- * apply the dense sizing automatically — call sites can still pass `size`
- * explicitly to override.
- */
-/**
- * Geist (Vercel) palette tokens — kept here as constants so component-level
- * sx props can reference the same values without going through the theme
- * round-trip. Numbers follow the Geist gray ramp (100 = darkest, 1000 = brightest).
- */
-/* Tuned to be a softer dark — pure-black chrome combined with the new
- * off-white node cards read as too punchy. The canvas is lifted to a near-
- * black warm gray, chrome surfaces sit just below it for a subtle z-stack
- * (Figma-like), and inputs/borders use slightly higher alpha so they don't
- * disappear against the lifted base. */
+/* Softer dark: pure-black chrome with off-white node cards read as too
+ * punchy. Canvas is lifted to a near-black warm gray; chrome surfaces sit
+ * just below it for a Figma-like z-stack; inputs/borders use slightly
+ * higher alpha so they don't disappear against the lifted base. */
 export const geist = {
     bg:        '#141414',  // canvas / page background
     surface:   '#0e0e0e',  // chrome (toolbar / sidebar / popover) — sits below canvas
@@ -51,7 +30,7 @@ export const geist = {
 export const theme = createTheme({
     palette: {
         mode: 'dark',
-        primary:   { main: geist.gray900, contrastText: '#000' }, // white-on-black buttons
+        primary:   { main: geist.gray900, contrastText: '#000' },
         secondary: { main: geist.blue },
         success:   { main: geist.green },
         warning:   { main: geist.amber },
@@ -68,11 +47,9 @@ export const theme = createTheme({
         },
     },
     typography: {
-        /* JetBrains Mono Variable provides 100..800 weights — we default
-         * to 700 (bold) per design direction. Mono looks distinctive in
-         * a node editor and improves the "tooling" vibe, but ALL caps
-         * tracking/typography numerics need a touch of letter-spacing
-         * relaxation since mono fonts are inherently wider. */
+        /* Mono default per design direction; weight 700 reads as the regular
+         * baseline. Mono fonts are inherently wider, so caps-tracking and
+         * numeric variants get slightly relaxed letter-spacing. */
         fontFamily: '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace',
         fontSize: 12,
         fontWeightLight: 500,
@@ -137,19 +114,11 @@ export const theme = createTheme({
         MuiInputBase: {
             styleOverrides: {
                 root: { fontSize: 12 },
-                /* Locked height so plain TextField (`<input>`), number
-                 * field, and Select (`<div role="combobox">`) all
-                 * render at the same row height. Without `height: 28`
-                 * MUI 8's number input defaults to a taller box than
-                 * the select element — the symptom users see as
-                 * "duration field is huge next to the select".
-                 *
-                 * Multiline inputs (`rows={N}` TextField) are exempt:
-                 * `height: 28` would clamp the wrapper to a single
-                 * row regardless of `rows`, and the inner `<textarea>`
-                 * overflows visibly above the wrapper (no `overflow:
-                 * hidden` from MUI). The carve-out lets multiline
-                 * grow to its rows-derived natural height. */
+                /* Locked height so plain TextField, NumberField, and Select
+                 * render at the same row height (MUI 8 otherwise grows the
+                 * number input taller than the select). Multiline TextField
+                 * is exempt — `height: 28` would clamp the wrapper to one
+                 * row and the textarea would overflow visibly. */
                 sizeSmall: {
                     minHeight: 28,
                     height: 28,
@@ -166,14 +135,10 @@ export const theme = createTheme({
                     '& fieldset': { borderColor: geist.border },
                     '&:hover fieldset': { borderColor: geist.borderHi },
                     '&.Mui-focused fieldset': { borderWidth: 1, borderColor: geist.gray700 },
-                    /* Single padding rule that targets both the plain
-                     * `<input>` and the `<div role="combobox">` Select
-                     * surface. Both carry `MuiInputBase-inputSizeSmall`
-                     * in MUI 8, so this guarantees identical inner
-                     * geometry and prevents the height-mismatch from
-                     * recurring. `boxSizing` keeps the wrapper's
-                     * `height: 28` honoured even when the inner
-                     * element wants to grow. */
+                    /* Single padding rule for both plain `<input>` and Select's
+                     * `<div role="combobox">` (both carry `inputSizeSmall` in
+                     * MUI 8). Prevents the input/select height-mismatch from
+                     * recurring; `boxSizing` honours the wrapper's `height: 28`. */
                     '& .MuiInputBase-inputSizeSmall': {
                         paddingTop: 4,
                         paddingBottom: 4,
@@ -189,9 +154,7 @@ export const theme = createTheme({
             defaultProps: { size: 'small' },
             styleOverrides: {
                 /* No per-Select padding/minHeight — the unified
-                 * MuiInputBase-inputSizeSmall rule above handles both
-                 * input flavours uniformly. Only the dropdown chevron
-                 * stays here (it's Select-only). */
+                 * MuiInputBase-inputSizeSmall rule above handles it. */
                 icon: { right: 4 },
             },
         },

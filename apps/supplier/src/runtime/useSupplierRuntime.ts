@@ -15,21 +15,9 @@ interface SupplierRuntime {
     ready: boolean
 }
 
-/**
- * React adapter around `@effects/player`'s `createEngine`. Builds a
- * `DataflowEngine` from a `PublishedPipeline.graph` and owns the
- * Pixi `Application` lifecycle for the supplier app.
- *
- * The supplier app needs the engine handle directly (not the
- * `EffectPlayer` fasade) because every form widget calls granular
- * `applyOverride.*` helpers — wrapping them in player's `setField`/
- * `setImage`/etc. would just add a thin redirect. The fasade is
- * what the Tier-3 player-demo / partner integrations use.
- *
- * Engine starts ticking immediately so any time-driven effects
- * (animations, scrolls) are live by the time the supplier wires
- * inputs.
- */
+// Owns the Pixi Application + DataflowEngine lifecycle for supplier UX.
+// Exposes the raw engine (not the EffectPlayer facade) because every form
+// widget calls granular applyOverride.* helpers directly.
 export function useSupplierRuntime(pipeline: PublishedPipeline): SupplierRuntime {
     const handleRef = useRef<CreatedEngine | null>(null)
     const [ready, setReady] = useState(false)
@@ -49,8 +37,7 @@ export function useSupplierRuntime(pipeline: PublishedPipeline): SupplierRuntime
             handleRef.current = null
             setReady(false)
         }
-        /* Pipeline identity is the only structural input — switching
-           pipelines tears the engine down and rebuilds. */
+        // Pipeline identity is the only structural input — switching tears down + rebuilds.
     }, [pipeline])
 
     return {

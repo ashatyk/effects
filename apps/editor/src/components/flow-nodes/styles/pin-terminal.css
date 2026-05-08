@@ -1,14 +1,9 @@
-/* ── Pin terminal card ── */
-
 .pn-terminal-card {
     background: transparent;
     border-radius: 6px;
     overflow: hidden;
-    /* Cards are stacked vertically inside the right-rail terminal —
-       full rail width, intrinsic height. flex-shrink: 0 so a tall
-       card (e.g. Preview) doesn't get pinched when the rail is short
-       and additional cards push the column past its visible height
-       (the parent column scrolls vertically instead). */
+    /* `flex-shrink: 0` so tall cards (e.g. Preview) aren't pinched when the
+       column overflows; the parent scrolls vertically instead. */
     flex-shrink: 0;
     width: 100%;
 }

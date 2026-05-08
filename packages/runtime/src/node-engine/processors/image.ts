@@ -25,11 +25,8 @@ export class ImageProcessor extends BaseProcessor {
     private loading = false
 
     setImageUrl(url: string, engine: IDataflowEngine): void {
-        /* Drop the previous Sprite + unload its asset before re-loading.
-           Previously we just nulled `sprite`, which leaked the display
-           object AND kept the previous URL alive in the global Pixi
-           `Assets` cache forever — a fresh image upload was a permanent
-           per-URL retention. */
+        // Must Assets.unload the previous URL: just nulling `sprite` leaks the display
+        // object and pins the prior URL in the global Pixi Assets cache forever.
         const prevUrl = this.loadedUrl
         this.sprite?.destroy({ texture: false, textureSource: false })
         this.sprite = null
@@ -38,8 +35,6 @@ export class ImageProcessor extends BaseProcessor {
         this.imgH = 0
         this.loading = false
         if (prevUrl && prevUrl !== url) {
-            /* Fire-and-forget — `Assets.unload` is async but we don't need
-               to wait for it before kicking off the new load. */
             Assets.unload(prevUrl).catch(() => {})
         }
         engine.markDirty(this.nodeId)

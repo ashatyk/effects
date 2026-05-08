@@ -1,48 +1,24 @@
 // language=GLSL
 /*
- * Unsigned distance to a closed contour, packed as a SIGNED
- * normalised 24-bit value across RGB. Alpha is always 1.0.
+ * Signed distance to a closed contour, packed across RGB as 24-bit
+ * `biased = signed_d / MAX_D * 0.5 + 0.5` ∈ [0,1]; A=1.0 always.
  *
- * Encoding (versus the old "unsigned in RGB + inside flag in A"):
- *
- *   signed_d = inside ? -dist : +dist          // canonical SDF
- *                                              // (negative inside)
- *   biased   = clamp(signed_d / MAX_D * 0.5
- *                    + 0.5, 0.0, 1.0)          // 0..1
- *   RGB      = pack24(biased)                  // 24-bit precision
- *   A        = 1.0                             // never zero!
- *
- * Why the format changed: the old format put `inside` into the alpha
- * channel as 1.0 (inside) / 0.0 (outside). That meant every pixel
- * outside the silhouette had `A=0` — and the moment such a texture
- * round-trips through Canvas2D (which Pixi's `extract.base64` /
- * `Assets.load(dataUrl)` does internally), the canvas's
- * premultiplied-alpha storage destroys RGB on `A=0`:
- *   - putImageData → internal premultiply → `RGB *= 0`;
- *   - toDataURL → un-premultiply on read → `RGB / 0 = NaN → 0`.
- * Net effect: every pixel outside the silhouette read back as
- * RGB=0 (= "distance 0 = on the boundary"), turning the entire
- * outside-the-shape region into a fake boundary. Effects that
- * sample distance outside the silhouette (god-rays, light-beam,
+ * Why A=1 (not the old "inside flag in alpha"): Canvas2D round-trips
+ * (Pixi extract.base64 → Assets.load(dataUrl)) premultiply on write
+ * and divide by alpha on read, so any A=0 pixel reads back RGB=0,
+ * turning the entire outside-the-shape region into a fake boundary.
+ * Effects sampling outside the silhouette (god-rays, light-beam,
  * dot-grid-orbit, text-grid-orbit, ping-pong-morphing) rendered
- * blank in the Tier-3 player even though they looked correct in
- * the editor.
+ * blank in the Tier-3 player even though they looked correct in the
+ * editor. Folding inside into the sign of the distance keeps A=1
+ * everywhere and survives the round-trip.
  *
- * The new format folds the inside flag into the SIGN of the
- * distance value itself — `A=1` everywhere keeps every pixel safe
- * from the premultiply trip. Effects no longer need to read alpha
- * to know inside vs outside; they just check `signed_d < 0`.
+ * Precision: 23-bit signed across [-MAX_D, +MAX_D]. With MAX_D =
+ * max(uResolution.x, uResolution.y) ≈ 1200 px on the default canvas
+ * the per-pixel precision is ~0.00014 px.
  *
- * Precision: 24-bit / 2 = 23-bit signed → ~16M levels across
- * `[-MAX_D, +MAX_D]`. With `MAX_D = max(uResolution.x,
- * uResolution.y)` (~1200 px on the default canvas) the per-pixel
- * precision is ~0.00014 px — same order of magnitude as the old
- * format's unsigned 24-bit. The sign bit costs us nothing in
- * practical terms.
- *
- * `MAX_D` is hardcoded in shaders to `1200.0` (matches the default
- * canvas's larger dimension) — TODO: lift to a uniform if effects
- * need to support drastically different canvas sizes.
+ * TODO: MAX_D is hardcoded to 1200 in shaders — lift to a uniform if
+ * effects need drastically different canvas sizes.
  */
 export default `
 #version 300 es
@@ -114,9 +90,8 @@ void main(){
     vec2 pPx = vUV * uResolution;
     vec2 sd  = sdfU(pPx);
 
-    /* Canonical SDF sign convention: negative inside, positive
-       outside. Bias to [0, 1] for 24-bit RGB packing; A=1 always
-       so the texture survives any PNG / Canvas2D round trip. */
+    /* Sign: negative inside, positive outside. Bias to [0,1] for 24-bit
+       RGB packing; A=1 keeps the texture safe across PNG/Canvas2D round-trips. */
     float maxD = max(uResolution.x, uResolution.y);
     float signed_d = (sd.y > 0.5) ? -sd.x : sd.x;
     float biased = clamp(signed_d / maxD * 0.5 + 0.5, 0.0, 1.0);

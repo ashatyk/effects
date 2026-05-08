@@ -7,30 +7,17 @@ import type { PublishedImageSlot } from '@effects/runtime'
 
 interface Props {
     slot: PublishedImageSlot
-    /** Currently bound dataUrl, if any. Drives the thumbnail. */
     dataUrl: string | undefined
     onChange: (dataUrl: string) => void
-    /** True when this slot's image is currently used as the preview
-     *  canvas background. Mutually exclusive across all slots — the
-     *  parent radios on `onToggleBackground`. */
+    // Mutually exclusive across all slots; parent owns the radio.
     isBackground: boolean
-    /** Toggle this slot as the preview background. The parent flips
-     *  `backgroundSlotId`; clicking the active slot's button again
-     *  clears it. No-op when `dataUrl` is unset (button is disabled). */
     onToggleBackground: () => void
 }
 
-/**
- * One supplier-facing image upload slot. The supplier picks a file,
- * we convert it to a base64 dataUrl, and the parent applies the
- * override + persists into SupplierConfig.
- *
- * The dataUrl pattern (vs object URLs / blobs) lets the entire
- * SupplierConfig serialize to a single self-contained JSON for
- * Tier-3 handoff. Trade-off is ~4/3 size inflation per image; for
- * single-photo product effects that's well within JSON's comfort
- * zone (<5MB typical).
- */
+// Uses base64 dataUrls (not object URLs/blobs) so the whole SupplierConfig
+// serialises to a single self-contained JSON for Tier-3 handoff.
+// Trade-off: ~4/3 size inflation per image — fine for single-photo
+// product effects (<5MB typical).
 export function ImageSlotInput({ slot, dataUrl, onChange, isBackground, onToggleBackground }: Props) {
     const inputRef = useRef<HTMLInputElement>(null)
 
@@ -41,8 +28,7 @@ export function ImageSlotInput({ slot, dataUrl, onChange, isBackground, onToggle
         const reader = new FileReader()
         reader.onload = () => onChange(String(reader.result ?? ''))
         reader.readAsDataURL(file)
-        /* Reset the input so picking the same file twice still
-           triggers onChange (browsers dedupe by filename otherwise). */
+        // Reset so picking the same file twice still fires onChange (browsers dedupe by filename).
         e.target.value = ''
     }, [onChange])
 

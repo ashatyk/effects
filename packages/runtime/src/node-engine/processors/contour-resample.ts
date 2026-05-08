@@ -74,8 +74,6 @@ export class ContourResampleProcessor extends BaseProcessor {
     }
 }
 
-/* ───────── helpers ───────── */
-
 function intParam(v: unknown, fallback: number): number {
     const n = Number(v)
     return Number.isFinite(n) ? Math.round(n) : fallback
@@ -102,8 +100,6 @@ function sameKey(a: CacheKey, b: CacheKey): boolean {
         && a.adaptive === b.adaptive
         && a.adaptiveStrength === b.adaptiveStrength
 }
-
-/* ───────── core ───────── */
 
 function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | null {
     let pts = contourToPairs(input)
@@ -147,7 +143,6 @@ function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | nu
         arcS[i] = target
     }
 
-    /* Tangents: numeric derivative on the resampled (closed) ring */
     for (let i = 0; i < N; i++) {
         const ip = (i - 1 + N) % N
         const inext = (i + 1) % N
@@ -159,11 +154,8 @@ function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | nu
         tangents[i * 2 + 1] = ty
     }
 
-    /* Optional offset along outward normal: shift positions onto a parallel
-       curve, remove self-intersection loops introduced by offsetting through
-       high-curvature concave regions, then re-resample uniformly along the
-       cleaned curve. This guarantees consumers see an evenly-distributed,
-       loop-free offset contour — critical for ribbon-mode rendering. */
+    // Offsetting + self-intersection cleanup + re-resample so ribbon consumers
+    // receive an evenly-distributed loop-free curve even through concave bends.
     let finalPositions: Float32Array<ArrayBuffer> = positions
     let finalTangents: Float32Array<ArrayBuffer> = tangents
     let finalTotalLength = totalLength
@@ -190,14 +182,8 @@ function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | nu
         finalArcS = reSampled.arcS
     }
 
-    /* Optional curvature-adaptive redistribution: keeps the same N samples but
-       packs them denser through high-curvature arcs and sparser through nearly
-       straight ones. This produces a more faithful piecewise-linear approxim-
-       ation of the same curve at constant cost — text ribbons no longer cut
-       corners on tight bends, and the geometry better tracks the silhouette.
-       The arcS attribute remains physical arc length, so any UV-mapped text
-       (which sits in arc-length space) flows uniformly along the ribbon
-       independent of the new vertex distribution. */
+    // Curvature-adaptive redistribution: same N samples but denser on bends.
+    // arcS stays in physical arc length so UV-mapped text flows uniformly.
     if (key.adaptive && key.adaptiveStrength > 0) {
         const adapted = curvatureAdaptiveResample(finalPositions, N, key.adaptiveStrength)
         finalPositions = adapted.positions
@@ -206,7 +192,6 @@ function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | nu
         finalTotalLength = adapted.totalLength
     }
 
-    /* AABB */
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     for (let i = 0; i < N; i++) {
         const x = finalPositions[i * 2]
@@ -229,13 +214,7 @@ function buildContour(input: ContourSamples, key: CacheKey): ContourSamples | nu
     }
 }
 
-/**
- * Re-resample a closed polyline (input has M >= 3 points, no terminator) onto
- * exactly N points uniformly distributed by arc length, and recompute unit
- * tangents on the new ring. Robust to M ≠ N — used both for the post-smooth
- * resample and for the post-offset cleanup re-resample where the loop-removal
- * step may have produced any number of points.
- */
+// Resample closed polyline (any M ≥ 3) onto exactly N arc-length-uniform points.
 function resampleClosedRing(positions: Float32Array<ArrayBuffer>, N: number): {
     positions: Float32Array<ArrayBuffer>
     tangents: Float32Array<ArrayBuffer>
@@ -302,28 +281,10 @@ function resampleClosedRing(positions: Float32Array<ArrayBuffer>, N: number): {
     return { positions: outPos, tangents: outTan, arcS: outArcS, totalLength }
 }
 
-/**
- * Curvature-adaptive resampling of a closed ring with N input ↦ N output
- * samples.
- *
- * Idea (from FastSmoothSAM, arXiv 2507.15008): a fixed-budget polyline best
- * approximates a curve when sample density tracks curvature — vertices cluster
- * on bends and thin out on straight runs. Implementation uses a *weighted*
- * arc-length parameterisation: each edge is assigned a weight proportional to
- * (1 + boost·κ̂) where κ̂ is normalised local curvature, then N samples are
- * placed uniformly in weighted space and decoded back to physical positions.
- *
- * Crucially, the emitted `arcS` is the *physical* (not weighted) arc length at
- * each sample. Downstream UV-mapped consumers (text ribbon, glow strips) thus
- * see exactly the same arc-length parameterisation as in uniform mode — only
- * the geometric vertex distribution changes. This is what we want: the mesh
- * tracks the silhouette better, but the text still flows linearly along the
- * curve.
- *
- * `strength` ∈ [0, 1] interpolates between uniform (0) and full curvature-
- * weighted (1). The boost factor is fixed at 8, which empirically gives a
- * good range without exotic hot spots even on highly faceted polygons.
- */
+// FastSmoothSAM (arXiv 2507.15008) weighted-arc-length sampling: edges weighted
+// by (1 + boost·κ̂); strength ∈ [0,1] mixes uniform/full. Emitted arcS is the
+// physical (not weighted) length so UV-mapped consumers stay uniform. boost=8
+// is empirically the sweet spot for polygon-quantised silhouettes.
 function curvatureAdaptiveResample(
     positions: Float32Array<ArrayBuffer>,
     N: number,
@@ -337,9 +298,7 @@ function curvatureAdaptiveResample(
     const M = positions.length / 2
     if (M < 3) return resampleClosedRing(positions, N)
 
-    /* Discrete Menger curvature κ_i = 2|cross| / (|v1|·|v2|·|chord|) using
-       three consecutive vertices (i-1, i, i+1). Returns 0 for collinear
-       neighbourhoods (straight sections) — exactly what we want. */
+    // Discrete Menger curvature: κ_i = 2|cross| / (|v1|·|v2|·|chord|); 0 on collinear runs.
     const curv = new Float32Array(M)
     for (let i = 0; i < M; i++) {
         const ip = (i - 1 + M) % M
@@ -358,9 +317,7 @@ function curvatureAdaptiveResample(
         curv[i] = denom > 1e-9 ? (2 * cross) / denom : 0
     }
 
-    /* 3-tap box smooth on κ to suppress single-sample spikes from polygon
-       quantisation. Without this, one jaggy vertex would steal density from
-       its arc neighbourhood and create a visible vertex cluster. */
+    // 3-tap smooth: suppresses single-sample κ spikes that would cluster vertices.
     const curvSm = new Float32Array(M)
     for (let i = 0; i < M; i++) {
         const ip = (i - 1 + M) % M
@@ -379,8 +336,6 @@ function curvatureAdaptiveResample(
         density[i] = 1 + strength * (raw - 1)
     }
 
-    /* Per-edge physical length and weighted length. Edge weight is the average
-       of its endpoint densities — cheap and continuous. */
     const edgeLen = new Float32Array(M)
     const edgeWLen = new Float32Array(M)
     for (let i = 0; i < M; i++) {
@@ -441,19 +396,9 @@ function curvatureAdaptiveResample(
     return { positions: outPos, tangents: outTan, arcS: outArcS, totalLength: physicalTotal }
 }
 
-/**
- * Find and clip self-intersection loops on a closed polyline.
- *
- * Background. Offsetting a polyline along its outward normal by a distance
- * larger than the local radius of curvature on a concave segment produces a
- * self-overlapping arc (a "cusp" or loop). The loop is bounded by exactly two
- * edges that physically cross — find such a crossing pair (e_i, e_j), drop
- * whichever of the two arcs between them is shorter (the loop), and replace
- * the dropped arc with the single intersection point. Repeat until clean.
- *
- * Complexity: O(M^2) per pass, with at most a handful of passes — perfectly
- * fine for M ≤ 256 sampled rings the editor uses.
- */
+// Iteratively clip cusp loops introduced by normal-offset through high-curvature
+// concave regions: find crossing edge pairs and drop the shorter arc.
+// O(M²) per pass × few passes; fine for the M ≤ 256 sampled rings the editor uses.
 function removeSelfIntersections(positions: Float32Array): Float32Array<ArrayBuffer> {
     let pts: Array<[number, number]> = []
     const N0 = positions.length / 2
@@ -470,7 +415,7 @@ function removeSelfIntersections(positions: Float32Array): Float32Array<ArrayBuf
         for (let i = 0; i < M; i++) {
             const a1 = pts[i]
             const a2 = pts[(i + 1) % M]
-            /* Skip neighbours (k=1) and the wrap-around neighbour (k=M-1). */
+            // Skip neighbour (k=1) and wrap-around neighbour (k=M-1).
             for (let k = 2; k < M - 1; k++) {
                 const j = (i + k) % M
                 const b1 = pts[j]
@@ -484,10 +429,7 @@ function removeSelfIntersections(positions: Float32Array): Float32Array<ArrayBuf
         }
         if (!found) break
 
-        /* Two arcs separate the crossing edges along the ring:
-             arcA = pts[i+1 .. j]   (forward, length = (j - i + M) % M points)
-             arcB = pts[j+1 .. i]   (forward wrapping, length = M - arcA points)
-           Drop the arc with fewer points (geometric loop) and stitch with X. */
+        // arcA = pts[i+1..j], arcB = pts[j+1..i]; drop the shorter arc and stitch with X.
         const M0 = pts.length
         const arcA = ((found.j - found.i) + M0) % M0
         const arcB = M0 - arcA
@@ -521,11 +463,7 @@ function removeSelfIntersections(positions: Float32Array): Float32Array<ArrayBuf
     return out
 }
 
-/**
- * Robust segment-segment intersection. Returns the intersection point only if
- * both parameters t,u lie strictly inside (0, 1) — i.e. the segments truly
- * cross, not just touch at endpoints.
- */
+// Returns the intersection only when t,u ∈ (0,1) strictly — endpoint touches don't count.
 function segIntersect(
     p1: [number, number],
     p2: [number, number],
@@ -565,12 +503,12 @@ function signedArea(pts: [number, number][]): number {
 
 function ensureOrientation(pts: [number, number][], force: Orientation): [number, number][] {
     const a = signedArea(pts)
-    /* Convention: positive signed area = CCW. */
+    // Convention: positive signed area = CCW; `auto` normalises to CCW.
     let isCcw = a > 0
     let want = isCcw
     if (force === 'cw') want = false
     else if (force === 'ccw') want = true
-    else /* auto */ want = true /* normalize to CCW */
+    else want = true
     if (want === isCcw) return pts
     const out = pts.slice().reverse()
     return out

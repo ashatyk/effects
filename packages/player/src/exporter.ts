@@ -1,11 +1,8 @@
 import { BAKE_MANIFEST_VERSION, PUBLISH_MANIFEST_VERSION, type BakedPipeline, type PublishedPipeline } from '@effects/runtime'
 import type { SupplierConfig } from './supplier-config'
 
-/**
- * Serialize a SupplierConfig for download. Image dataUrls travel
- * inline as base64 — config files are typically a few MB. No
- * compression in v1; pretty-printed JSON for diff-friendliness.
- */
+/** Image dataUrls travel inline as base64 — config files are typically a few MB.
+ *  Pretty-printed JSON for diff-friendliness, no compression in v1. */
 export function serializeConfig(cfg: SupplierConfig): string {
     return JSON.stringify(cfg, null, 2)
 }
@@ -26,18 +23,15 @@ export type ParseConfigResult =
     | { ok: false; error: string }
 
 /**
- * Parse a JSON string into a SupplierConfig and validate it against
- * the active pipeline. Fails closed on:
+ * Parse + validate against the active pipeline. Fails closed on:
  *  - invalid JSON
- *  - mismatched pipelineId (the config was prepared for a different
- *    effect — applying it would silently target the wrong nodes)
- *  - mismatched manifestVersion (schema bump — consumer should
- *    fail-closed; user can manually upgrade if they trust the diff)
- *  - structural shape mismatch (missing required keys)
+ *  - mismatched pipelineId (config prepared for a different effect — applying
+ *    would silently target the wrong nodes)
+ *  - mismatched manifestVersion (schema bump)
+ *  - structural shape mismatch
  *
- * The pipeline-version mismatch is reported as a soft warning in the
- * UI (config still loads) — the version is purely an author-bumped
- * label and doesn't change graph semantics.
+ * Pipeline-version mismatch is reported as a soft warning in the UI (config
+ * still loads) — version is purely an author-bumped label.
  */
 export function parseConfig(text: string, pipeline: PublishedPipeline): ParseConfigResult {
     let parsed: unknown
@@ -69,17 +63,12 @@ export function parseConfig(text: string, pipeline: PublishedPipeline): ParseCon
     if (!c.imageSlots || typeof c.imageSlots !== 'object') return { ok: false, error: 'Missing "imageSlots".' }
     if (!c.segmentation || typeof c.segmentation !== 'object') return { ok: false, error: 'Missing "segmentation".' }
     if (!c.fields || typeof c.fields !== 'object') return { ok: false, error: 'Missing "fields".' }
-    /* `texts` was added in v1.1 of the supplier-app schema. Older
-       configs that pre-date it parse cleanly with an empty record so
-       imports stay backwards-compatible. */
+    /* `texts` was added in v1.1; older configs parse cleanly with empty record. */
     const texts = (c.texts && typeof c.texts === 'object')
         ? c.texts as SupplierConfig['texts']
         : {}
-    /* `baked` is the bake-step output — see `baking.mdc`. Optional:
-       configs from before the bake step existed (or freshly created
-       configs that the supplier hasn't exported yet) won't carry it,
-       and that's fine — the runtime just runs the original frozen
-       processors live as if no baking had happened. */
+    /* `baked` is the bake-step output — optional for legacy configs and freshly
+       created configs that haven't been exported yet. */
     const baked = (c.baked && typeof c.baked === 'object')
         ? c.baked as SupplierConfig['baked']
         : undefined
@@ -98,8 +87,7 @@ export function parseConfig(text: string, pipeline: PublishedPipeline): ParseCon
     }
 }
 
-/** Open a file picker for `.config.json`. Resolves with the parsed
- *  text or null if the user cancelled. */
+/** Resolves with file text or null if user cancelled. */
 export function pickConfigFile(): Promise<string | null> {
     return new Promise(resolve => {
         const input = document.createElement('input')
@@ -117,14 +105,11 @@ export function pickConfigFile(): Promise<string | null> {
     })
 }
 
-/* ───────── BakedPipeline I/O ───────── */
-
 export function serializeBaked(baked: BakedPipeline): string {
-    /* Pretty-print with 2-space indent so a baked artifact stays
-       diff-friendly on small payloads. Texture dataUrls and
-       contour `positions[]` are inline as long base64/number
-       sequences — large but uncompressed JSON is the only format
-       a non-Pixi runtime can consume without a custom decoder. */
+    /* Pretty-printed for diff-friendliness on small payloads. Texture dataUrls
+       and contour `positions[]` are inline as long base64/number sequences —
+       large but uncompressed JSON is the only format a non-Pixi runtime can
+       consume without a custom decoder. */
     return JSON.stringify(baked, null, 2)
 }
 
@@ -144,15 +129,12 @@ export type ParseBakedResult =
     | { ok: false; error: string }
 
 /**
- * Parse a `.baked.json` file. Two version checks:
- *  - `manifestVersion` (the underlying graph schema) must match
- *    `PUBLISH_MANIFEST_VERSION` — the graph nodes/edges shape.
- *  - `bakeManifestVersion` (the bake-step schema) must match
- *    `BAKE_MANIFEST_VERSION` — the constant-source params layout.
- *
- * Either mismatch fails closed: a Tier-3 player can't safely
- * interpret a future-shape baked artifact (the constant processor
- * params keys may have shifted).
+ * Two version checks, both fail-closed:
+ *  - `manifestVersion` (graph schema) must match `PUBLISH_MANIFEST_VERSION`.
+ *  - `bakeManifestVersion` (constant-source params layout) must match
+ *    `BAKE_MANIFEST_VERSION`.
+ * A Tier-3 player can't safely interpret a future-shape baked artifact —
+ * constant processor params keys may have shifted.
  */
 export function parseBaked(text: string): ParseBakedResult {
     let parsed: unknown
@@ -181,7 +163,6 @@ export function parseBaked(text: string): ParseBakedResult {
     return { ok: true, baked: b as BakedPipeline }
 }
 
-/** File-picker variant that targets `.baked.json` specifically. */
 export function pickBakedFile(): Promise<string | null> {
     return new Promise(resolve => {
         const input = document.createElement('input')

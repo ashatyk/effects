@@ -7,8 +7,6 @@ export interface PinState {
     isPinned: (id: string) => boolean
     togglePin: (id: string) => void
     clear: () => void
-    /* Replace the entire pin set wholesale. Used by scene-history to
-       restore pins captured in a snapshot. */
     setAll: (ids: string[]) => void
 }
 
@@ -27,26 +25,14 @@ function writePersisted(ids: string[]): void {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)) } catch { /* quota / unavailable */ }
 }
 
-/**
- * Owns the pin set and exposes mutation helpers. Persists to localStorage so
- * the user's pin layout survives reloads — independent of scene snapshots
- * (pinning is a UX preference, not part of the graph). Snapshots may also
- * capture pinned ids and call `setAll` during undo/redo to restore them.
- *
- * IDs that no longer correspond to existing nodes are silently dropped on
- * read; we never resurrect stale pins.
- */
+// Persists in localStorage (UX preference, not graph state). Snapshots may also drive setAll
+// on undo/redo. Stale ids are dropped — we never resurrect deleted pins.
 export function usePinState({ liveNodeIds }: { liveNodeIds: Set<string> }): PinState {
     const [pinnedIds, setPinnedIds] = useState<string[]>(() => readPersisted())
 
-    /* Track the latest live ids in a ref so `setAll` can filter stale ids
-       at call time without needing to be re-created when the live set
-       changes. Keeps the returned helpers stable across renders. */
     const liveRef = useRef(liveNodeIds)
     liveRef.current = liveNodeIds
 
-    /* Drop pins whose nodes have been deleted/never restored. Runs whenever
-       the live id set changes — cheap O(n) reconcile. */
     useEffect(() => {
         setPinnedIds(prev => {
             const next = prev.filter(id => liveNodeIds.has(id))
@@ -54,7 +40,6 @@ export function usePinState({ liveNodeIds }: { liveNodeIds: Set<string> }): PinS
         })
     }, [liveNodeIds])
 
-    /* Persist on every mutation. */
     useEffect(() => { writePersisted(pinnedIds) }, [pinnedIds])
 
     const isPinned = useCallback((id: string) => pinnedIds.includes(id), [pinnedIds])
@@ -79,11 +64,6 @@ export function usePinState({ liveNodeIds }: { liveNodeIds: Set<string> }): PinS
         [pinnedIds, isPinned, togglePin, clear, setAll])
 }
 
-/**
- * Thin context wrapper around a `PinState`. State is owned by the parent
- * (via `usePinState`) so it can be threaded into hooks that live above the
- * provider in the JSX tree (e.g. scene-history).
- */
 export function PinProvider({ value, children }: {
     value: PinState
     children: React.ReactNode

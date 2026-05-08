@@ -5,26 +5,16 @@ import type { PlaygroundConfig, InstancedGeometryDef } from '../../pipeline/type
 import { copySourcePass } from '../../pipeline/passes/copy-source'
 
 /**
- * DotOrbit — instanced "string of beads" effect.
- *
- * One quad per dot, glyph-mode scrolling on the resampled contour: the
- * vertex shader varies each dots radius with sin(arc) ⊕ noise(arc, time).
- *
- * Rendering is split into two instanced passes that share the same
- * vertex shader:
- *   1. `dots-glow`  (additive blend) — paints only the outer corona of
- *      every dot; halos accumulate into a soft cloud and never occlude
- *      anything painted on top.
- *   2. `dots-core`  (normal blend)   — paints only the anti-aliased solid
- *      disks. They sit on top of the merged halo cloud, so a trailing
- *      dot's glow can never cover a leading dot's body — the original
- *      single-pass shader stacked them in instance order, which produced
- *      the "pink fringe over red head" look the user reported.
+ * DotOrbit — instanced "string of beads". One quad per dot, glyph-mode
+ * scrolling on the resampled contour. Rendering is split into two passes
+ * sharing the vertex shader: `dots-glow` (additive, halos accumulate) and
+ * `dots-core` (normal, sits on top). Single-pass instance ordering was
+ * stacking trailing-dot glow over leading-dot bodies — the "pink fringe
+ * over red head" bug.
  */
 
 const dotGeometry: InstancedGeometryDef = {
-    /* Centred unit quad in [-1, 1]^2 — the vertex shader scales it by
-       the per-instance radius. */
+    // Centred unit quad in [-1,1]^2 — vertex shader scales by per-instance radius.
     perVertex: {
         aLocal: [
             [-1.0, -1.0],

@@ -7,28 +7,14 @@ import type { DataflowEngine, PublishedWholeNode } from '@effects/runtime'
 interface Props {
     engine: DataflowEngine
     node: PublishedWholeNode
-    /** Persisted override (if any). When undefined we fall through to
-     *  the engine's authored default — the supplier sees the original
-     *  copy until they edit. */
+    // Undefined override falls through to the engine's authored default.
     value: string | undefined
     onChange: (value: string) => void
 }
 
-/**
- * Whole-node widget for `text` processor. Reads the authored default
- * out of the running engine on mount (so the textarea seeds with what
- * the preview is actually showing), then becomes a controlled input
- * driven by the supplier's override.
- *
- * Multiline because text-strip handles arbitrary copy lengths and the
- * canonical use-case is short marketing strings — but designers may
- * paste multi-word phrases and we don't want to truncate visually.
- */
 export function TextInput({ engine, node, value, onChange }: Props) {
-    /* Pull the authored default once for the placeholder. We don't
-       echo it as the actual value — that would mask the override
-       state. The placeholder makes it obvious what the supplier is
-       overriding without forcing them to retype the default. */
+    // Authored default is shown as placeholder only — never echoed as the value,
+    // which would mask the override state.
     const [authoredDefault, setAuthoredDefault] = useState('')
     useEffect(() => {
         const params = engine.getNodeParams(node.nodeId)

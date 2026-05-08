@@ -28,13 +28,9 @@ export interface EnvelopeClip {
 }
 
 export interface EnvelopeSnapshot {
-    /** Active clips (mostly 0 or 1, more in `add`/`max` retriggerMode). */
     clips: EnvelopeClip[]
-    /** Last computed signal — same value the controller sees this frame. */
     value: number
-    /** The clip's full duration in ms (so the UI can scale time->x). */
     durationMs: number
-    /** Current shape parameters — UI uses these to draw the curve. */
     shape: EnvelopeShape
     peakTime: number
     plateauHold: number
@@ -42,15 +38,8 @@ export interface EnvelopeSnapshot {
     decayEasing: Easing
 }
 
-/**
- * Turn discrete events into a continuous 0..1 signal shaped by an activation
- * curve. Each event spawns a new clip; the curve is sampled per frame.
- *
- * `restart` keeps only the most recent clip (new event aborts the previous).
- * `add` sums the contributions of every active clip (clamped to 1).
- * `max`  takes the maximum across active clips (best for caps that should
- *        never appear "pumped" by retriggers).
- */
+// restart: only the most recent clip is kept; add: clips sum (clamped to 1);
+// max: clips fold via Math.max (avoids retrigger-pumping).
 export class EnvelopeProcessor extends BaseProcessor {
     readonly def = envelopeDef
     alwaysDirty = true
@@ -69,8 +58,6 @@ export class EnvelopeProcessor extends BaseProcessor {
         decayEasing: 'linear',
     }
 
-    /** Read-only current state — used by the NodeView to render the live
-     *  envelope curve and play-head. */
     getSnapshot(): EnvelopeSnapshot {
         return this.snapshot
     }
@@ -88,7 +75,6 @@ export class EnvelopeProcessor extends BaseProcessor {
 
         const now = performance.now()
 
-        /* React to a new event: spawn a clip. */
         if (event && event.count > this.lastSeenEventCount) {
             this.lastSeenEventCount = event.count
             this.lastEventTs = event.lastTimestampMs || now
@@ -97,18 +83,16 @@ export class EnvelopeProcessor extends BaseProcessor {
             else this.clips.push(clip)
         }
 
-        /* Drop expired clips. */
         this.clips = this.clips.filter(c => now - c.startMs < durationMs)
 
-        /* Sample each clip's curve, then fold via retrigger mode. */
         let value = 0
         let mostRecentT = 0
         for (const c of this.clips) {
-            const t = (now - c.startMs) / durationMs   // 0..1
+            const t = (now - c.startMs) / durationMs
             const v = sampleShape(shape, t, peakTime, plateauHold, attackEasing, decayEasing)
             if (retriggerMode === 'add') value = Math.min(1, value + v)
             else if (retriggerMode === 'max') value = Math.max(value, v)
-            else value = v // restart: only one clip anyway
+            else value = v
             if (t > mostRecentT) mostRecentT = t
         }
 
@@ -125,9 +109,7 @@ export class EnvelopeProcessor extends BaseProcessor {
             lastTimestampMs: this.lastEventTs,
         }
 
-        /* Publish a snapshot that the NodeView reads each frame to draw the
-           live curve + play-head. We slice clips so external mutation cannot
-           corrupt the processor's internal list. */
+        // slice() so consumers can't mutate the processor's internal clip list.
         this.snapshot = {
             clips: this.clips.slice(),
             value: finalValue,
@@ -168,20 +150,16 @@ export function sampleShape(
 
     switch (shape) {
         case 'bell': {
-            /* Symmetric "холмик": sine half-cycle. */
             return Math.sin(Math.PI * t)
         }
         case 'rise': {
-            /* Climb from 0 to 1 with attack easing, then drop to 0 abruptly. */
             return ease(t, attackEasing)
         }
         case 'fall': {
-            /* Already at peak at t=0+, fall to 0 with decay easing. */
             return 1 - ease(t, decayEasing)
         }
         case 'plateau': {
-            /* Attack-Hold-Decay. peak ∈ [0..1] is the *centre* of the plateau,
-               plateauHold is its width as a fraction of duration. */
+            // peak is the plateau centre; plateauHold its width (fraction of duration).
             const half = plateauHold * 0.5
             const startHold = Math.max(0, peak - half)
             const endHold = Math.min(1, peak + half)
@@ -190,13 +168,12 @@ export function sampleShape(
             return 1
         }
         case 'gaussian': {
-            /* exp(-((t - peak) / σ)^2). σ chosen so curve hits ~0 at t=0,1. */
+            // σ=0.25 so curve reaches ~0 at t=0,1.
             const sigma = 0.25
             const z = (t - peak) / sigma
             return Math.exp(-z * z)
         }
         case 'triangle': {
-            /* Symmetric triangle peaking at t = peak. */
             if (t < peak) return t / Math.max(1e-3, peak)
             return (1 - t) / Math.max(1e-3, 1 - peak)
         }

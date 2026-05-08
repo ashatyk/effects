@@ -76,6 +76,9 @@ export const ContourPreviewNodeView = memo(({ id }: NodeProps & { data: Pipeline
         subRef.current?.()
         const unsub = engine.subscribeNode(id, draw)
         subRef.current = unsub
+        // Paint once on mount: contourPreview isn't alwaysDirty, so without this the canvas
+        // stays empty after page-tab remounts until something upstream changes.
+        draw()
         return unsub
     }, [engine, id, draw])
 

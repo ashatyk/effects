@@ -11,11 +11,8 @@ function remapFrag(op: string): string {
         case 'grayscale':  body = 'float v = dot(c.rgb, vec3(0.299, 0.587, 0.114)); fragColor = vec4(v, v, v, c.a);'; break
         case 'invert':     body = 'fragColor = vec4(1.0 - c.rgb, c.a);'; break
         case 'contrast':   body = 'vec3 adj = (c.rgb - 0.5) * uStrength + 0.5; fragColor = vec4(clamp(adj, 0.0, 1.0), c.a);'; break
-        case 'unpack_sdf_24bit': body = `/* SDF (sdf-pure.ts) packs signed normalised distance into
-       24 bits: biased = signed_d * 0.5 + 0.5 ∈ [0, 1]. Show
-       biased value as grayscale: 0.5 = silhouette boundary,
-       darker = inside (negative distance), brighter = outside
-       (positive distance). A is always 1.0. */
+        case 'unpack_sdf_24bit': body = `/* sdf-pure.ts packs signed normalised distance into 24 bits as
+       biased = signed_d * 0.5 + 0.5; 0.5 = silhouette boundary. */
     float n = (c.r*255.0)*65536.0 + (c.g*255.0)*256.0 + (c.b*255.0);
     float v = n / 16777215.0; fragColor = vec4(v, v, v, 1.0);`; break
         case 'channel_r':  body = 'fragColor = vec4(c.r, c.r, c.r, 1.0);'; break

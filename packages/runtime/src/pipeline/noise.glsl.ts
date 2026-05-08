@@ -1,20 +1,12 @@
 /**
- * Canonical noise primitives used across all effect shaders.
+ * Canonical noise primitives — DO NOT redefine locally in any shader.
+ *   hash21(vec2)        — per-cell 0..1 deterministic hash
+ *   valueNoise2D(vec2)  — bilinear value noise with smoothstep weights
+ *   fbm2D(vec2)         — 3-octave fbm on valueNoise2D, range ~0..1
  *
- * Shape contract (do NOT redefine these locally in any shader):
- *   hash21(vec2)        — per-cell 0..1 hash (deterministic, no time)
- *   valueNoise2D(vec2)  — bilinearly-interpolated 2D value noise, smoothstep weights
- *   fbm2D(vec2)         — 3-octave fbm sum on top of valueNoise2D, range ~0..1
- *
- * Time-driven shaders feed `xy + uChan5.x * 0.001 * driftDir` into these
- * functions — uChan5 is the dedicated "noise time" slot in the animation
- * pool (see `src/pipeline/types.ts`). Drift speed is controlled upstream
- * by the Timer driving slot 5, not by a per-effect speed uniform.
- *
- * The string is appended into each fragment/vertex shader between
- * `#version 300 es; precision ...` and `void main()`. Keeping the chunk in
- * TS (rather than per-shader copies) ensures a single source of truth so a
- * future noise-visualizer node renders exactly what the effects sample.
+ * Time-driven shaders feed `xy + uChan5.x * driftDir`; uChan5 is the
+ * canonical "noise time" slot. Speed comes from the upstream Timer
+ * driving slot 5, not a per-effect uniform.
  */
 export const NOISE_GLSL = `
 float hash21(vec2 p) {

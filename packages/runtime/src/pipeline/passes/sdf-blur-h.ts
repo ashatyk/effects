@@ -1,16 +1,8 @@
 /**
- * Horizontal SDF blur pass — reads + writes the same packed format
- * as `sdf-pure.ts`:
- *
- *   RGB = 24-bit `biased = signed_d / MAX_D * 0.5 + 0.5` ∈ [0, 1]
- *   A   = 1.0 always
- *
- * Internally the blur averages signed-normalised values
- * (`signed_n = biased * 2 - 1`) so the inside/outside boundary
- * doesn't get smeared into a broken intermediate distance — pixels
- * straddling the silhouette edge converge to ~0 instead of jumping
- * between +d and -d. The vertical pass (`sdf-blur-v.ts`) is the
- * exact mirror.
+ * Horizontal SDF blur — same packed format as sdf-pure.ts. Averages
+ * signed-normalised values (biased*2-1) so pixels straddling the
+ * silhouette edge converge to ~0 instead of jumping between +d/-d.
+ * sdf-blur-v.ts is the exact mirror.
  */
 export default function sdfBlurH(blurRadius = 10, blurStep = 2.0): string {
 // language=GLSL
@@ -51,8 +43,7 @@ vec3 pack(float x01){
 }
 
 float readSignedNormalised(vec2 uv){
-    /* RGB is 24-bit biased = signed_d / MAX_D * 0.5 + 0.5 in [0,1].
-       Decode to signed normalised [-1, +1] for averaging. */
+    // Decode 24-bit biased RGB to signed normalised [-1,+1] for averaging.
     return unpack(texture(sdfRTTexture, uv).rgb) * 2.0 - 1.0;
 }
 
@@ -71,8 +62,7 @@ void main(){
 
     float s = sum / max(w, 1.0);
 
-    /* Re-bias to [0, 1] for 24-bit packing; A=1 keeps the texture
-       safe from any downstream PNG / Canvas2D round trip. */
+    // Re-bias to [0,1] for 24-bit packing; A=1 survives PNG/Canvas2D round-trips.
     float biased = clamp(s * 0.5 + 0.5, 0.0, 1.0);
     fragColor = vec4(pack(biased), 1.0);
 }

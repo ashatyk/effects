@@ -36,11 +36,6 @@ const makeRing = (): RingBuffer => ({
     head: 0,
 })
 
-/**
- * Graph card: live oscilloscope (a/b/out + side bar + event spikes) +
- * profile preview canvas. Editable params (initial side, transitions
- * A→B / B→A) live in `SignalSwitchNodeSettings`.
- */
 export const SignalSwitchNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
 
@@ -64,9 +59,6 @@ export const SignalSwitchNodeView = memo(({ id, data }: NodeProps & { data: Pipe
     useCanvasFill(scopeRef,   SCOPE_H,   onScopeResize)
     useCanvasFill(profileRef, PROFILE_H, onProfileResize)
 
-    /* Scope: rolling history of a / b / out, plus the side flag drawn as a
-       coloured band so flips are obvious, plus event spike markers on the
-       frames when a flip happened. */
     useEffect(() => {
         const tick = () => {
             const proc = engine.getProcessor<SignalSwitchProcessor>(id)
@@ -144,17 +136,15 @@ function drawScope(
 ): void {
     ctx.clearRect(0, 0, w, h)
 
-    /* Find display range; clamp lower to 0, allow upper to expand past 1
-       (combine 'add' / unbounded Timer can push values > 1). */
+    /* Clamp lower to 0; let upper expand past 1 (combine 'add' / unbounded
+       Timer can push values > 1). */
     let hi = 1
     for (const arr of [r.a, r.b, r.out]) {
         for (const v of arr) if (Number.isFinite(v) && v > hi) hi = v
     }
     const lo = 0
 
-    /* Side band — faint horizontal stripe at top whose colour reflects which
-       side the switch is currently on (or transitioning to). Makes flips
-       visible even when both signals overlap. */
+    /* Side band makes flips visible even when both signals overlap. */
     const cellW = w / r.side.length
     for (let i = 0; i < r.side.length; i++) {
         const idx = (r.head + i) % r.side.length
@@ -162,7 +152,6 @@ function drawScope(
         ctx.fillRect(i * cellW, 0, cellW + 1, 6)
     }
 
-    /* Event spikes — vertical green bars at every frame a flip happened. */
     ctx.fillStyle = 'rgba(156, 226, 139, 0.55)'
     for (let i = 0; i < r.event.length; i++) {
         const idx = (r.head + i) % r.event.length
@@ -172,7 +161,6 @@ function drawScope(
         }
     }
 
-    /* Background grid: midline + value=1 marker if expanded past 1. */
     ctx.strokeStyle = '#1d2029'
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -213,7 +201,6 @@ function drawProfiles(
     const innerW = w - pad * 2
     const innerH = h - pad * 2
 
-    /* Background grid: vertical thirds + horizontal midline. */
     ctx.strokeStyle = '#1d2029'
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -227,8 +214,6 @@ function drawProfiles(
     drawProfileCurve(ctx, w, h, pad, innerW, innerH, profileAb, '#ff8a5b')
     drawProfileCurve(ctx, w, h, pad, innerW, innerH, profileBa, '#5b9dff')
 
-    /* Live play-head while a morph is in flight — drawn on the curve that
-       matches the currently active direction. */
     if (snap?.transitioning) {
         const profile = snap.currentSide === 'b' ? profileAb : profileBa
         const t = clamp01(snap.alpha === 1
@@ -284,9 +269,7 @@ function drawProfileCurve(
     ctx.stroke()
 }
 
-/** Cheap monotonic inverter for the easing — used by the play-head to find
- *  the t-value that yields the current shapedAlpha. Coarse, but the play-head
- *  only needs to be visually plausible. */
+/* Coarse monotonic inverter — play-head only needs to be visually plausible. */
 function invertMonotonic(profile: SwitchProfile, alpha: number): number {
     if (profile === 'instant') return 1
     if (profile === 'linear')  return alpha

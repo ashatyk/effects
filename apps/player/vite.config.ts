@@ -8,10 +8,8 @@ const REPO_ROOT = path.resolve(__dirname, '../..')
 
 export default defineConfig({
   resolve: {
-    /* Array-form regex aliases for deep workspace imports
-       (`@effects/runtime/node-engine/...`). See the long-form comment
-       in apps/editor/vite.config.ts for why object-form trailing-slash
-       does not work in Vite 8. */
+    // Array-form regex aliases for deep workspace imports; object-form
+    // trailing-slash does not work in Vite 8 (see apps/editor/vite.config.ts).
     alias: [
       { find: /^@effects\/runtime$/,       replacement: path.resolve(REPO_ROOT, 'packages/runtime/src/index.ts') },
       { find: /^@effects\/runtime\/(.*)$/, replacement: path.resolve(REPO_ROOT, 'packages/runtime/src') + '/$1' },

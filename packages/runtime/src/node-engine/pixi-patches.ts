@@ -1,37 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 /**
- * Pixi v8 has a known leak in `ExtractSystem.canvas()` and the
- * `base64()` helper that builds on top of it: both call
- * `renderer.textureGenerator.generateTexture(...)` to upload the
- * source into a fresh `RenderTexture`, then return a Canvas2D
- * snapshot of that RT — but never destroy the intermediate texture
- * or unload its `TextureSource`. The GPU memory accumulates
- * one source-sized RT per `extract.canvas` call.
- *
- * In our codebase that path is hit by:
- *   - `SegmentationProcessor` — once per image change (supplier app's
- *     SAM widget; uploads happen as the supplier picks new photos).
- *   - `PreviewProcessor` — `extract.pixels(...)` per Preview node
- *     ~30×/s while the editor preview is open.
- *   - Any future processor that surfaces a CPU-side image of an
- *     upstream texture.
- *
- * The patch monkey-replaces both methods with versions that destroy
- * the intermediate `RenderTexture` AND unload its `TextureSource`
- * before returning. Idempotent — a process-level `_patched` flag
- * guards against double-application across multiple `createEngine`
- * calls (editor + supplier on the same page during dev).
- *
- * Crash isolation: the entire patch is wrapped in try/catch — Pixi
- * v8 internals may shift in patch releases. If the override fails
- * to apply we log and continue with the leaky default rather than
- * blocking engine startup.
- *
- * Long-form context + the original copy of this fix lives at
- * `/Users/ashatyk/Desktop/blueberry/src/blueberry/_overrides/`
- * (a sibling project that shipped this leak in production and
- * isolated the root cause).
+ * Pixi v8 leaks in ExtractSystem.canvas() / .base64(): both call
+ * textureGenerator.generateTexture() into a fresh RenderTexture, snapshot
+ * it, then never destroy the RT or unload its TextureSource. Hit by
+ * SegmentationProcessor (per image change) and PreviewProcessor
+ * (~30×/s via extract.pixels). The patch destroys the RT + unloads its
+ * source before returning. Idempotent (one-shot _patched flag).
+ * Wrapped in try/catch — Pixi v8 internals may shift between patch
+ * releases; on failure we log and continue with the leaky default.
+ * Original fix isolated in /Users/ashatyk/Desktop/blueberry/src/blueberry/_overrides/.
  */
 import {
     type Container,
@@ -62,16 +40,12 @@ export function applyPixiExtractLeakPatches(): void {
             const target = (normalised as { target?: unknown }).target
             const renderer = self._renderer
 
-            /* When the caller passed a Texture directly, Pixi just
-               needs to read from its existing source — no intermediate
-               RT to leak. Pass-through unchanged. */
+            // Texture target: Pixi reads from existing source — no leak.
             if (target instanceof Texture) {
                 return renderer.texture.generateCanvas(target)
             }
 
-            /* Container or anything else: Pixi internally allocates an
-               RT via textureGenerator. THAT is the leak — it never
-               destroys it. We do. */
+            // Container/etc. allocates an internal RT — that's the leak.
             const tex = renderer.textureGenerator.generateTexture(
                 normalised as GenerateTextureOptions,
             )
@@ -104,11 +78,10 @@ export function applyPixiExtractLeakPatches(): void {
             }
             const mime = imageMimeMap[format] ?? 'image/png'
 
-            /* Three browser code-paths, in preference order. After
-               turning the canvas into a data URL we explicitly
-               .remove() it so detached canvases don't pile up under
-               document.body's garbage list (Pixi's textureGenerator
-               creates them via document.createElement). */
+            /* Three browser code-paths in preference order. canvas.remove()
+               after every path — Pixi's textureGenerator uses
+               document.createElement, so detached canvases otherwise pile
+               up on document.body's garbage list. */
             if (canvas.toBlob !== undefined) {
                 return new Promise<string>((resolve, reject) => {
                     canvas.toBlob!(blob => {

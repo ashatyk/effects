@@ -3,39 +3,9 @@ import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type Signal } from '../types'
 import { sampleShape, type Easing } from './envelope'
 
-/**
- * Profile applied to the input signal's `value`.
- *
- * Continuous profiles:
- *   `linear`   — passthrough; preserves unbounded inputs without wrapping.
- *   `sine`     — `(1 − cos(2π·phase)) / 2`; seamless 0→1→0 oscillation.
- *   `triangle` — symmetric/asymmetric triangle peaking at `peakTime`.
- *   `bell`     — `sin(π·phase)`; smooth half-cycle.
- *   `gaussian` — bell with soft tails (σ ≈ 0.25).
- *   `pulse`    — attack-hold-decay; `peakTime` centres the plateau,
- *                `plateauHold` widens it (fraction of the period).
- *
- * Discrete / toothed profiles (driven by `smoothness ∈ [0, 1]` to fade
- * between hard discrete edges and a fully-smooth equivalent):
- *   `steps`    — staircase quantizer with `stepCount` levels evenly spaced
- *                from 0 to 1. At `smoothness=0` levels are flat with hard
- *                jumps; at `smoothness=1` the staircase smooths back into
- *                a linear ramp. Use for sprite frame counters and any
- *                "advance through N keyframes" animation.
- *   `square`   — pulse train with `teethCount` cycles per period and
- *                `dutyCycle` controlling the high-time fraction.
- *                `smoothness` feathers the rising/falling edges from
- *                square (0) to ~sine-like (1).
- *   `sawTeeth` — sawtooth pulse train with `teethCount` cycles per period.
- *                `smoothness` controls how much of each tooth becomes a
- *                downslope: 0 = pure saw with instant drop, 1 = perfect
- *                symmetric triangle.
- *
- * Every profile other than `linear` takes `phase = frac(input.value)` so an
- * `unbounded` timer feeds the same 0..1 cycle a `looped` timer would. Use
- * `linear` to passthrough unbounded values intact (e.g. for shader
- * scroll-phase consumers that apply their own `mod()`).
- */
+// Every profile except `linear` takes phase = frac(input.value) so an unbounded
+// timer drives the same 0..1 cycle a looped timer would. `linear` passes the
+// unbounded value through untouched for shader scroll-phase consumers.
 export type InterpolatorProfile =
     | 'linear' | 'sine' | 'triangle' | 'bell' | 'gaussian' | 'pulse'
     | 'steps' | 'square' | 'sawTeeth'
@@ -52,8 +22,6 @@ export const interpolatorDef: ProcessorDef = {
         plateauHold: 0.4,
         easing: 'easeInOut' as Easing,
         reverse: false,
-        /* Discrete-profile params. Defaults chosen so a freshly-switched
-           discrete profile produces an immediately recognisable pattern. */
         stepCount: 4,
         teethCount: 4,
         dutyCycle: 0.5,
@@ -63,21 +31,11 @@ export const interpolatorDef: ProcessorDef = {
 
 const idleSignal = (): Signal => ({ value: 0, time: 0, age: 0, state: 0, lastTimestampMs: 0 })
 
-/**
- * Shape-only complement to `Timer`. Takes a continuous SIGNAL whose `.value`
- * is interpreted as a phase and emits a SIGNAL whose `.value` is the profile
- * curve evaluated at that phase. Pure function of the input — no internal
- * clock, so it isn't `alwaysDirty`. Dirty propagation from an upstream
- * `alwaysDirty` source (Timer / Envelope / Combine) keeps it ticking.
- *
- * With no upstream signal wired the output is the idle signal and downstream
- * Controllers see `value = lerp(min, max, 0)`.
- */
+// Pure shape-only complement to Timer: not alwaysDirty, ticks via upstream
+// propagation. Idle output when nothing is wired so Controllers see lerp(min,max,0).
 export class InterpolatorProcessor extends BaseProcessor {
     readonly def = interpolatorDef
 
-    /** Last emitted signal + the upstream signal it was derived from, exposed
-     *  for the NodeView live preview. */
     lastSignal: Signal | null = null
     lastInput: Signal | null = null
 
@@ -119,9 +77,6 @@ export class InterpolatorProcessor extends BaseProcessor {
     }
 }
 
-/** Bag of every per-profile parameter. The interpolator passes the full
- *  bag through `applyProfile` so the NodeView can sample the curve at
- *  sub-frame resolution without re-deriving the formula. */
 export interface ProfileParams {
     peakTime: number
     plateauHold: number
@@ -133,15 +88,7 @@ export interface ProfileParams {
     smoothness: number
 }
 
-/**
- * Sample the interpolator at a given phase. Exported so the NodeView can
- * preview the curve at sub-frame resolution without duplicating the formula.
- *
- * `inputValue` is interpreted as a phase: `linear` passes it through verbatim,
- * everything else takes `frac(inputValue)` so unbounded inputs cycle. The
- * `reverse` flag mirrors the result vertically (`v → 1 − v`) and works
- * uniformly across every profile.
- */
+// Exported so the NodeView can preview the curve at sub-frame resolution.
 export function applyProfile(
     profile: InterpolatorProfile,
     inputValue: number,
@@ -153,8 +100,6 @@ export function applyProfile(
         return p.reverse ? 1 - inputValue : inputValue
     }
 
-    /* All non-linear profiles operate on a 0..1 phase. Wrap unbounded inputs
-       with frac() so a Timer in `unbounded` mode still drives a clean cycle. */
     const phase = inputValue - Math.floor(inputValue)
 
     let v: number
@@ -173,14 +118,7 @@ export function applyProfile(
     return p.reverse ? 1 - v : v
 }
 
-/**
- * Quantize the phase into `stepCount` discrete levels in [0, 1].
- *
- * `smoothness` blends between hard staircase (0) and a perfectly linear ramp
- * (1) — at intermediate values the last `smoothness × (1/stepCount)` of each
- * step is a smoothstep transition into the next level. The last step has no
- * "next" to ramp toward and holds at 1.
- */
+// smoothness 0→hard staircase, 1→linear ramp. Last step has no "next" and holds at 1.
 function stepsProfile(phase: number, stepCount: number, smoothness: number): number {
     if (stepCount < 2) return 0
     const last = stepCount - 1
@@ -190,47 +128,31 @@ function stepsProfile(phase: number, stepCount: number, smoothness: number): num
 
     if (smoothness <= 1e-4) return baseValue
 
-    const positionInStep = idxFloat - idx                       // [0, 1) within current step
-    const transitionStart = 1 - smoothness                      // where smoothing kicks in
+    const positionInStep = idxFloat - idx
+    const transitionStart = 1 - smoothness
     if (positionInStep < transitionStart) return baseValue
 
     const nextValue = Math.min(idx + 1, last) / last
     const t = (positionInStep - transitionStart) / Math.max(1e-6, smoothness)
-    const eased = t * t * (3 - 2 * t)                           // smoothstep
+    const eased = t * t * (3 - 2 * t)
     return baseValue + (nextValue - baseValue) * eased
 }
 
-/**
- * Square pulse train with `teethCount` cycles per period.
- *
- * Within each cycle the wave is high (`1`) for `dutyCycle` of the cycle and
- * low (`0`) for the remainder. `smoothness` feathers both edges with a
- * smoothstep of half-width `smoothness × 0.5` (in cycle units) — the
- * rising edge wraps across the cycle boundary so neighbouring cycles
- * connect smoothly.
- */
 function squareProfile(phase: number, teethCount: number, dutyCycle: number, smoothness: number): number {
     if (teethCount < 1) return 0
-    const c = (phase * teethCount) - Math.floor(phase * teethCount) // [0, 1) within cycle
+    const c = (phase * teethCount) - Math.floor(phase * teethCount)
 
     if (smoothness <= 1e-4) return c < dutyCycle ? 1 : 0
 
     const e = Math.max(1e-4, smoothness * 0.5)
     const rising = smoothstep(-e, e, c)
     const falling = smoothstep(dutyCycle - e, dutyCycle + e, c)
-    /* Next cycle's rising edge contribution — when c approaches 1 the next
-       cycle starts climbing out of the low region so the boundary doesn't
-       look like a discontinuity. */
+    // nextRising: lifts the cycle boundary out of the low region so adjacent cycles connect smoothly.
     const nextRising = smoothstep(1 - e, 1 + e, c)
     return Math.max(0, Math.min(1, rising - falling + nextRising))
 }
 
-/**
- * Sawtooth pulse train with `teethCount` cycles per period. Pure saw is a
- * linear ramp from 0 to 1 with an instant drop back to 0 at the cycle
- * boundary. `smoothness` widens the falling slope: at `0` the drop is
- * instant, at `1` the cycle becomes a perfectly symmetric triangle.
- */
+// smoothness 0→pure saw with instant drop, 1→symmetric triangle.
 function sawTeethProfile(phase: number, teethCount: number, smoothness: number): number {
     if (teethCount < 1) return 0
     const c = (phase * teethCount) - Math.floor(phase * teethCount)

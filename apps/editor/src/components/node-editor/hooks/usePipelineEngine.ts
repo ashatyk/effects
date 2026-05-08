@@ -49,12 +49,8 @@ export function usePipelineEngine({ engineRef, applySnapshot }: Deps) {
                 restoredRef.current = true
                 await sceneStore.init()
                 const snap = await sceneStore.currentSnapshot()
-                /* Snapshots can come in two shapes:
-                   - new (pages-aware): `snap.pages[]` populated;
-                   - legacy (single-page): `snap.nodes` / `snap.edges`
-                     flat on the snapshot.
-                   Both are valid restore inputs for `applySnapshot`,
-                   which migrates legacy into the default page. */
+                // Snapshot may be pages-aware (snap.pages[]) or legacy flat (snap.nodes/edges);
+                // applySnapshot migrates legacy into the default page.
                 const hasPages = (snap?.pages?.length ?? 0) > 0
                 const hasLegacyNodes = (snap?.nodes?.length ?? 0) > 0
                 if (snap && (hasPages || hasLegacyNodes)) {

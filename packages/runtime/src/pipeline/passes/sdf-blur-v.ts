@@ -1,7 +1,4 @@
-/** Vertical complement to `sdf-blur-h.ts`. Same packed-format
- *  contract: RGB carries 24-bit `biased = signed_d / MAX_D * 0.5 +
- *  0.5`, A is always 1.0. See `sdf-blur-h.ts` and `sdf-pure.ts`
- *  for the long-form rationale. */
+/** Vertical complement to sdf-blur-h.ts (same packed format). */
 export default function sdfBlurV(blurRadius = 10, blurStep = 2.0): string {
 // language=GLSL
 return `

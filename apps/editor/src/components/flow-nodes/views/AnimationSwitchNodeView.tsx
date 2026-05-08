@@ -37,11 +37,6 @@ interface LiveReadout {
 
 const EMPTY_READOUT: LiveReadout = { snap: null, channels: [] }
 
-/**
- * Graph card: live channel-table + profile preview canvas. Editable
- * params (initial side, transitions A→B / B→A) live in
- * `AnimationSwitchNodeSettings`.
- */
 export const AnimationSwitchNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
 
@@ -55,10 +50,8 @@ export const AnimationSwitchNodeView = memo(({ id, data }: NodeProps & { data: P
     }, [])
     useCanvasFill(profileRef, PROFILE_H, onProfileResize)
 
-    /* Live readout: poll the processor every ~90ms instead of subscribing to
-       outputs every frame. The view never needs sub-frame precision — the
-       table + per-channel bars are quasi-instantaneous at this rate, and we
-       avoid forcing React re-renders on the engine's actual tick rate. */
+    /* Poll at ~90ms instead of subscribing per frame: avoids forcing React
+       re-renders on the engine tick rate; table is fine at this cadence. */
     const [readout, setReadout] = useState<LiveReadout>(EMPTY_READOUT)
     useEffect(() => {
         let mounted = true
@@ -89,9 +82,8 @@ export const AnimationSwitchNodeView = memo(({ id, data }: NodeProps & { data: P
         }
     }, [engine, id])
 
-    /* Profile preview is a separate per-frame pass — it draws the static
-       A→B / B→A curves plus a play-head that needs to track the morph
-       smoothly, so it's worth a rAF instead of the slower readout poll. */
+    /* Profile preview runs per-frame (rAF) so the play-head tracks the morph
+       smoothly — the slower readout poll would visibly stutter. */
     useEffect(() => {
         let raf = 0
         const draw = () => {
@@ -138,9 +130,8 @@ interface ChannelTableProps {
 const ChannelTable = memo(function ChannelTable({ readout }: ChannelTableProps) {
     const { snap, channels } = readout
 
-    /* Auto-scale the bars so a side that ranges 0..50 stays readable next to
-       a side that ranges 0..1. Symmetric around 0 when any value goes
-       negative (per-direction Interpolator can produce negative drives). */
+    /* Auto-scale bars so a 0..50 side stays readable next to a 0..1 side.
+       Symmetric around 0 since per-direction Interpolators can drive negative. */
     let mag = 0.001
     for (const c of channels) {
         mag = Math.max(mag, Math.abs(c.value), Math.abs(c.aValue), Math.abs(c.bValue))
@@ -172,9 +163,7 @@ interface ChannelRowProps {
 }
 
 const ChannelRow = memo(function ChannelRow({ ch, mag }: ChannelRowProps) {
-    /* Bar for the live `out.value`, with side dots showing the contribution
-       from a (blue) and b (orange) at full saturation. Centred at mid-line
-       to handle negative drives. */
+    /* Centred at mid-line so negative drives render symmetrically. */
     const barFrac = clamp(ch.value / mag, -1, 1)
     const aFrac   = clamp(ch.aValue / mag, -1, 1)
     const bFrac   = clamp(ch.bValue / mag, -1, 1)
@@ -200,9 +189,7 @@ const ChannelRow = memo(function ChannelRow({ ch, mag }: ChannelRowProps) {
                 {ch.id}
             </Typography>
             <Box sx={{ position: 'relative', height: 12, background: '#000', borderRadius: 1, overflow: 'hidden' }}>
-                {/* Centre line */}
                 <Box sx={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: '1px', background: '#1d2029' }} />
-                {/* Output bar */}
                 <Box
                     sx={{
                         position: 'absolute',
@@ -213,7 +200,6 @@ const ChannelRow = memo(function ChannelRow({ ch, mag }: ChannelRowProps) {
                         borderRadius: 1,
                     }}
                 />
-                {/* a / b ticks */}
                 <Tick frac={aFrac} color="#5b9dff" />
                 <Tick frac={bFrac} color="#ff8a5b" />
             </Box>

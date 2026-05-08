@@ -1,18 +1,11 @@
-/* ── MUI overrides scoped to .pn ──
-   Remap the dark theme controls to the light card palette. Outside of
-   `.pn` the global dark MUI theme still applies. */
+/* MUI overrides scoped to `.pn` — outside `.pn` the global dark theme applies. */
 
 .pn .MuiOutlinedInput-root.MuiInputBase-root {
     background: var(--pn-bg-input);
     color: var(--pn-text);
-    /* Compact input chrome matched across every widget (NumberField,
-       TextFieldRow, SelectField, …). 22px keeps multi-row nodes vertically
-       dense without sacrificing hit-area. `!important` on the size-critical
-       rules is necessary because MUI's own outlined-input defaults
-       (`padding: 8.5px 14px` and friends) come in via emotion's runtime
-       <style> injection AFTER our static stylesheet — at equal selector
-       specificity emotion would otherwise win every cascade. The `.pn`
-       scope means we never affect the dark toolbar/sidebar inputs. */
+    /* `!important` because MUI's outlined-input defaults arrive via emotion's
+       runtime <style> AFTER this stylesheet; equal-specificity ties go to emotion
+       by source order, so we'd lose every cascade without it. */
     min-height: 22px !important;
     box-sizing: border-box;
     display: flex;
@@ -21,13 +14,9 @@
 }
 
 .pn .MuiInputBase-root.MuiInputBase-sizeSmall {
-    /* The shared theme locks small inputs to `height: 28px` (so the
-       settings panel renders TextField + Select at the same row
-       height). Graph node cards intentionally run tighter — `.pn` is
-       a high-density surface and 28 px would blow up multi-row nodes
-       — so we explicitly override BOTH `min-height` and `height`
-       here. `!important` again keeps us ahead of emotion's runtime
-       size=small variant. */
+    /* Theme locks small inputs to 28px for the settings panel; graph cards
+       run tighter (22px) so multi-row nodes stay dense. `!important` overrides
+       emotion's runtime size=small variant. */
     min-height: 22px !important;
     height: 22px !important;
 }
@@ -63,13 +52,9 @@
     font-size: 11px;
 }
 
-/* MUI v9 dropped the `inputSizeSmall` / `inputMultiline` utility classes
-   from the inner <input> — size/multiline modifiers now live on the root
-   wrapper only, and the inner element just carries `MuiOutlinedInput-input`
-   plus an emotion-generated class with the size variant baked in. So we
-   target the input through the wrapper instead. `!important` keeps us
-   ahead of MUI's runtime-injected `padding: 8.5px 14px` size=small variant
-   (specificities tie, source order is non-deterministic with HMR). */
+/* MUI v9 dropped `inputSizeSmall` / `inputMultiline` from the inner <input>
+   (size/multiline live on the root only), so target via the wrapper. `!important`
+   beats MUI's runtime size=small padding (HMR makes source order non-deterministic). */
 .pn .MuiOutlinedInput-root .MuiOutlinedInput-input {
     padding: 2px 8px !important;
     line-height: 1.2;
@@ -80,14 +65,10 @@
     line-height: 1.45;
 }
 
-/* MUI v9 ships an internal `min-height: 1.4375em` on `.MuiSelect-select`
-   plus its own vertical padding that the generic `.MuiOutlinedInput-input`
-   override doesn't fully neutralise — the trigger ends up taller than the
-   NumberField row and the value text sits in the top portion of the box.
-   Force the same compact 22px chrome and use an inner flex so the value
-   is vertically centered regardless of how MUI sizes the container. The
-   asymmetric right padding leaves room for the chevron at our reduced
-   horizontal padding. */
+/* MUI v9's `.MuiSelect-select` has internal `min-height: 1.4375em` plus
+   vertical padding the generic input override can't neutralise — without this
+   the Select trigger is taller than NumberField and the value sits at the top.
+   Asymmetric right padding leaves room for the chevron. */
 .pn .MuiOutlinedInput-root .MuiSelect-select {
     min-height: 0 !important;
     height: auto !important;
@@ -108,11 +89,8 @@
     color: var(--pn-text-secondary);
 }
 
-/* Header pin icon inherits the header's light text colour. The
-   `text-shadow` set on `.pn-header` doesn't apply to SVGs (it only
-   shadows glyphs), so we mirror it as a `drop-shadow` filter on the
-   icon — keeps the pin button visually attached to the title row
-   instead of floating flat against the accent backdrop. */
+/* `text-shadow` on `.pn-header` doesn't apply to SVGs (glyphs only), so mirror
+   it as a `drop-shadow` filter on the icon. */
 .pn-header .MuiSvgIcon-root {
     color: inherit;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
@@ -146,8 +124,7 @@
     background-color: #000 !important;
 }
 
-/* ── Select dropdowns (portaled outside .pn) ── */
-
+/* Select dropdowns are portaled outside `.pn`, so the palette is re-applied here. */
 .pn-menu-paper {
     background-color: #ffffff !important;
     color: #0a0a0a !important;
@@ -172,8 +149,6 @@
     background-color: rgba(0, 0, 0, 0.14);
 }
 
-/* ── Switch ── */
-
 .pn .MuiSwitch-track {
     background-color: rgba(0, 0, 0, 0.22) !important;
     opacity: 1;
@@ -192,8 +167,6 @@
     background-color: var(--pn-text) !important;
     opacity: 0.55;
 }
-
-/* ── Slider ── */
 
 .pn .MuiSlider-rail {
     background-color: rgba(0, 0, 0, 0.18);

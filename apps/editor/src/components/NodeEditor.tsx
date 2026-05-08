@@ -52,9 +52,11 @@ import { SceneOutlineSidebar } from './flow-nodes/SceneOutlineSidebar'
 import { SceneProvider, useSceneState } from './node-editor/SceneContext'
 import {
     resolveSceneForEngine, wouldCreateCycle,
-    DEFAULT_PAGE_ID, DEFAULT_PAGE_NAME,
     type PageState,
 } from './node-editor/sceneResolver'
+import {
+    FRAME_DEFAULT_HEIGHT, FRAME_DEFAULT_WIDTH, FRAME_PROCESSOR, frameDefaultParams,
+} from './flow-nodes/frame-constants'
 
 type PNode = Node<PipelineNodeData>
 
@@ -63,26 +65,20 @@ interface SceneFile {
     activePageId?: string
     nodeIdCounter: number
     pinnedIds?: string[]
-    /* Legacy (single-page) export — only present when reading old files. */
+    /* Legacy single-page export — only present when reading old files. */
     nodes?: SerializedNode[]
     edges?: SerializedEdge[]
     viewport?: { x: number; y: number; zoom: number }
 }
 
 function NodeEditorInner() {
-    /* Scene state (pages + active id) lives here so it can be passed
-       through SceneProvider and consumed by everything below. */
     const scene = useSceneState()
     const { pages, activePageId, activePage, setActiveNodes, setActiveEdges, replaceScene } = scene
 
     const engineRef = useRef<DataflowEngine | null>(null)
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null)
-    /* Outline (left rail) and Settings (right rail) are permanent
-     * surfaces — no toggle state, no localStorage persistence, no
-     * close button. The legacy Pin terminal was retired alongside
-     * these toggles; `PinContext` + per-card `PinToggle` survive as
-     * latent infrastructure but no surface currently consumes the
-     * pinned-id set for display. */
+    /* Legacy Pin terminal was retired; `PinContext` + per-card
+       `PinToggle` survive as latent infrastructure with no consumer. */
     const [publishMessage, setPublishMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
     const [fps, setFps] = useState<FpsOption>(() => {
         try {
@@ -93,25 +89,19 @@ function NodeEditorInner() {
     })
     const { screenToFlowPosition, getViewport, setViewport } = useReactFlow()
 
-    /* Pin state's `liveNodeIds` is the UNION across pages — pins should
-       survive page switches, only get reaped when the underlying node
-       is actually deleted from any page. */
+    /* Union across pages so pins survive page switches and are reaped
+       only when the underlying node is deleted everywhere. */
     const liveNodeIds = useMemo(() => {
         const set = new Set<string>()
         for (const p of pages) for (const n of p.nodes) set.add(n.id)
         return set
     }, [pages])
 
-    /* Stable hash of the parts of `pages` the engine actually cares
-       about — node ids, processor types, clone wiring, and edges. We
-       deliberately EXCLUDE viewport / name / page ordering because
-       changing any of them shouldn't force a graph rebuild. Without
-       this, every page switch (which mutates the leaving page's
-       viewport into `pages`) cascaded into `engine.setEdges` →
-       `rebuildGraph` → "mark every node dirty" → a full graph re-
-       execution on the next tick — which is what made tab switching
-       feel like a freeze with heavy effects/segmentations on the
-       canvas. */
+    /* Hash only the parts the engine cares about (node ids, processor
+       types, clone wiring, edges); excluding viewport/name/order means
+       page switches don't cascade into `setEdges` → `rebuildGraph` →
+       full re-execution, which used to manifest as a tab-switch freeze
+       on heavy effect/segmentation graphs. */
     const pagesStructuralHash = useMemo(() => {
         const parts: string[] = []
         for (const p of pages) {
@@ -125,17 +115,15 @@ function NodeEditorInner() {
         return parts.join('|')
     }, [pages])
 
-    /* Push the cap to the engine whenever it (or the engine itself) changes.
-       Persist the choice so opening a fresh tab keeps the user's preference. */
+    /* Persist the FPS choice so a fresh tab keeps the user's preference. */
     useEffect(() => {
         try { localStorage.setItem('nodeEditor.fps.v1', String(fps)) } catch { /* */ }
         engineRef.current?.setTargetFps(fps)
     }, [fps])
 
-    /* ── Pin state (captured in snapshots, hence lifted above PinProvider) ── */
+    /* Pin state is captured in snapshots, hence lifted above PinProvider. */
     const pin = usePinState({ liveNodeIds })
 
-    /* ── History (serialize / snapshot / undo / redo) ── */
     const {
         serializeScene, persistBlobs, pushSnapshot, applySnapshot,
         handleUndo, handleRedo,
@@ -149,18 +137,15 @@ function NodeEditorInner() {
         getViewport, setViewport,
     })
 
-    /* ── Init Pixi + Engine + restore from Dexie ── */
     const { engineReady } = usePipelineEngine({ engineRef, applySnapshot })
 
-    /* The engine is created asynchronously inside usePipelineEngine; the
-       earlier `fps` effect runs before the engine exists, so it can't push
-       the cap yet. Re-apply once the engine reports ready. */
+    /* Engine is created asynchronously inside usePipelineEngine, so the
+       earlier `fps` effect couldn't push the cap yet. Re-apply on ready. */
     useEffect(() => {
         if (!engineReady) return
         engineRef.current?.setTargetFps(fps)
     }, [engineReady, fps])
 
-    /* ── Keyboard shortcuts ── */
     useNodeEditorShortcuts({
         nodes: activePage.nodes,
         setNodes: setActiveNodes,
@@ -168,32 +153,27 @@ function NodeEditorInner() {
         handleUndo, handleRedo,
     })
 
-    /* ── Edge colouring (clone-aware) ── */
     const colouredEdges = useEdgeColouring(activePage.nodes, activePage.edges, pages)
 
-    /* ── Auto-save snapshot on changes ── */
     useEffect(() => {
         if (!engineReady) return
         pushSnapshot()
     }, [pages, activePageId, pin.pinnedIds, engineReady, pushSnapshot])
 
-    /* React Flow drives pan/zoom through its internal store and never
-       mutates `nodes`/`edges`, so the effect above doesn't observe
-       viewport changes. Hook into `onMoveEnd` so a snapshot is queued
-       (and debounced) once the user stops panning/zooming. */
+    /* React Flow drives pan/zoom through its internal store without
+       mutating `nodes`/`edges`, so the auto-save effect above misses
+       viewport changes — `onMoveEnd` queues a (debounced) snapshot
+       once the user stops panning/zooming. */
     const onMoveEnd = useCallback(() => {
         if (!engineReady) return
         pushSnapshot()
     }, [engineReady, pushSnapshot])
 
-    /* ── Sync engine edges from the resolved (clone-rewritten) scene ──
-       Triggers on STRUCTURAL changes only (nodes / clones / edges),
-       NOT on viewport-only mutations from page switches. Without the
-       structural-hash gate every switch would re-fire setEdges, which
-       calls rebuildGraph and marks every node dirty (~freeze with
-       heavy graphs). Also fires on the engine-ready transition so the
-       very first edge push happens after the engine boots even if
-       pages haven't changed since mount. */
+    /* Sync engine edges from the resolved (clone-rewritten) scene on
+       STRUCTURAL changes only — viewport-only page switches must not
+       re-fire setEdges (rebuildGraph marks every node dirty). Also
+       fires on the engine-ready transition so the first edge push
+       happens after the engine boots. */
     useEffect(() => {
         if (!engineRef.current) return
         const { resolvedEdges } = resolveSceneForEngine(pages)
@@ -201,24 +181,11 @@ function NodeEditorInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pagesStructuralHash, engineReady])
 
-    /* ── Node change handlers (active page) ──
-       Dimensions changes are rewritten in-place so every node's rendered
-       width/height is a whole multiple of GRID_SIZE — both for the
-       initial measurement (newly added nodes are sized to their content,
-       which is rarely grid-aligned) and for content-driven growth later
-       (e.g. an AnimationController gaining a new channel row). React
-       Flow's own snapToGrid handles drag/resize positions and resize
-       deltas; this snap takes care of the remaining intrinsic-measure
-       case so a freshly added node doesn't sit half a grid cell short.
-
-       `Math.ceil` rounds UP — never crops content. `setAttributes: true`
-       forces React Flow to write the snapped values onto node.width /
-       node.height so the rendered DOM box matches the snapped size on
-       the next render (otherwise the snap would only update the
-       internal `measured` field and the visible card would stay
-       intrinsic). The change is applied idempotently — if the
-       measurement is already grid-aligned we don't allocate a new
-       change object. */
+    /* Snap intrinsic-measurement dimensions UP to a multiple of
+       GRID_SIZE (RF's snapToGrid only handles drag/resize, not initial
+       measure). `setAttributes: true` writes the snapped values to
+       node.width/height so the rendered DOM matches; idempotent when
+       already grid-aligned to avoid spurious change objects. */
     const onNodesChange = useCallback((changes: NodeChange[]) => {
         const snapped = changes.map(c => {
             if (c.type !== 'dimensions' || !c.dimensions) return c
@@ -234,7 +201,6 @@ function NodeEditorInner() {
         setActiveEdges(prev => applyEdgeChanges(changes, prev))
     }, [setActiveEdges])
 
-    /* ── Connection handler ── */
     const onConnect = useCallback((conn: Connection) => {
         if (!conn.source || !conn.target) return
         if (wouldCreateCycle(pages, conn.source, conn.target)) return
@@ -244,10 +210,9 @@ function NodeEditorInner() {
             )
             return addEdge(conn, filtered)
         })
-        /* Mark the engine target dirty so the new wire takes effect on
-           the next tick. Resolve through clone aliases first — the
-           target itself is always a real node (clones have no inputs)
-           but we keep the resolve symmetric for safety. */
+        /* Mark the engine target dirty so the new wire takes effect
+           next tick. Target is always real today (clones have no
+           inputs) but resolve symmetrically for future safety. */
         const cloneToOrigin = new Map<string, string>()
         for (const p of pages) for (const n of p.nodes) {
             if (n.data.cloneOf) cloneToOrigin.set(n.id, n.data.cloneOf)
@@ -256,13 +221,10 @@ function NodeEditorInner() {
         engineRef.current?.markDirty(realTarget)
     }, [pages, setActiveEdges])
 
-    /* ── Edge validation ── */
     const isValidConnection = useCallback((conn: Connection | Edge) => {
         if (!conn.source || !conn.target) return false
-        /* Resolve both endpoints through clone aliases. Source is the
-           common clone case; target is always real today (clones have
-           no input handles), but resolving symmetrically keeps the
-           check robust against future schema changes. */
+        /* Resolve both endpoints through clone aliases (source is the
+           common case; target is always real today but kept symmetric). */
         const cloneToOrigin = new Map<string, string>()
         for (const p of pages) for (const n of p.nodes) {
             if (n.data.cloneOf) cloneToOrigin.set(n.id, n.data.cloneOf)
@@ -299,7 +261,6 @@ function NodeEditorInner() {
         return true
     }, [pages])
 
-    /* ── Context menu ── */
     const onPaneContextMenu = useCallback((event: MouseEvent | React.MouseEvent) => {
         event.preventDefault()
         const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY })
@@ -307,8 +268,8 @@ function NodeEditorInner() {
     }, [screenToFlowPosition])
 
     /* Heal the global node-id counter against every page's max suffix
-       BEFORE minting a new id. Used by every node-creation path —
-       processor add, clone add (popover or sidebar drag-drop), restore. */
+       before minting; covers every node-creation path (processor add,
+       clone add, restore). */
     const healAndMintNodeId = useCallback((): string => {
         const allNodes: { id: string }[] = []
         for (const p of pages) for (const n of p.nodes) allNodes.push(n)
@@ -316,21 +277,15 @@ function NodeEditorInner() {
         return nextId()
     }, [pages])
 
-    /* Add a real (engine-backed) processor node at a given flow-space
-       position on the active page. Both the popover and copy/paste end
-       up here. */
     const addProcessorNode = useCallback((type: string, position: { x: number; y: number }) => {
         const entry = PROCESSOR_CATALOG[type]
         if (!entry) return
         const id = healAndMintNodeId()
-        /* Autogenerate stable event ids for newly created event sources
-           (`tapZone` / `eventEmitter`). The Tier-3 client routes
-           dispatches on these ids; minting them at creation time means
-           any subsequent rename of `data.label` doesn't invalidate
-           external glue code that pinned to the id, and the publish
-           validator's duplicate-id check stays satisfied by default.
-           Existing scene-wide ids are scanned so adding multiple
-           emitters of the same type doesn't collide. */
+        /* Auto-mint stable event ids for `tapZone` / `eventEmitter`:
+           Tier-3 dispatches route on these, so renaming `data.label`
+           must not invalidate external glue. Scan scene-wide ids to
+           avoid collisions and to keep the publish validator's
+           duplicate-id check satisfied. */
         const params: Record<string, unknown> = { ...entry.def.defaultParams }
         if (type === 'tapZone' || type === 'eventEmitter') {
             const prefix = type === 'tapZone' ? 'tap' : 'evt'
@@ -357,9 +312,28 @@ function NodeEditorInner() {
         engineRef.current?.addNode(id, type, { ...params })
     }, [healAndMintNodeId, pages, setActiveNodes])
 
-    /* Add a viewer-only clone at a given flow-space position on the
-       active page. Engine is NEVER informed (the clone is a UI alias;
-       outgoing edges are rewritten to the original by sceneResolver). */
+    /* UI-only frame node — engine is never informed; lives in pages[]
+       so undo/redo + import/export carry it. `zIndex: -1` plus the
+       `.react-flow__node-frame { z-index: -1 !important }` rule in
+       `frame-card.css` keeps frames painted behind processor nodes
+       even when selected (RF's `elevateNodesOnSelect` would
+       otherwise bump them to the top). */
+    const addFrameNode = useCallback((position: { x: number; y: number }) => {
+        const id = healAndMintNodeId()
+        const newNode: PNode = {
+            id,
+            type: FRAME_PROCESSOR,
+            position: { x: snapToGrid(position.x), y: snapToGrid(position.y) },
+            data: { processor: FRAME_PROCESSOR, params: { ...frameDefaultParams() } },
+            width: FRAME_DEFAULT_WIDTH,
+            height: FRAME_DEFAULT_HEIGHT,
+            zIndex: -1,
+        } as PNode
+        setActiveNodes(nds => [...nds, newNode])
+    }, [healAndMintNodeId, setActiveNodes])
+
+    /* Viewer-only clone — engine is never informed; outgoing edges
+       are rewritten to the original by sceneResolver. */
     const addCloneNode = useCallback((originId: string, position: { x: number; y: number }) => {
         const id = healAndMintNodeId()
         const cloneNode: PNode = {
@@ -371,21 +345,21 @@ function NodeEditorInner() {
         setActiveNodes(nds => [...nds, cloneNode])
     }, [healAndMintNodeId, setActiveNodes])
 
-    /* ── Add a node from the popover (processor only — clones come
-           from the SceneOutlineSidebar via drag-and-drop). ── */
+    /* Picker emits processor or frame actions; clones come from
+       SceneOutlineSidebar via drag-and-drop. The `clone` variant
+       below is kept for back-compat / programmatic callers. */
     const onAddFromPopover = useCallback((action: AddNodeAction) => {
         const pos = { x: contextMenu?.flowX ?? 200, y: contextMenu?.flowY ?? 200 }
         if (action.kind === 'processor') {
             addProcessorNode(action.type, pos)
         } else if (action.kind === 'clone') {
-            /* Backward-compat — popover no longer surfaces clone items,
-               but keep the path working for any external caller. */
             addCloneNode(action.originId, pos)
+        } else if (action.kind === 'frame') {
+            addFrameNode(pos)
         }
         setContextMenu(null)
-    }, [addProcessorNode, addCloneNode, contextMenu])
+    }, [addProcessorNode, addCloneNode, addFrameNode, contextMenu])
 
-    /* ── Drag-and-drop from SceneOutlineSidebar onto canvas ── */
     const onCanvasDragOver = useCallback((event: React.DragEvent) => {
         if (!event.dataTransfer.types.includes(CLONE_DRAG_MIME)) return
         event.preventDefault()
@@ -400,15 +374,14 @@ function NodeEditorInner() {
         addCloneNode(originId, flowPos)
     }, [screenToFlowPosition, addCloneNode])
 
-    /* ── Delete handler — only call engine for real nodes. ── */
     const onNodesDelete = useCallback((deleted: PNode[]) => {
         for (const n of deleted) {
             if (n.data.cloneOf) continue   // clone is UI-only; engine never knew about it
+            if (n.data.processor === FRAME_PROCESSOR) continue   // frame is UI-only markup
             engineRef.current?.removeNode(n.id)
         }
     }, [])
 
-    /* ── Export / Import / Clear ── */
     const exportScene = useCallback(() => {
         const engine = engineRef.current
         const exportPages: SerializedPage[] = pages.map(page => {
@@ -445,10 +418,8 @@ function NodeEditorInner() {
         const data: SceneFile = {
             pages: exportPages,
             activePageId,
-            /* Persist the live counter so re-importing the file (or
-               loading it on a fresh tab) doesn't reset the id sequence
-               and start handing out IDs that already exist in the
-               exported graph. */
+            /* Persist the live counter so re-import / fresh-tab load
+               doesn't hand out IDs already used in the exported graph. */
             nodeIdCounter: getNodeIdCounter(),
             pinnedIds: [...pin.pinnedIds],
         }
@@ -497,23 +468,10 @@ function NodeEditorInner() {
         input.click()
     }, [applySnapshot, persistBlobs, serializeScene])
 
-    const clearScene = useCallback(async () => {
-        for (const p of pages) for (const n of p.nodes) {
-            if (n.data.cloneOf) continue
-            engineRef.current?.removeNode(n.id)
-        }
-        replaceScene([{ id: DEFAULT_PAGE_ID, name: DEFAULT_PAGE_NAME, nodes: [], edges: [] }], DEFAULT_PAGE_ID)
-        pin.clear()
-        await sceneStore.clearAll()
-    }, [pages, replaceScene, pin])
-
-    /* ── Publish Tier-2 manifest ────────────────────────────────────
-       Runs `derivePublishedSurface` against the current scene; on
-       success downloads `<effectId>.published.json` (the contract
-       Tier-2 supplier-app and Tier-3 multi-platform runtime consume).
-       Errors surface in a snackbar — the inspector + PublishRoot
-       node card already show inline error lists for each one, so the
-       snackbar is intentionally terse. */
+    /* On success downloads `<effectId>.published.json` — the contract
+       Tier-2 supplier-app and Tier-3 runtime consume. The snackbar is
+       intentionally terse; the inspector + PublishRoot card already
+       render full inline error lists. */
     const publishScene = useCallback(() => {
         const result = deriveFromPages(pages)
         if (!result.ok) {
@@ -537,7 +495,6 @@ function NodeEditorInner() {
         })
     }, [pages])
 
-    /* ── Loading gate ── */
     if (!engineReady || !engineRef.current) {
         return <div className="node-editor" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>Initializing GPU...</div>
     }
@@ -550,21 +507,12 @@ function NodeEditorInner() {
                 <PinProvider value={pin}>
                     <div className="node-editor">
                         <NodeEditorToolbar
-                            onUndo={handleUndo}
-                            onRedo={handleRedo}
                             onExport={exportScene}
                             onImport={importScene}
-                            onClear={clearScene}
                             onPublish={publishScene}
                             fps={fps}
                             onFpsChange={setFps}
                         />
-                        {/* IDE-style three-region layout below the toolbar:
-                            outline (left rail) | tabs + canvas | settings
-                            (right rail). Both rails are permanent — they
-                            have no toggle button and no close affordance.
-                            The user controls only their widths via the
-                            edge-resize handles each rail owns. */}
                         <div className="node-editor-body">
                             <SceneOutlineSidebar />
                             <div className="node-editor-main">
@@ -576,18 +524,15 @@ function NodeEditorInner() {
                                         onDrop={onCanvasDrop}
                                     >
                                         <ReactFlow
-                                            /* No `key={activePageId}` here on purpose:
-                                               remounting ReactFlow on every switch
-                                               tore down + rebuilt every node card
-                                               (Effect/Preview/Segmentation each pay
-                                               canvas init + subscriber setup), which
-                                               was the user-visible "freeze on tab
-                                               switch". xyflow's own diff against
-                                               `nodes`/`edges` arrays already handles
-                                               page swaps cheaply, and selection /
-                                               hover state attached to nodes that no
-                                               longer exist gets cleaned up by
-                                               react-flow on its own. */
+                                            /* Intentionally NO `key={activePageId}`:
+                                               remounting on every page switch tore
+                                               down + rebuilt every node card (each
+                                               Effect/Preview/Segmentation pays
+                                               canvas init + subscriber setup) — the
+                                               user-visible "freeze on tab switch".
+                                               xyflow's own diff against the nodes/
+                                               edges arrays handles page swaps
+                                               cheaply. */
                                             nodes={activePage.nodes}
                                             edges={colouredEdges}
                                             onNodesChange={onNodesChange}
@@ -657,13 +602,8 @@ export function NodeEditor() {
     )
 }
 
-/* Re-export so consumers (or tests) constructing snapshots manually have
-   the local `PageState` type without reaching into sceneResolver. */
 export type { PageState }
 
-/** Single-line description of a publish error — used by the toolbar
- *  snackbar (the inspector + PublishRoot card already show full
- *  multi-error lists with full descriptions). */
 function describePublishError(e: PublishError): string {
     switch (e.kind) {
         case 'no-root': return 'no PublishRoot node'

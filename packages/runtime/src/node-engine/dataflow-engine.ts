@@ -28,23 +28,17 @@ export class DataflowEngine implements IDataflowEngine {
     private edges: EdgeRecord[] = []
     private rafId = 0
 
-    /* Cached list of node ids whose processor sets `alwaysDirty = true`.
-       Maintained in `addNode` / `removeNode` so the per-tick "mark
-       always-dirty" loop doesn't iterate the entire `processors` Map and
-       allocate a destructured tuple per entry every frame. */
+    /* Cached id list to avoid Map iteration + tuple alloc in the per-tick
+       always-dirty loop. Maintained in addNode / removeNode. */
     private alwaysDirtyIds: string[] = []
 
-    /* Reusable inputs records per nodeId. `gatherInputs` clears keys and
-       refills the same object so we don't allocate a fresh `{}` per dirty
-       node per tick. Processors must NOT retain the reference across
-       `execute` calls — the next tick's `gatherInputs` mutates it. */
+    /* Reusable per-node inputs record. gatherInputs clears keys and refills
+       the same object — processors MUST NOT retain the reference across
+       execute() calls; the next tick mutates it in place. */
     private inputBuffers = new Map<string, Record<string, any>>()
 
-    /* FPS cap. 0 disables gating and lets the engine tick at the browser's
-       native rAF cadence. Positive values throttle `tick()` so the editor
-       stops melting laptops while the user iterates on parameters. The cap
-       only governs how often we *evaluate* the graph; rAF still drives
-       compositing of static frames. */
+    /* FPS cap. 0 disables gating. Positive values throttle tick() — only
+       graph evaluation; rAF still drives compositing of static frames. */
     private targetFps = 0
     private lastTickAt = 0
 
@@ -52,17 +46,12 @@ export class DataflowEngine implements IDataflowEngine {
     private nodeListeners = new Map<string, Set<() => void>>()
 
     constructor(app: Application) {
-        /* Patch Pixi v8's known extract-system leak before any
-           processor has a chance to call `extract.canvas` /
-           `extract.base64` (Segmentation, Preview, future processors).
-           Idempotent — the patch carries its own one-shot flag, so
-           multiple engines on the same page (editor + supplier in dev)
-           apply it exactly once. */
+        /* Patch Pixi v8 extract leak before any processor calls extract.*.
+           Idempotent (one-shot flag) so multiple engines on the same page
+           (editor + supplier in dev) apply it exactly once. */
         applyPixiExtractLeakPatches()
         this.app = app
     }
-
-    /* ── Node lifecycle ── */
 
     addNode(nodeId: string, processorType: string, initialParams?: Record<string, any>): void {
         const entry = PROCESSOR_CATALOG[processorType]
@@ -85,13 +74,10 @@ export class DataflowEngine implements IDataflowEngine {
         this.inputBuffers.delete(nodeId)
         const adIdx = this.alwaysDirtyIds.indexOf(nodeId)
         if (adIdx !== -1) this.alwaysDirtyIds.splice(adIdx, 1)
-        /* Subscribers are bound to the node *id*, not to a processor instance.
-           applySnapshot() (undo/redo) tears down every node and immediately
-           re-adds the same ids; the React views stay mounted with stable
-           [engine, id] deps so their subscribe-effect never re-fires. If we
-           dropped the listener set here, the re-added processor's outputs
-           would publish into an empty set and previews / metrics / output-
-           reading widgets would freeze on the pre-undo frame. The set is
+        /* Subscribers are bound to node *id*, not the processor instance —
+           applySnapshot() (undo/redo) re-adds the same id and React views
+           keep their existing [engine, id] subscription. Dropping the
+           listener set here would freeze previews after undo. The set is
            cleaned up by the unsubscribe closure once it goes empty. */
         this.rebuildGraph()
     }
@@ -108,8 +94,6 @@ export class DataflowEngine implements IDataflowEngine {
     getProcessor<T extends BaseProcessor>(nodeId: string): T | undefined {
         return this.processors.get(nodeId) as T | undefined
     }
-
-    /* ── Edges / graph topology ── */
 
     setEdges(edges: Array<{ source: string; sourceHandle?: string | null; target: string; targetHandle?: string | null }>): void {
         this.edges = edges.map(e => ({
@@ -137,7 +121,6 @@ export class DataflowEngine implements IDataflowEngine {
             else this.targetEdges.set(e.target, [rec])
         }
 
-        // Kahn's topological sort
         const inDegree = new Map<string, number>()
         for (const id of this.processors.keys()) inDegree.set(id, 0)
         for (const e of this.edges) {
@@ -161,18 +144,14 @@ export class DataflowEngine implements IDataflowEngine {
             }
         }
 
-        // Mark everything dirty after structure change
+        // structure change invalidates every cached output
         for (const id of this.processors.keys()) this.dirtySet.add(id)
     }
 
-    /* ── Dirty propagation ── */
-
     markDirty(nodeId: string): void {
-        /* BFS via index pointer instead of `queue.shift()` (which is O(N)
-           per pop and shows up on graphs with high fan-out — e.g. an
-           AnimationController feeding 8 channels into multiple Effect
-           nodes). The visited check via `dirtySet` keeps the traversal
-           linear in the number of reachable nodes. */
+        /* BFS via index pointer instead of queue.shift() — shift() is O(N)
+           per pop and shows up on high fan-out graphs (AnimationController
+           → 8 channels → multiple Effects). */
         const queue = [nodeId]
         for (let head = 0; head < queue.length; head++) {
             const id = queue[head]
@@ -184,13 +163,10 @@ export class DataflowEngine implements IDataflowEngine {
         }
     }
 
-    /* ── Input gathering ── */
-
     private gatherInputs(nodeId: string): Record<string, any> {
-        /* Reuse a per-node inputs object — avoids one `{}` allocation per
-           dirty node per tick. We delete keys instead of overwriting so a
-           handle that became unwired in this tick doesn't leak the
-           previous tick's value into `execute(inputs, ...)`. */
+        /* Reuse the per-node buffer; delete keys (don't just overwrite) so
+           a handle that became unwired this tick doesn't leak the previous
+           tick's value into execute(). */
         let inputs = this.inputBuffers.get(nodeId)
         if (!inputs) {
             inputs = {}
@@ -210,13 +186,9 @@ export class DataflowEngine implements IDataflowEngine {
         return inputs
     }
 
-    /* ── Output access ── */
-
     getOutputs(nodeId: string): Record<string, any> | undefined {
         return this.outputCache.get(nodeId)
     }
-
-    /* ── Render helpers (GPU) ── */
 
     renderPass(fragment: string, resources: Record<string, unknown>, w?: number, h?: number): RenderTexture {
         const rw = w ?? this.defaultWidth
@@ -243,13 +215,8 @@ export class DataflowEngine implements IDataflowEngine {
         quad.destroy()
     }
 
-    /**
-     * Shared fullscreen quad geometry keyed by (w, h). Cached on the engine
-     * so processors that render their own fullscreen passes (currently
-     * `EffectProcessor`'s fullscreen passes) don't each maintain a private
-     * quad allocation. Caller must NOT destroy the returned Geometry — the
-     * engine owns it and disposes in `destroy()`.
-     */
+    /** Shared fullscreen quad geometry keyed by (w, h). Engine-owned —
+     *  caller must NOT destroy. Disposed in destroy(). */
     getQuadGeometry(w: number, h: number): Geometry {
         const key = `${w}x${h}`
         let geo = this.geoCache.get(key)
@@ -266,8 +233,6 @@ export class DataflowEngine implements IDataflowEngine {
         return geo
     }
 
-    /* ── Subscriber system for React components ── */
-
     subscribeNode(nodeId: string, cb: () => void): () => void {
         if (!this.nodeListeners.has(nodeId)) this.nodeListeners.set(nodeId, new Set())
         this.nodeListeners.get(nodeId)!.add(cb)
@@ -275,9 +240,7 @@ export class DataflowEngine implements IDataflowEngine {
             const set = this.nodeListeners.get(nodeId)
             if (!set) return
             set.delete(cb)
-            /* Drop the empty entry so a permanently-removed node doesn't
-               leave a dangling Set behind. Re-add at the same id (undo/redo)
-               recreates the entry on the next subscribe call. */
+            // drop empty entry so permanently-removed nodes don't leak Sets
             if (set.size === 0) this.nodeListeners.delete(nodeId)
         }
     }
@@ -286,20 +249,12 @@ export class DataflowEngine implements IDataflowEngine {
         this.nodeListeners.get(nodeId)?.forEach(cb => cb())
     }
 
-    /* ── Main loop ── */
-
-    /**
-     * Cap how often the dataflow graph is re-evaluated. `fps <= 0` removes
-     * the cap. The cap is purely temporal — alwaysDirty processors still
-     * get evaluated on every accepted frame, so dropping fps directly
-     * reduces work proportionally.
-     */
+    /** Cap graph re-evaluation rate. fps <= 0 disables the cap. */
     setTargetFps(fps: number): void {
         const next = Number.isFinite(fps) && fps > 0 ? Math.floor(fps) : 0
         if (next === this.targetFps) return
         this.targetFps = next
-        /* Reset the gate so a new cap takes effect on the very next frame
-           rather than waiting out the previous interval. */
+        // reset gate so a new cap takes effect on the next frame
         this.lastTickAt = 0
     }
 
@@ -307,8 +262,8 @@ export class DataflowEngine implements IDataflowEngine {
         const tick = () => {
             if (this.targetFps > 0) {
                 const now = performance.now()
-                /* Subtract a small slack so a 60fps cap doesn't drop every
-                   other frame to 30fps because of rAF jitter. */
+                /* Slack of 0.5ms so a 60fps cap doesn't drop every other
+                   frame to 30fps because of rAF jitter. */
                 const minInterval = 1000 / this.targetFps - 0.5
                 if (now - this.lastTickAt < minInterval) {
                     this.rafId = requestAnimationFrame(tick)
@@ -328,15 +283,12 @@ export class DataflowEngine implements IDataflowEngine {
     }
 
     private tick(): void {
-        // 1. Mark always-dirty nodes (cached id list — no Map iteration / tuple alloc)
         for (let i = 0; i < this.alwaysDirtyIds.length; i++) {
             this.markDirty(this.alwaysDirtyIds[i])
         }
 
-        // 2. Nothing to do?
         if (this.dirtySet.size === 0) return
 
-        // 3. Execute dirty nodes in topological order
         for (const id of this.topoOrder) {
             if (!this.dirtySet.has(id)) continue
             const proc = this.processors.get(id)
@@ -346,22 +298,12 @@ export class DataflowEngine implements IDataflowEngine {
 
             try {
                 const outputs = proc.execute(inputs, params, this)
-                /* Reference-stabilising diff: when an alwaysDirty
-                   processor re-runs but produces output that's value-
-                   equal to the previous tick (paused Timer, idle
-                   Envelope, AnimationController whose channels didn't
-                   move), keep the previous reference in `outputCache`
-                   instead of overwriting with the new (equal) one.
-                   This way `useNodeOutputs` / downstream Object.is
-                   checks see a stable reference and React's useState
-                   bail-outs prevent re-renders.
-                   We still ALWAYS call notifyNode — some processors
-                   (Preview, ContourPreview, Segmentation, ...) hold
-                   live state on `this` (e.g. `proc.imgCanvas` whose
-                   bitmap content changes without the canvas reference
-                   changing) and rely on the view's subscribe callback
-                   firing every tick to copy that state into the DOM.
-                   Skipping notify here would freeze those previews. */
+                /* Reference-stabilising diff: keep the previous reference
+                   when value-equal so downstream Object.is checks stay
+                   stable (paused Timer, idle Envelope, etc.). notifyNode
+                   ALWAYS fires — Preview/ContourPreview/Segmentation
+                   mutate live state on `this` whose canvas reference
+                   doesn't change between ticks. */
                 const prev = this.outputCache.get(id)
                 if (!prev || !outputsEqual(prev, outputs)) {
                     this.outputCache.set(id, outputs)
@@ -372,11 +314,8 @@ export class DataflowEngine implements IDataflowEngine {
             }
         }
 
-        // 4. Clear
         this.dirtySet.clear()
     }
-
-    /* ── Cleanup ── */
 
     destroy(): void {
         this.stop()
@@ -385,11 +324,9 @@ export class DataflowEngine implements IDataflowEngine {
         this.outputCache.clear()
         for (const geo of this.geoCache.values()) geo.destroy()
         this.geoCache.clear()
-        /* Drop every other piece of graph state too. Without this, late
-           `subscribeNode` unsubscribes still reach into stale `Set<cb>`
-           closures, and React-side `setState` callbacks pinned by
-           subscribers keep node output objects alive long after the
-           engine has been torn down (HMR / route remount scenarios). */
+        /* Drop the rest of the graph state — without this, late
+           subscribeNode unsubscribes reach into stale Set<cb> closures and
+           React-pinned outputs survive engine teardown (HMR / remount). */
         this.nodeListeners.clear()
         this.nodeParams.clear()
         this.adjacency.clear()
@@ -403,23 +340,10 @@ export class DataflowEngine implements IDataflowEngine {
 }
 
 /**
- * Recursive content-equality check used by the engine's diff-gated
- * notification path. Designed for processor `outputs` records that mostly
- * carry primitives, plain `{}` packets (Signal / ChannelSignal /
- * AnimationSignal / EventSignal / EffectMetrics / PassMetric[]), and
- * opaque GPU resources (Pixi `RenderTexture` / `TextureSource`,
- * `ContourSamples` Float32Arrays).
- *
- * Equality rules:
- *   - `Object.is` short-circuit handles primitives + identical references
- *     (the common case when a processor caches its output).
- *   - Recursion is allowed only into PLAIN objects and Arrays. Anything
- *     with a non-Object prototype (TypedArrays, Maps, Pixi instances,
- *     ContourSamples…) is treated as opaque and compared by reference
- *     only. This keeps the walk cheap and prevents accidental deep
- *     traversal of huge GPU buffers.
- *   - Depth is capped at MAX_DIFF_DEPTH (deep enough to cover
- *     `outputs.animation.channels['0'].value` = 4 hops).
+ * Diff-gating equality for processor outputs. Recurses only into plain
+ * objects/arrays — TypedArrays, Maps, Pixi instances, ContourSamples are
+ * opaque (compared by reference) to avoid walking huge GPU buffers. Depth
+ * cap covers outputs.animation.channels['0'].value (4 hops).
  */
 const MAX_DIFF_DEPTH = 6
 

@@ -4,12 +4,6 @@ import { useSetParam } from '../hooks/useSetParam'
 import { TextFieldRow } from '@effects/ui'
 import type { NodeSettingsProps } from './types'
 
-/**
- * Settings pane: identity (`id`, `label`). The manual EMIT trigger
- * lives on the graph card itself (`TapZoneNodeView`) — same rationale
- * as `EventEmitterNodeSettings`: testing-friendly to keep the
- * dispatch button on the canvas.
- */
 export const TapZoneNodeSettings = memo(({ id, data }: NodeSettingsProps) => {
     const set = useSetParam(id)
     const eventId = (data.params.id as string | undefined) ?? ''

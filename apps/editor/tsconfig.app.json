@@ -8,9 +8,11 @@
             "@/*":               ["./src/*"],
             "@effects/runtime":  ["../../packages/runtime/src/index.ts"],
             "@effects/runtime/*": ["../../packages/runtime/src/*"],
+            "@effects/player":   ["../../packages/player/src/index.ts"],
+            "@effects/player/*": ["../../packages/player/src/*"],
             "@effects/ui":       ["../../packages/ui/src/index.ts"],
             "@effects/ui/*":     ["../../packages/ui/src/*"]
         }
     },
-    "include": ["src", "../../packages/runtime/src", "../../packages/ui/src"]
+    "include": ["src", "../../packages/runtime/src", "../../packages/player/src", "../../packages/ui/src"]
 }

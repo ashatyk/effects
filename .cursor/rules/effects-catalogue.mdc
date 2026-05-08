@@ -1,6 +1,5 @@
 ---
 description: Reference for every shipped effect (8 manifests) — passes, fields, animation slots, texture slots, composition. Read before tuning, debugging, or extending an effect.
-alwaysApply: true
 ---
 
 # Effects catalogue

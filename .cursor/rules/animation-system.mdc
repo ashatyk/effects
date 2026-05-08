@@ -1,6 +1,5 @@
 ---
 description: Animation pipeline — Pulse → Signal → ChannelSignal → uChan{i}; Timer + Interpolator profiles, Envelope shapes, Combine modes, AnimationController, 8-channel pool. Read before changing animation processors, signal types, or shader-side animation contracts.
-alwaysApply: true
 ---
 
 # Animation system — from input to shader uniforms

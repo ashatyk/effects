@@ -10,10 +10,6 @@ import {
 } from '@effects/runtime/node-engine/processors/contour-pivot'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: live pivot readout. Mode + offset live in
- * `ContourPivotNodeSettings`.
- */
 export const ContourPivotNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const mode = (data.params.mode ?? 'area') as PivotMode

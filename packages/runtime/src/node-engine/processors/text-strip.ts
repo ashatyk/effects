@@ -24,22 +24,8 @@ export const textStripDef: ProcessorDef = {
     defaultParams: {},
 }
 
-/**
- * Renders a phrase as a single horizontal raster strip into a RenderTexture.
- * Downstream effects can stretch this strip along a contour as a ribbon.
- *
- * Inputs:
- *   - `text`:  TEXT — required. When missing or empty, the node holds its
- *              previous frame and reports an idle status.
- *   - `style`: TEXT_STYLE — optional; falls back to a sensible default
- *              (Inter, regular spacing, bold, no case transform).
- *
- * Output:
- *   - `texture`: TextureSource of the strip. Downstream consumers can
- *                derive the aspect ratio from `texture.width / texture.height`
- *                (Effect node already does this for every `uTxcn{i}` slot
- *                via the auto-generated `uTxcn{i}Aspect` uniform).
- */
+// Rasterises a phrase as a horizontal strip TextureSource for ribbon-along-contour
+// consumers. Downstream Effect uses texture.width/height to derive uTxcn{i}Aspect.
 export class TextStripProcessor extends BaseProcessor {
     readonly def = textStripDef
 
@@ -70,13 +56,8 @@ export class TextStripProcessor extends BaseProcessor {
         const weightToken = style.weight === 'bold' ? 'bold ' : ''
         const cssFont = `${weightToken}${fontSize}px ${style.font}`
 
-        /* Web fonts (Google Fonts, @font-face etc.) load asynchronously. If we
-           rasterise the strip before the typeface is available, Canvas2D
-           silently falls back to a generic and the strip is rendered in the
-           wrong font. Wait for the browsers font loader to finish for this
-           font stack before measuring/painting. document.fonts.load resolves
-           even when the family is missing — in that case Canvas2D uses the
-           next entry in the stack. */
+        // Wait for document.fonts.load: rasterising before a web font is ready
+        // makes Canvas2D silently fall back to the next family in the stack.
         const fontReady = (typeof document !== 'undefined' && document.fonts)
             ? document.fonts.load(cssFont).catch(() => undefined)
             : Promise.resolve()
@@ -88,9 +69,7 @@ export class TextStripProcessor extends BaseProcessor {
         const measure = document.createElement('canvas')
         const mctx = measure.getContext('2d')!
         mctx.font = cssFont
-        /* Canvas2D supports letterSpacing as both a CSS property on the
-           context and via measureText respecting it. Fall back to manual
-           glyph-by-glyph rendering if the platform refuses the property. */
+        // Manual glyph layout fallback when the platform rejects ctx.letterSpacing.
         let supportsCtxSpacing = true
         try {
             (mctx as unknown as { letterSpacing: string }).letterSpacing = `${letterSpacing}px`
@@ -124,8 +103,6 @@ export class TextStripProcessor extends BaseProcessor {
             ctx.textAlign = 'center'
             ctx.fillText(text, stripW / 2, STRIP_HEIGHT / 2)
         } else {
-            /* Manual layout: draw each glyph at the running x and add custom
-               spacing between glyphs. Slower but works on every browser. */
             ctx.textAlign = 'left'
             const lineW = manualW
             let x = (stripW - lineW) / 2
@@ -151,17 +128,9 @@ export class TextStripProcessor extends BaseProcessor {
                 container.addChild(sprite)
                 engine.app.renderer.render({ container, target: rt, clear: true })
                 container.destroy({ children: true })
-                /* CRITICAL: container.destroy({children: true}) destroys the
-                   Container and its Sprites, but Sprite.destroy() defaults
-                   to NOT destroying its texture. The Texture we created
-                   from the rasterised PNG (and its underlying GPU
-                   TextureSource carrying the bitmap) would otherwise leak
-                   on every text re-rasterisation. Pass `true` to also
-                   release the TextureSource — we own this texture, the
-                   `img` element + blob URL are already gone, nothing
-                   downstream references it. The output `_outputRT` (the
-                   strip we just rendered into) is owned by the processor
-                   via `ensureRT` and is intentionally untouched here. */
+                // tex.destroy(true): container.destroy doesn't release Sprite textures by
+                // default, and the rasterised PNG TextureSource would leak on every
+                // re-rasterisation. _outputRT is owned by ensureRT and stays alive.
                 tex.destroy(true)
                 this.cacheKey = key
                 this.generating = false

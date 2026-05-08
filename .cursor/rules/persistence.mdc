@@ -1,6 +1,5 @@
 ---
 description: Persistence — Dexie schema, SceneSnapshot shape, undo/redo cursor, blob storage, debounced auto-save, ID counter healing. Read before changing snapshot shape, history flow, or any persisted field.
-alwaysApply: true
 ---
 
 # Scene persistence
@@ -65,6 +64,13 @@ SerializedNode {
       label?: string
       hint?: string
     }
+    runtimeDynamic?: boolean // when true, the supplier-app bake step adds this
+                             //   node as an extra taint seed — it (and everything
+                             //   downstream) stays live in the .baked.json instead
+                             //   of being folded into a constantTexture/Contour.
+                             //   Toggled from PublishInspector → "Bake behaviour".
+                             //   Survives publish trim verbatim (just rides
+                             //   `data` through `derivePublishedSurface`).
     imageUrl?: string        // 'img:<nodeId>' blob key
     segPoints?: SamPoint[]
     segPolygon?: number[]    // SAM polygon, flat xy
@@ -124,7 +130,7 @@ For each page, walk every node, copy `id / type / position / data` (deep-copy `p
 
 ```
 isRestoringRef.current = true
-for page of currentPages, n of page.nodes: if (!n.data.cloneOf) engine.removeNode(n.id)
+for page of currentPages, n of page.nodes: if (!n.data.cloneOf && n.data.processor !== 'frame') engine.removeNode(n.id)
 
 incomingPages = snap.pages ?? [{ id:'p_1', name:'Main', nodes:snap.nodes, edges:snap.edges, viewport:snap.viewport }]
 setNodeIdCounter(max(snap.nodeIdCounter, maxNodeIdAcrossPages(incomingPages)))
@@ -132,12 +138,13 @@ setPageIdCounterFromPages(incomingPages)
 
 for page of incomingPages, sn of page.nodes:
     isClone = !!sn.data.cloneOf
-    if (!isClone && !PROCESSOR_CATALOG[sn.data.processor]) continue   // unknown processor → skip
-    if (!isClone):
+    isFrame = sn.data.processor === 'frame'
+    if (!isClone && !isFrame && !PROCESSOR_CATALOG[sn.data.processor]) continue   // unknown processor → skip
+    if (!isClone && !isFrame):
         engine.addNode(sn.id, sn.data.processor, { ...sn.data.params })
         if image: load blob → setImageUrl
         if segmentation: restore points/polygon/mask
-    push to restoredPage.nodes
+    push to restoredPage.nodes (frames re-stamp zIndex: -1 — see ui-views.mdc)
 filter page.edges to only endpoints that survived ON THIS PAGE → restoredPage.edges (stamps type='editableStep')
 
 replaceScene(restoredPages, snap.activePageId ?? restoredPages[0].id)
@@ -152,6 +159,7 @@ Three invariants:
 - **Skip unknown processor types.** `addNode` warns; node dropped. Edges to dropped nodes filtered by per-page `aliveIds` check; `resolveSceneForEngine` later drops clone-source edges.
 - **Subscribers stay attached.** `removeNode + addNode` of the same id never tears down React subscribers (`nodeListeners` keyed by id — see `node-engine.mdc`).
 - **Clones never reach `engine.addNode`.** Restoring with clones produces RF nodes only; engine sees clone-rewritten edges through the next `engine.setEdges` from the engine-sync effect.
+- **Frames never reach `engine.addNode`.** `processor === 'frame'` is a UI-only markup node (colored rectangle for canvas section grouping — see `ui-views.mdc`). Bypasses the PROCESSOR_CATALOG check too (frames will never be in the catalog by design). Same RF-only restoration path as clones.
 
 ## ID counter healing
 

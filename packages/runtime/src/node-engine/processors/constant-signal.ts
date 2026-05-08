@@ -15,25 +15,9 @@ export const constantSignalDef: ProcessorDef = {
     },
 }
 
-/**
- * Static SIGNAL source. Emits a fixed `value` every tick with `time / age =
- * 0` (no internal clock — the value is *constant*, not driven). The optional
- * `state` toggle lets the user simulate "clip in flight" so shaders that gate
- * behaviour on `uChan{i}.w` (envelope-driven highlights, etc.) can be
- * exercised without wiring a real `eventEmitter → envelope` chain.
- *
- * Use cases:
- *  - Pin a single AnimationController channel to a static value (fixed
- *    radial offset / size / intensity) without a Timer + Interpolator pair.
- *  - Disable a channel cleanly by feeding it `value = 0` (vs leaving it
- *    unwired, which already yields 0 — but a wired Constant makes the
- *    intent explicit in the graph).
- *  - Quick A/B compare in a shader: flip between two known values to see
- *    the visual delta without retuning Timer / Interpolator params.
- *
- * Pure function of params → not `alwaysDirty`. Param edits flow through
- * the engine's normal `updateNodeParams → markDirty` path.
- */
+// Emits a fixed value with time/age=0 (no internal clock). The `state` toggle
+// simulates "clip in flight" so shaders gating on uChan{i}.w can be exercised
+// without wiring a real eventEmitter → envelope chain. Pure → not alwaysDirty.
 export class ConstantSignalProcessor extends BaseProcessor {
     readonly def = constantSignalDef
 

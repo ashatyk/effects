@@ -14,13 +14,6 @@ export const textDef: ProcessorDef = {
     defaultParams: { value: DEFAULT_TEXT },
 }
 
-/**
- * Plain string source. Lets the user wire one piece of copy into multiple
- * downstream consumers (e.g. several Text Strip nodes producing different
- * stylings of the same phrase). Outputs an empty string when the param
- * is cleared — downstream nodes are responsible for treating that as
- * "nothing to render".
- */
 export class TextProcessor extends BaseProcessor {
     readonly def = textDef
 

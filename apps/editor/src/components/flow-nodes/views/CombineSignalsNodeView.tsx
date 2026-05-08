@@ -28,10 +28,6 @@ const makeRing = (): RingBuffer => ({
     head: 0,
 })
 
-/**
- * Graph card: live oscilloscope showing A/B/Out traces. Mode + mix
- * factor live in `CombineSignalsNodeSettings`.
- */
 export const CombineSignalsNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
 

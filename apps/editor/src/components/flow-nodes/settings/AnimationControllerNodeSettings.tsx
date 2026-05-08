@@ -10,15 +10,8 @@ import { effects } from '@effects/runtime'
 import { COL_MUTED, COL_SECONDARY } from '@effects/ui/widgets/constants'
 import type { NodeSettingsProps } from './types'
 
-/**
- * Settings pane for `animationController`. Surfaces the per-channel
- * `min` / `max` knobs that map an upstream Signal into a `ChannelSignal`.
- *
- * Slot labels are pulled live from the upstream Config node (same trick
- * the in-graph view uses to relabel `signal_N` handles), so when an
- * effect is wired up the editor sees `0  primary phase  0.0  1.0`
- * instead of `slot 0  0.0  1.0`.
- */
+/* Slot labels come from the upstream Config (same trick as the in-graph view's
+   `signal_N` relabel) so the row reads `0  primary phase  0.0  1.0`. */
 
 function selectUpstreamConfigId(nodeId: string) {
     return (s: ReactFlowState) =>

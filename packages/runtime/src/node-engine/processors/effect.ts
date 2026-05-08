@@ -14,29 +14,10 @@ import {
 } from '../../pipeline/types'
 import { type InstanceStreams, resampleContourRibbon, resampleContourScrolling, streamsFromContour } from '../render/instanced-mesh'
 
-/* Effect node inputs:
-     • `source`     — the bitmap the effect modulates (uDiffuse).
-     • `txcn0..7`   — eight generic texture channels. Each effect manifest
-                      declares which of those slots it reads via
-                      `PlaygroundConfig.textures.slots`, with a label that
-                      the node UI surfaces next to the handle (similar to
-                      how AnimationController shows animation slot names).
-                      Shaders bind the channels they consume by declaring
-                      `uniform sampler2D uTxcn{i};`. Unconnected slots
-                      fall back to a 1×1 white texture so the sampler is
-                      always safe to read.
-     • `contour`    — resampled SoA polyline used by instanced passes.
-     • `pivot`      — 2D point in pixel space (matching the canvas
-                      resolution). Bound as `uPivot: vec2<f32>` for shaders
-                      that need a focal point (radial / centred effects,
-                      anchored animations, gravity origins, ...). When no
-                      pivot is wired, defaults to the contour's AABB centre
-                      if a contour is connected, else the canvas centre.
-                      `uPivotEnabled: f32` exposes whether the user
-                      explicitly drove the value (1.0) vs the runtime fell
-                      back to a default (0.0).
-     • `animation`  — multi-channel signal driving uChan{i} uniforms.
-     • `config`     — picks the active manifest from the Config node. */
+// Slot contracts:
+//   source → uDiffuse; txcn{i} → uTxcn{i} (1×1 white fallback so samplers always read).
+//   contour → instanced passes; pivot → uPivot (defaults to contour AABB centre or canvas
+//   centre, with uPivotEnabled = 0/1); animation → uChan{i}; config picks the manifest.
 export const effectDef: ProcessorDef = {
     type: 'effect',
     title: 'Effect',
@@ -53,9 +34,6 @@ export const effectDef: ProcessorDef = {
         { name: 'animation', type: SLOT.ANIMATION, label: 'animation' },
         { name: 'config', type: SLOT.CONFIG },
     ],
-    /* `metrics` carries per-pass CPU build timing and total GPU dispatch
-       time, refreshed every frame. Wire it into a Log node to see where
-       a frame's budget is spent. */
     outputs: [
         { name: 'texture', type: SLOT.TEXTURE },
         { name: 'metrics', type: SLOT.METRICS },
@@ -71,69 +49,30 @@ interface ResourceContext {
     engine: IDataflowEngine
 }
 
-/**
- * Per-pass cached GPU resources. Built once when the active effect or the
- * canvas resolution changes; reused every frame.
- *
- * What is NOT cached on purpose: the per-pass `Shader` + `Mesh`. Pixi v8's
- * GL renderer generates a per-program "sync function" the first time it
- * sees a new shader and caches it globally by `glProgram._key`. The
- * generated code captures the resource layout at the time of generation,
- * so mutating `shader.resources.<sampler> = newSrc` after the fact is
- * brittle (works in some paths, silently no-ops in others). Re-creating
- * the Shader + Mesh per frame is cheap — `Shader.from` hits Pixi's
- * internal program cache and returns a fresh wrapper around the
- * already-compiled GL program. The bind groups are rebuilt from a fresh
- * resources record that points at the actual current `inp.source` /
- * `inp.txcn{i}` references, so samplers are always accurate.
- *
- * The expensive items below stay cached:
- *   - `Geometry` (instanced only — fullscreen uses engine.getQuadGeometry).
- *   - Per-vertex `aLocal` + `indexBuffer` Buffers (manifest-derived).
- *   - Per-instance Buffers (positions, tangents, arcS, *Next, index) —
- *     updated in place via `Buffer.setDataWithSize` instead of being
- *     rebuilt on each frame.
- *   - Sampler-name set parsed from the shader source (avoids re-scanning
- *     GLSL with regex every frame).
- */
+// Geometry, per-vertex/index Buffers, per-instance Buffers and the parsed sampler set
+// are cached. Shader + Mesh are deliberately rebuilt per frame: Pixi v8's per-program
+// sync function captures the resource layout at compile time, so mutating
+// shader.resources.<sampler> on a cached Shader is brittle. Shader.from hits Pixi's
+// program cache, so per-frame rebuilds only allocate a thin wrapper + fresh bind groups.
 interface PassCache {
-    /** Set of sampler names declared in this pass's shader sources. */
     samplers: Set<string>
-    /** Instanced-only: owned Geometry whose attributes wrap our buffers. */
     geometry?: Geometry
-    /** Instanced-only: per-vertex `aLocal` + index buffer (static). */
     perVertexBuffer?: Buffer
     indexBuffer?: Buffer
-    /** Instanced-only: per-instance buffers keyed by attribute name. */
     instanceBuffers?: Map<string, Buffer>
-    /** Instanced-only: count the GPU buffers were last sized for. */
     instanceCount: number
-    /** True for fullscreen passes — informs invalidation/destroy logic. */
     fullscreen: boolean
 }
 
 export class EffectProcessor extends BaseProcessor {
     readonly def = effectDef
-    /* Intentionally NOT alwaysDirty. Effect re-renders only when something
-       upstream actually changes:
-         - any wired alwaysDirty source (Timer / EventEmitter / Envelope /
-           Combine / SignalSwitch / AnimationController / AnimationSwitch)
-           BFS-marks Effect dirty every tick that it ticks, so animated
-           scenes keep ticking exactly as before;
-         - param edits / wire changes flow through the same
-           `markDirty` propagation;
-         - the upstream image / contour producers mark their own dirty
-           when their async resources arrive, propagating downstream.
-       Effect itself sleeps when nothing in its dependency tree moved —
-       a static "image -> sdf -> effect" scene now costs zero per-frame
-       work instead of dispatching the same identical RT 60 times/s. */
+    // NOT alwaysDirty: re-renders ride upstream propagation (Timer/EventEmitter/etc).
+    // Static "image → sdf → effect" scenes do zero per-frame work.
 
     private cachedEffectName: string | null = null
 
-    /* Cache keyed by `${effectName}|${w}x${h}`. Changing the active effect
-       or the canvas resolution destroys the cache and rebuilds. Phase /
-       parameter / animation changes never invalidate — they flow through
-       in-place uniform / buffer updates. */
+    // Cache key = `${effectName}|${w}x${h}`. Param / phase / animation changes flow
+    // through in-place uniform/buffer updates and don't invalidate the cache.
     private cacheKey: string | null = null
     private stage: Container | null = null
     private uniforms: UniformGroup | null = null
@@ -160,8 +99,6 @@ export class EffectProcessor extends BaseProcessor {
             engine,
         }
 
-        /* Invalidate per-pass cache if the active effect or the canvas
-           dimensions changed. Otherwise everything is reused. */
         const nextKey = `${config.name}|${w}x${h}`
         if (this.cacheKey !== nextKey) {
             this.invalidateCache()
@@ -175,9 +112,7 @@ export class EffectProcessor extends BaseProcessor {
         this.refreshUniforms(uniforms, config, configData, ctx)
         this.warnUndeclaredChannels(config)
 
-        /* Stage child list is rebuilt every frame. `removeChildren` only
-           unparents — the per-frame Meshes get destroyed below after
-           render. Container itself stays cached across frames. */
+        // removeChildren only unparents; the per-frame Meshes are destroyed below.
         stage.removeChildren()
 
         const passMetrics: PassMetric[] = []
@@ -216,23 +151,10 @@ export class EffectProcessor extends BaseProcessor {
         })
         const gpuDispatchMs = performance.now() - tDispatch
 
-        /* Tear down per-frame Mesh + Shader wrappers. The cached Geometry
-           and Buffers stay — `geometry: false, texture: false,
-           textureSource: false` keeps Pixi from cascading into them.
-           
-           CRITICAL: `mesh.destroy()` does NOT destroy the Shader
-           (shaders can be shared between meshes — Pixi has no way of
-           knowing it's the only owner). Each frame we build a fresh
-           Shader.from({ resources }) that allocates its own owned
-           BindGroup(s) holding GL state for sampler / texture /
-           uniform-buffer bindings. Without explicit shader.destroy()
-           those BindGroups accumulate indefinitely — heap snapshots
-           on a 2-effect scene running for a few minutes show 90k+
-           BindGroup instances (multi-GB GPU memory). The
-           `destroyPrograms: false` arg keeps the GL program itself
-           alive (it's cached globally by source, shared across
-           every frame's Shader wrapper) so we don't pay the
-           per-frame compile cost. */
+        // shader.destroy(false) is mandatory: mesh.destroy() doesn't release the
+        // Shader (Pixi can't know it's not shared), and each Shader.from owns its
+        // own BindGroup. Without this, BindGroups leak (multi-GB GPU after a few
+        // minutes). `false` keeps the globally-cached GL program alive.
         for (let i = 0; i < ephemeralMeshes.length; i++) {
             const mesh = ephemeralMeshes[i]
             const shader = mesh.shader as Shader | null | undefined
@@ -253,22 +175,10 @@ export class EffectProcessor extends BaseProcessor {
         return { texture: rt.source, metrics }
     }
 
-    /* ───────── Pass cache lifecycle ───────── */
-
-    /**
-     * Build (or retrieve) the cached non-shader resources for a pass:
-     * the sampler-name set and, for instanced passes, the Geometry plus
-     * its static aLocal/index buffers and the slot for per-instance
-     * Buffers. For fullscreen passes the cache only carries the sampler
-     * names — the geometry comes from `engine.getQuadGeometry` per frame.
-     */
     private ensurePassCache(pass: EffectPass, _ctx: ResourceContext): PassCache {
         const cached = this.passCache.get(pass.id)
         if (cached) return cached
 
-        /* Discover the sampler names declared by this pass's shader sources
-           once — used to bind only resources the program actually expects
-           when assembling the per-frame resources record. */
         const samplers = new Set<string>()
         collectSamplers(pass.fragment, samplers)
         if ('vertex' in pass && pass.vertex) collectSamplers(pass.vertex, samplers)
@@ -283,10 +193,6 @@ export class EffectProcessor extends BaseProcessor {
             return cache
         }
 
-        /* Instanced pass — own the per-vertex aLocal buffer + index buffer
-           (manifest-derived, immutable) plus a Geometry that
-           `refreshInstancedStreams` will append per-instance attributes
-           onto when the streams arrive. */
         const local = new Float32Array(pass.geometry.perVertex.aLocal.length * 2)
         for (let i = 0; i < pass.geometry.perVertex.aLocal.length; i++) {
             local[i * 2] = pass.geometry.perVertex.aLocal[i][0]
@@ -321,18 +227,7 @@ export class EffectProcessor extends BaseProcessor {
         return cache
     }
 
-    /**
-     * Build a fresh per-frame Mesh + Shader for the pass. The Shader's
-     * underlying GL program is cached internally by Pixi (keyed by GLSL
-     * source), so reconstruction only allocates a thin wrapper + a fresh
-     * BindGroup. The fresh resources record points directly at the
-     * current-frame textures, which avoids the brittle path of mutating
-     * `shader.resources.<sampler>` on a cached Shader where Pixi's
-     * generated per-program sync function may have captured stale state.
-     *
-     * Returns `null` for instanced passes whose contour produced zero
-     * instances (no geometry to draw).
-     */
+    // Returns null for instanced passes with zero instances (no geometry to draw).
     private buildPassMesh(
         pass: EffectPass,
         cache: PassCache,
@@ -362,14 +257,8 @@ export class EffectProcessor extends BaseProcessor {
         return new Mesh<Geometry, Shader>({ geometry: cache.geometry, shader })
     }
 
-    /**
-     * Recompute per-instance streams (positions/tangents/arcS, ribbon's
-     * *Next siblings, optional 'index' attr) and upload them to the cached
-     * GPU buffers. When the instance count changes (e.g. contour totalLength
-     * or scrolling spacing changed), buffers are resized via
-     * `setDataWithSize` — Pixi reallocates the GPU buffer in place when
-     * possible. The `aLocal` + index buffers stay untouched.
-     */
+    // Streams uploaded via setDataWithSize so Pixi reallocates the GPU buffer
+    // in-place; aLocal + index buffers stay untouched across frames.
     private refreshInstancedStreams(
         pass: EffectPass,
         cache: PassCache,
@@ -434,11 +323,7 @@ export class EffectProcessor extends BaseProcessor {
             buf = new Buffer({
                 data,
                 usage: BufferUsage.VERTEX | BufferUsage.COPY_DST,
-                /* `shrinkToFit: false` keeps the underlying GPU buffer when
-                   the new instance count is smaller than the previous one —
-                   common when the contour totalLength dips between frames.
-                   Avoids destroy-and-realloc churn at the cost of a tiny bit
-                   of extra GPU memory. */
+                // Keep buffer when instance count drops; avoids realloc churn at a tiny GPU-memory cost.
                 shrinkToFit: false,
             })
             cache.instanceBuffers.set(m.name, buf)
@@ -452,8 +337,6 @@ export class EffectProcessor extends BaseProcessor {
         buf.setDataWithSize(data, data.length, true)
     }
 
-    /* ───────── Uniforms ───────── */
-
     private buildUniformGroup(config: PlaygroundConfig, ctx: ResourceContext): UniformGroup {
         const entries = buildUniformEntries(config.fields, ctx.width, ctx.height, config.staticUniforms)
 
@@ -461,18 +344,10 @@ export class EffectProcessor extends BaseProcessor {
             entries[`uTxcn${i}Enabled`] = { value: 0.0, type: 'f32' }
             entries[`uTxcn${i}Aspect`] = { value: 1.0, type: 'f32' }
         }
-        /* Animation channels: the entire pool (size = ANIMATION_CHANNEL_COUNT)
-           is bound as `uChan{i}` uniforms of type `vec4(drive, raw, value, state)`.
-           Every shader can opt into any slot regardless of whether the manifest
-           mentions it explicitly — unused slots get an idle ChannelSignal
-           (time=0, raw=0, value=slot's defaultMin or 0, state=0).
-           Component contract:
-              .x = upstream Signal.value (unclamped — Timer.unbounded grows
-                   linearly, Interpolator sine/triangle oscillate 0..1, a
-                   paused Timer holds a static phase).
-              .y = raw 0..1 driver (clamped value)
-              .z = mapped value (lerp(min, max, raw))
-              .w = state */
+        // uChan{i} = vec4(time, raw, value, state) — the whole pool is bound so any
+        // shader can read any slot. Unused slots emit an idle ChannelSignal.
+        // Components: x = upstream Signal.value (unclamped phase); y = clamped 0..1
+        // raw; z = lerp(min, max, raw); w = state.
         for (let i = 0; i < ANIMATION_CHANNEL_COUNT; i++) {
             entries[`uChan${i}`] = { value: [0, 0, 0, 0], type: 'vec4<f32>' }
         }
@@ -483,12 +358,8 @@ export class EffectProcessor extends BaseProcessor {
         return new UniformGroup(entries as any, { isStatic: false })
     }
 
-    /**
-     * Mutate uniform values in place each frame. Pixi v8 picks up the
-     * changes at next render via `_dirtyId` increments triggered by the
-     * proxy on `uniforms.uniforms`. No `.update()` call needed since the
-     * group was constructed with `isStatic: false`.
-     */
+    // In-place mutation; the isStatic:false UniformGroup proxy bumps _dirtyId,
+    // so no explicit .update() is needed.
     private refreshUniforms(
         group: UniformGroup,
         config: PlaygroundConfig,
@@ -499,9 +370,7 @@ export class EffectProcessor extends BaseProcessor {
 
         u.uResolution = [ctx.width, ctx.height]
 
-        /* Field defaults first (static for a given effect), then per-frame
-           Config-node overrides. Mirrors the original `entries[key].value`
-           write but on the live Pixi proxy. */
+        // Field defaults first, then per-frame Config-node overrides.
         for (const field of config.fields) {
             const name = field.uniformName ?? field.name
             if (name in u) u[name] = field.default
@@ -513,12 +382,8 @@ export class EffectProcessor extends BaseProcessor {
             }
         }
 
-        /* uTxcn{i}Enabled flags expose presence of each generic texture
-           channel to the shader (1.0 if connected, 0.0 otherwise). Shaders
-           that only read a sampler when a flag is on can avoid sampling
-           the white fallback. uTxcn{i}Aspect carries width/height of the
-           connected texture (1.0 if absent) — used by glyph-style shaders
-           that previously read a fixed `uTextAspect` from the atlas slot. */
+        // uTxcn{i}Enabled gates shader sampling away from the white fallback;
+        // uTxcn{i}Aspect carries width/height of the bound texture (1.0 when absent).
         for (let i = 0; i < TEXTURE_CHANNEL_COUNT; i++) {
             const tex = ctx.inputs[`txcn${i}`] as { width?: number; height?: number } | null | undefined
             u[`uTxcn${i}Enabled`] = tex ? 1.0 : 0.0
@@ -538,9 +403,7 @@ export class EffectProcessor extends BaseProcessor {
                 value = cs.value
                 state = cs.state
             } else {
-                /* Default value when the channel isn't wired: prefer the
-                   slot's manifest defaultMin so static (no-controller)
-                   scenes still render with sensible amplitudes. */
+                // Default to the slot's manifest defaultMin so static scenes still render.
                 let slotMin = 0
                 for (let s = 0; s < slots.length; s++) {
                     if (slots[s].slot === i) { slotMin = slots[s].defaultMin ?? 0; break }
@@ -568,8 +431,6 @@ export class EffectProcessor extends BaseProcessor {
         u.uPivot = [px, py]
         u.uPivotEnabled = pivotEnabled ? 1.0 : 0.0
     }
-
-    /* ───────── Misc helpers ───────── */
 
     private readScalar(
         configData: Record<string, any> | null,
@@ -610,12 +471,7 @@ export class EffectProcessor extends BaseProcessor {
         return auto > 0 ? auto : 1
     }
 
-    /**
-     * Scan every shader source on the active manifest for `uChan{i}` references
-     * and warn when an index falls outside the bound pool or isn't declared
-     * in `animation.slots`. The warning fires once per (effect, slot) pair —
-     * we don't want to spam the console on every frame.
-     */
+    // Warns once per effect when a shader references an out-of-pool or undeclared uChan{i}.
     private warnUndeclaredChannels(config: PlaygroundConfig): void {
         const cacheKey = config.name
         if (this.warnedConfigs.has(cacheKey)) return
@@ -642,17 +498,12 @@ export class EffectProcessor extends BaseProcessor {
             this.disposePassCache(cache)
         }
         this.passCache.clear()
-        /* UniformGroup has no destroy() — let it GC. Stage stays alive
-           and is reused across cache invalidations (it's purely a
-           Container). */
+        // UniformGroup has no destroy(); let it GC. Stage Container is reused.
         this.uniforms = null
     }
 
     private disposePassCache(cache: PassCache): void {
-        /* Per-frame Mesh+Shader are NOT cached (see PassCache docs) so
-           there's nothing to destroy on that front. We only own the
-           instanced Geometry + its Buffers; fullscreen quad geometry is
-           engine-owned and stays alive. */
+        // Only instanced caches own Geometry + Buffers; fullscreen quad geometry is engine-owned.
         if (!cache.fullscreen && cache.geometry) {
             cache.geometry.destroy(false)
             cache.perVertexBuffer?.destroy()
@@ -671,17 +522,12 @@ export class EffectProcessor extends BaseProcessor {
     }
 }
 
-/* Pull every `uniform sampler2D <name>` declaration out of a GLSL source.
-   Tolerates layout-qualifiers, line breaks, and whitespace variations. */
 function collectSamplers(source: string, out: Set<string>): void {
     const re = /\buniform\s+(?:lowp|mediump|highp)?\s*sampler2D\s+(\w+)/g
     let m: RegExpExecArray | null
     while ((m = re.exec(source)) !== null) out.add(m[1])
 }
 
-/* Find every `uChan{N}` token referenced by a shader — covers both uniform
-   declarations and call sites like `uChan5.x`. Used to validate that a
-   manifest declares all channels its shaders read. */
 function collectChannelRefs(source: string, out: Set<number>): void {
     const re = /\buChan(\d+)\b/g
     let m: RegExpExecArray | null
@@ -691,12 +537,6 @@ function collectChannelRefs(source: string, out: Set<number>): void {
     }
 }
 
-/**
- * Resolve a per-instance attribute mapping into the underlying typed array
- * from `streams`. Returns null when the requested stream isn't present
- * (e.g. a ribbon-only `*Next` attribute on a glyph-mode pass) — caller
- * skips uploading that attribute.
- */
 function perInstanceData(m: PerInstanceAttr, streams: InstanceStreams): Float32Array | null {
     switch (m.from) {
         case 'positions':     return streams.positions
@@ -713,13 +553,9 @@ function perInstanceData(m: PerInstanceAttr, streams: InstanceStreams): Float32A
     }
 }
 
-/* ───────── helpers ───────── */
-
 function passInputsSatisfied(pass: EffectPass, inputs: Record<string, any>): boolean {
-    /* Hard deps that gate the pass entirely. `txcn{i}` channels can also
-       be listed — passes that *must* sample a particular channel (e.g. a
-       full-screen mask reading SDF from txcn0) opt in here so the pass is
-       elided when the user hasn't wired anything to that slot. */
+    // Passes opt into hard input deps via requiresInputs (txcn{i} included) so a
+    // missing wire elides the pass entirely.
     for (const dep of pass.requiresInputs ?? []) {
         if (dep === 'source' && !inputs.source) return false
         if (dep === 'contour' && !inputs.contour) return false
@@ -729,13 +565,6 @@ function passInputsSatisfied(pass: EffectPass, inputs: Record<string, any>): boo
     return true
 }
 
-/**
- * Coerce whatever lands on the `pivot` input slot into a `[x, y]` pair in
- * pixel space. Tolerates plain arrays (the canonical wire format),
- * `{x, y}` objects (handy for debugging from the console), and rejects
- * NaN / non-finite components silently. Returns `null` when nothing
- * usable is present so the caller can fall back to its default centre.
- */
 function readPivot(raw: unknown): [number, number] | null {
     if (raw == null) return null
     if (Array.isArray(raw) && raw.length >= 2) {

@@ -1,24 +1,15 @@
 /**
- * Coordinate texture builder — packs a closed {@link ContourSamples} ring
- * into an RGBA8 texture for shader-side `texelFetch` consumption.
- *
- * Lives in `node-engine/render/` (not `pipeline/`) on purpose: it
- * allocates a Pixi `Texture` and is therefore renderer-bound. The
- * `pipeline/` layer must stay renderer-agnostic for Tier-3 extraction —
- * see `product-vision.mdc → Architectural invariants`.
+ * Coordinate texture builder — packs a closed ContourSamples ring into an
+ * RGBA8 texture for shader-side texelFetch. Lives in node-engine/render/
+ * (renderer-bound) so pipeline/ stays renderer-agnostic for Tier-3
+ * extraction — see product-vision.mdc → Architectural invariants.
  */
 import { Texture } from 'pixi.js'
 import type { ContourSamples } from '../types'
 
-/**
- * Engine-internal handle for a coords-texture upload. Carries the GPU
- * resource plus the metadata downstream shaders need to interpret it
- * (texel count + texture dimensions for `texelFetch`, normalised AABB
- * for any consumer that wants to clip to the contour bounds).
- *
- * The `tex` field is owned by the caller of {@link buildCoordsTextureFromContour}
- * and MUST be destroyed when the contour reference changes.
- */
+/** Coords-texture handle. `tex` is owned by the caller of
+ *  buildCoordsTextureFromContour and MUST be destroyed when the contour
+ *  reference changes. AABB is in normalised (0..1) space. */
 export type CoordsTexture = {
     tex: Texture
     w: number
@@ -36,15 +27,9 @@ function fitTextureWH(pointPairs: number) {
     return { w, h }
 }
 
-/**
- * Pack a {@link ContourSamples} ring (positions in pixel space) into an
- * RGBA8 texture: R = X / canvasW, G = Y / canvasH, both 8-bit. The shape
- * matches what the SDF fragment (`pipeline/passes/sdf-pure.ts`) reads
- * via `texelFetch(uPointTexture, ...).rg`.
- *
- * Returned `CoordsTexture.tex` is owned by the caller and must be destroyed
- * when the contour reference changes.
- */
+/** Pack ContourSamples into RGBA8: R = X/canvasW, G = Y/canvasH (8-bit).
+ *  Matches the texelFetch(uPointTexture, ...).rg layout consumed by
+ *  pipeline/passes/sdf-pure.ts. Returned `tex` is caller-owned. */
 export function buildCoordsTextureFromContour(
     contour: ContourSamples,
     canvasW: number,
@@ -83,8 +68,8 @@ export function buildCoordsTextureFromContour(
     canvas.height = h
     canvas.getContext('2d')!.putImageData(imageData, 0, 0)
 
-    /* nearest sampling — the SDF fragment uses texelFetch, but keep nearest
-       for any future code that might sample with uv. */
+    /* nearest sampling — SDF fragment uses texelFetch, but keep nearest
+       for future code that samples with uv. */
     const tex = Texture.from(canvas)
     tex.source.scaleMode = 'nearest'
 

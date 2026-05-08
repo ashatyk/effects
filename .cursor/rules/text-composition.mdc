@@ -1,6 +1,5 @@
 ---
 description: Text rendering chain — text + textStyle + textStrip → effect.txcn{i}; TEXT and TEXT_STYLE slot semantics, font loading, letter spacing fallback. Read before changing text input UX or downstream text consumers.
-alwaysApply: true
 ---
 
 # Text composition

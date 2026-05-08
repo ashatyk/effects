@@ -12,24 +12,15 @@ uniform float uGlowSize;
 uniform float uGlowIntensity;
 uniform float uEdgeSoftness;
 
-/* Animation channels — vec4(drive, raw, value, state).
-   Slot 3: uChan3.z — multiplier on glow intensity.
-   Slot 4: uChan4.z — alpha multiplier.
-   .z is the controller-mapped value (lerp(min, max, raw)). */
+/* uChan3.z = glow-intensity multiplier; uChan4.z = alpha multiplier
+   (.z = controller-mapped lerp(min, max, raw)). */
 uniform vec4 uChan3;
 uniform vec4 uChan4;
 
-/**
- * Glow-only pass for DotOrbit. Renders the corona that surrounds each disk
- * and *nothing else*; the actual disk core is painted in a separate normal-
- * blend pass on top so the trailing dot's halo can never cover the leading
- * dot's body. Pixi 'add' blend on this pass merges every halo into a soft
- * cloud rather than alpha-stacking glow over disk → glow over disk → …,
- * which is what produced the pink fringe over the red head in the original
- * single-pass version. The disk's own footprint is masked out
- * ('step(1.0, r)') so nothing the core pass paints later gets darkened by
- * the glow underneath.
- */
+/* Glow-only pass. 'add' blend merges halos into a soft cloud; the disk
+   footprint is masked out ('step(1.0, r)') so the core pass on top
+   isn't darkened — the original single-pass version stacked glow over
+   disk repeatedly, hence the "pink fringe over red head" bug. */
 void main() {
     float r = length(vLocal);
 

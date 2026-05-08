@@ -1,100 +1,32 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * Constant-folding pass for `PublishedPipeline + SupplierConfig` →
- * `BakedPipeline`.
- *
- * Runs in the **supplier app** at config-export time, against the
- * supplier's already-spinning `DataflowEngine` (the same one that
- * drives the form's preview canvas — it has live `outputCache`
- * entries for every node).
+ * Constant-folding pass: `PublishedPipeline + SupplierConfig` → `BakedPipeline`.
+ * Runs in the supplier app at config-export time against the live engine driving
+ * the preview canvas (which already has `outputCache` for every node).
  *
  * Algorithm:
+ *  1. Caller has applied SupplierConfig and ticked at least once (steady state).
+ *  2. Compute the **tainted set** (forward BFS from runtime-dynamic seeds:
+ *     `RUNTIME_DYNAMIC_PROCESSORS` types + `data.runtimeDynamic === true`).
+ *     A static processor consuming a runtime signal is itself runtime-dependent.
+ *     Rule: collapse every path that doesn't terminate in an event/time-driven
+ *     node, unless the author opted out per-node via `runtimeDynamic`.
+ *  3. **Frozen set**: `def.pure === true` (or `segmentation` + polygon override)
+ *     AND not tainted AND every input is also frozen. Forward BFS from
+ *     inputs-free leaves. Note: `exposed` flags do NOT block freezing — the
+ *     orthogonal opt-out is `runtimeDynamic`.
+ *  4. For every frozen node, classify the bakeable output (CONTOUR or TEXTURE)
+ *     and serialise: contour → number[], texture → PNG dataUrl via
+ *     `renderer.extract.base64` (async).
+ *  5. Build the trimmed graph: replace frozen nodes with `constantContour`/
+ *     `constantTexture`, drop inbound edges, reverse-BFS from publishRoot to
+ *     prune dead code (e.g. an `image` that fed only a baked `segmentation`).
+ *  6. Build the trimmed surface: filter `pipeline.surface.*` to entries whose
+ *     `nodeId` survived.
  *
- *   1. Apply the SupplierConfig to the live engine and tick at
- *      least once so every reachable node has run at least once and
- *      its output is in `engine.outputCache`. (Caller's
- *      responsibility — we assume the engine is steady-state.)
- *
- *   2. Compute the **tainted set** (runtime-dynamic): forward BFS
- *      from every node whose processor type is in
- *      `RUNTIME_DYNAMIC_PROCESSORS` (timer, envelope,
- *      animationController, eventEmitter, tapZone, effect, ...).
- *      Anything reachable downstream is also tainted — a static
- *      processor that consumes a runtime signal is itself runtime-
- *      dependent.
- *
- *      The user-facing rule: "collapse every path that doesn't
- *      terminate in an event-emitting / time-driven node." Tainted
- *      = NOT collapsible.
- *
- *   3. Compute the **frozen set**: a node is frozen iff
- *        a. its processor `def.pure === true` (or it's a
- *           `segmentation` whose live processor reports
- *           `hasPolygonOverride === true` — that's the bake-eligible
- *           branch, see `segmentation.ts`),
- *        b. it is NOT in the tainted set,
- *        c. every one of its inputs comes from a frozen node.
- *      Compute by forward BFS: seed with `pure && not-tainted &&
- *      no inputs` processors, propagate forward.
- *
- *      Note that `exposed` flags from `pipeline.surface`
- *      (imageSlots / wholeNodes / fields) DO NOT block freezing.
- *      `exposed` is purely a supplier-app authoring-time concern;
- *      the supplier picks the picture / sets SAM points / tweaks
- *      fields, the bake snapshots the result, and the player
- *      receives a frozen subgraph. If a future use-case needs
- *      live editing in the player itself, we'll add an explicit
- *      `runtimeMutable` flag rather than re-overloading `exposed`.
- *
- *   4. For every frozen node, classify its bakeable output:
- *        - one of `outputs[].type === 'CONTOUR'` → `BakedAsset.kind = 'contour'`.
- *        - one of `outputs[].type === 'TEXTURE'` → `BakedAsset.kind = 'texture'`.
- *      Read the live `outputCache[nodeId]`. Serialise:
- *        - contour: ContourSamples Float32Arrays → number[].
- *        - texture: `renderer.extract.base64(textureSource)` →
- *          PNG dataUrl. The PNG round-trip via Canvas2D used to
- *          be lossy on `A=0` pixels (Canvas2D internally
- *          premultiplies → `toDataURL` un-premultiplies → `0/0 →
- *          0`); the SDF format was rewritten to keep `A=1`
- *          everywhere and pack signed distance into RGB (see
- *          `pipeline/passes/sdf-pure.ts`), which makes the round
- *          trip lossless. Texture extraction is async — the whole
- *          bake function is async because of this.
- *
- *   5. Build the **trimmed graph**:
- *        a. For each frozen node, replace it with a
- *           `constantContour` or `constantTexture` node carrying
- *           the baked payload as `data.params`. Same `id`,
- *           `position`, `width/height` — only `data.processor` and
- *           `data.params` change.
- *        b. Drop every edge whose `target` is a frozen node
- *           (constant-source has no input handles).
- *        c. Reverse-BFS from `publishRoot`. Keep only reachable
- *           nodes. Anything that survived the trim but no longer
- *           reaches publishRoot (e.g. an `image` that fed only a
- *           baked `segmentation`) is dead code — drop it.
- *
- *   6. Build the **trimmed surface**: filter `pipeline.surface.*`
- *      to entries whose `nodeId` is still in the trimmed graph.
- *      Image slots / whole-nodes that pointed at frozen subgraphs
- *      disappear (the supplier-facing UI concern is moot — the
- *      data is baked in).
- *
- *   7. Return `BakedPipeline`.
- *
- * Edge cases handled:
- *
- *   - **Async texture extraction** waits for every PNG dataUrl
- *     before returning. If the engine's output texture isn't
- *     ready yet (e.g. `image.execute` fired its async `Assets.load`
- *     this tick and hasn't resolved), the bake function fails
- *     fast for that node — caller can retry after a few more ticks.
- *   - **Loops in the graph** (shouldn't happen — engine rejects
- *     cycles — but defensive). Forward BFS only marks a node
- *     frozen when it visits it, so a cycle stays unmarked.
- *   - **Unknown processor types** (manifest version drift) — the
- *     processor lookup falls back to "treat as not pure", node
- *     stays in the trimmed graph live.
+ * Edge cases: async texture extraction fails fast if a node hasn't produced
+ * yet (caller can retry); cycles stay unmarked because forward BFS only marks
+ * on visit; unknown processor types are treated as not pure (stay live).
  */
 
 import {
@@ -113,9 +45,8 @@ import {
 import type { SupplierConfig } from './supplier-config'
 
 export interface BakeOptions {
-    /** Skip the texture-baking step. Useful for tests / debugging
-     *  where you want to verify the contour-baking path without
-     *  paying the GPU readback + base64 encoding cost. */
+    /** Skip texture-baking — useful for tests verifying contour path without
+     *  paying GPU readback + base64 encoding cost. */
     skipTextures?: boolean
 }
 
@@ -130,15 +61,11 @@ export interface BakeError {
 }
 
 /**
- * Bake a `PublishedPipeline + SupplierConfig` into a self-contained
- * `BakedPipeline`. Async because texture baking goes through
- * `renderer.extract.base64(...)` which reads pixels back from GPU.
+ * Async because texture baking goes through `renderer.extract.base64` (GPU readback).
  *
- * **Precondition**: `engine` must already have the SupplierConfig
- * applied (`applyAllOverrides(engine, pipeline, config)`) and have
- * ticked at least once so every reachable processor has produced its
- * first output. The supplier app's preview canvas already does both
- * by the time the user clicks "Export baked".
+ * Precondition: `engine` already has the SupplierConfig applied
+ * (`applyAllOverrides(engine, pipeline, config)`) and ticked at least once
+ * so every reachable processor produced its first output.
  */
 export async function bakePipeline(
     engine: DataflowEngine,
@@ -148,36 +75,22 @@ export async function bakePipeline(
 ): Promise<BakeResult | BakeError> {
     const adjacency = buildAdjacencyMaps(pipeline.graph)
 
-    /* Determine the **tainted set**: nodes whose output is genuinely
-       runtime-dynamic in the player. Anything reachable downstream
-       from a tainted node is also tainted (a static processor that
-       eats a runtime signal becomes runtime-dependent itself).
-       Everything **outside** the tainted set is a freeze candidate.
-       
-       Tainted seeds are the only nodes that genuinely change at
-       runtime in the player:
-         - alwaysDirty processors that own time, events, or
-           accumulating state (timer, envelope, combineSignals,
-           signalSwitch, animationController, animationSwitch,
-           eventEmitter, tapZone);
-         - the Effect output itself (alwaysDirty, composites every
-           tick).
-       
-       Note what is NOT in this list:
-         - `image` exposed in `imageSlots` — supplier picks the
-           picture in the supplier app, but the .baked.json carries
-           that exact picture; player doesn't swap it.
-         - `segmentation` exposed as `wholeNode` — same logic.
-         - `text` / `config` fields exposed — supplier-authored
-           values are baked-in. (If a future use-case needs live
-           swap of text/image in the player, we'll add an explicit
-           `runtimeMutable` flag rather than overloading `exposed`.)
-       
-       This is the user-requested rule: collapse every path that
-       doesn't terminate in an event-emitting / time-driven node. */
+    /* Tainted seeds:
+        1. Processor type — alwaysDirty / time-/event-/state-owning processors
+           plus the Effect output itself (composites every tick). Listed in
+           `RUNTIME_DYNAMIC_PROCESSORS`.
+        2. Per-node opt-in via `data.runtimeDynamic === true` — authoring-time
+           escape hatch from the editor's right-rail "Bake behaviour" toggle.
+           Used to keep cheap-to-recompute / large-output pure processors live
+           (e.g. `sdfFromContour`) instead of paying texture payload cost.
+       NOT auto-tainted: exposed `image`/`segmentation`/`text`/`config` — supplier
+       picks values in the supplier app, the .baked.json carries the exact picks.
+       To keep one of these live in the player, mark it `runtimeDynamic`. */
     const taintedSeeds: string[] = []
     for (const node of pipeline.graph.nodes) {
-        if (isRuntimeDynamic(node.data.processor)) taintedSeeds.push(node.id)
+        const seed = isRuntimeDynamic(node.data.processor)
+            || node.data.runtimeDynamic === true
+        if (seed) taintedSeeds.push(node.id)
     }
     const tainted = new Set<string>()
     {
@@ -191,10 +104,8 @@ export async function bakePipeline(
         }
     }
 
-    /* Frozen = pure (or segmentation+polygon) AND not tainted AND
-       every input is also frozen. Forward BFS from inputs-free
-       leaves, mirroring the previous algorithm but with the taint
-       check replacing the exposed check. */
+    /* Frozen = pure (or segmentation+polygon) AND not tainted AND every input
+       frozen. Forward BFS from inputs-free leaves. */
     const frozen = new Set<string>()
     const queue: string[] = []
 
@@ -225,24 +136,14 @@ export async function bakePipeline(
         }
     }
 
-    /* Identify the **bake boundary**: frozen nodes that have at
-       least one non-frozen consumer. Interior frozen nodes (every
-       downstream also frozen) are unreachable from publishRoot
-       through dynamic edges and will be dropped by the reverse-BFS
-       trim later — no need to bake them.
-       
-       Demotion pass: a boundary node whose output type is NOT
-       bakeable (TEXTURE / CONTOUR) can't become a constant source.
-       We demote it from `frozen` and propagate — any frozen X that
-       relied on this demoted node as input is now no longer
-       all-inputs-frozen, so X demotes too. Iterate to fixed point.
-       
-       Real-world example: `text` (output: TEXT) → `textStrip`
-       (output: TEXTURE). If `textStrip` is exposed (and thus not
-       frozen), `text` becomes a frozen boundary with a non-bakeable
-       output — demote `text`, leave it in the graph as a cheap
-       live processor. If `textStrip` is also frozen, `text` is
-       interior and gets trimmed. */
+    /* Demotion pass — a frozen boundary node whose output type is NOT bakeable
+       (TEXTURE / CONTOUR) can't become a constant source. Demote it; any X that
+       was frozen because all-inputs-frozen now no longer is — demote X too.
+       Iterate to fixed point.
+       Real example: `text` (TEXT) → `textStrip` (TEXTURE). If `textStrip` is
+       exposed (not frozen), `text` becomes a frozen boundary with non-bakeable
+       output — demote to keep it live. If `textStrip` is also frozen, `text`
+       is interior and gets trimmed. */
     while (true) {
         const demote = new Set<string>()
         for (const id of frozen) {
@@ -255,10 +156,6 @@ export async function bakePipeline(
         }
         if (demote.size === 0) break
         for (const id of demote) frozen.delete(id)
-        /* After demotion, re-run forward BFS once more to propagate:
-           any node that was frozen because all inputs frozen may now
-           have a non-frozen input. Cheap because frozen set already
-           shrunk. */
         for (const id of [...frozen]) {
             const incoming = adjacency.incomingEdges.get(id) ?? []
             const allFrozen = incoming.every(ie => frozen.has(ie.source))
@@ -266,9 +163,8 @@ export async function bakePipeline(
         }
     }
 
-    /* Final boundary set after demotion — these are the only nodes
-       we actually bake. Interior frozen nodes are NOT in this set;
-       they remain in `frozen` for trim purposes (their downstream
+    /* Final boundary set after demotion — only these nodes are actually baked.
+       Interior frozen nodes stay in `frozen` for trim purposes (their downstream
        baked nodes don't need them) but resolveBake skips them. */
     const bakeTargets = new Set<string>()
     for (const id of frozen) {
@@ -277,9 +173,7 @@ export async function bakePipeline(
         if (isBoundary) bakeTargets.add(id)
     }
 
-    /* Resolve each bake-target's output → BakedAsset. Async because
-       texture extraction is async. Collect all promises first then
-       await — parallel rather than serial. */
+    /* Resolve in parallel — texture extraction is async. */
     type ResolvedBake = {
         nodeId: string
         originalProcessor: string
@@ -307,25 +201,13 @@ export async function bakePipeline(
     }
     const resolved = settled as ResolvedBake[]
 
-    /* Build the trimmed graph:
-        - Replace every baked node in-place with its constant
-          equivalent, AND remember (originalHandle → constantHandle)
-          mappings so we can rewrite edges that reference the
-          original node's output by name.
-        - Drop edges that target a bake target (constants have no
-          input handles).
-        - Rewrite edges whose source is a bake target so the
-          `sourceHandle` matches the constant processor's output
-          name ('contour' or 'texture'). E.g. `sdfFromContour`
-          exports `outputs: [{ name: 'sdf' }]` but
-          `constantTexture` exports `outputs: [{ name: 'texture' }]`;
-          without rewriting, downstream consumers' `gatherInputs`
-          would silently miss the upstream value and render black.
-        - Reverse-BFS from publishRoot — keep only reachable. */
+    /* Build the trimmed graph. Edges with a baked target are dropped (constants
+       have no inputs). Edges from a baked source must rewrite `sourceHandle` to
+       the constant processor's output name ('contour' or 'texture') — e.g.
+       `sdfFromContour` exports `outputs: [{ name: 'sdf' }]` but `constantTexture`
+       exports `[{ name: 'texture' }]`; without rewriting, downstream consumers'
+       `gatherInputs` would silently miss the upstream value and render black. */
     const replacedById = new Map<string, SerializedNode>()
-    /* Per-baked-node: name of the output handle on the constant
-       processor that replaced it. Always 'contour' or 'texture'
-       since those are the only two constant types. */
     const constantOutputName = new Map<string, 'contour' | 'texture'>()
     for (const r of resolved) {
         replacedById.set(r.nodeId, r.replacedNode)
@@ -336,10 +218,8 @@ export async function bakePipeline(
     }
 
     const allNodes = pipeline.graph.nodes.map(n => replacedById.get(n.id) ?? n)
-    /* Drop edges whose target is a bake target — the constant source
-       node has no input handles. Interior frozen nodes (in `frozen`
-       but not in `bakeTargets`) keep their edges; they'll be removed
-       by reverse-BFS from publishRoot below as dead code. */
+    /* Interior frozen nodes (in `frozen` but not `bakeTargets`) keep their edges;
+       reverse-BFS from publishRoot will remove them as dead code. */
     const allEdges = pipeline.graph.edges
         .filter(e => !bakeTargets.has(e.target))
         .map(e => {
@@ -358,9 +238,8 @@ export async function bakePipeline(
     const trimmedNodes = allNodes.filter(n => reachable.has(n.id))
     const trimmedEdges = allEdges.filter(e => reachable.has(e.source) && reachable.has(e.target))
 
-    /* Build trimmed surface. Each surface entry's nodeId must still
-       exist in the trimmed graph; otherwise it's dead and the
-       supplier's UI must NOT pretend it's tunable. */
+    /* Surface entries pointing at trimmed-away nodes are dead — supplier UI must
+       NOT pretend they're tunable. */
     const trimmedSurface = {
         imageSlots: pipeline.surface.imageSlots.filter(s => reachable.has(s.nodeId)),
         tapZones: pipeline.surface.tapZones.filter(t => reachable.has(t.nodeId)),
@@ -379,10 +258,8 @@ export async function bakePipeline(
         nodesAfter: trimmedNodes.length,
     }
 
-    /* Trim the embedded SupplierConfig to entries that survived the
-       trim — entries pointing at nodes that got baked away would be
-       no-ops at apply time (the constant has no input handles), so
-       drop them from the snapshot to keep the artifact lean. */
+    /* Trim embedded SupplierConfig — entries pointing at baked-away nodes would
+       be no-ops at apply time (constants have no inputs). Drop them. */
     const reachableIds = new Set(trimmedNodes.map(n => n.id))
     const embeddedConfig: SupplierConfig = {
         pipelineId: config.pipelineId,
@@ -419,8 +296,7 @@ function pickByNodeId<V>(
     return out
 }
 
-/** Field keys are `${nodeId}:${paramKey}`; keep only those whose
- *  nodeId still exists in the trimmed graph. */
+/** Field keys are `${nodeId}:${paramKey}`. */
 function pickFields(
     fields: SupplierConfig['fields'],
     keep: Set<string>,
@@ -433,27 +309,12 @@ function pickFields(
     return out
 }
 
-/* ───────── Helpers ───────── */
-
-/** Processors whose output genuinely changes at runtime in the
- *  player. Used as taint seeds in `bakePipeline` — anything
- *  reachable downstream of a runtime-dynamic node inherits the
- *  taint and stays live in the trimmed graph.
- *
- *  All other processors (image, segmentation, contourResample,
- *  sdfFromContour, blur, remap, blend, denoise, text, textStyle,
- *  textStrip, config, ...) are treated as authoring-time mutable
- *  but baked-frozen: supplier picks values in the supplier app,
- *  the bake snapshots the outputCache, and the player ships a
- *  trimmed graph where that whole subgraph collapsed to a single
- *  constantContour / constantTexture node.
- *
- *  This is keyed by processor type rather than reading
- *  `processor.alwaysDirty` off the live engine because
- *  `bakePipeline` decides what to freeze BEFORE walking the live
- *  engine — we need a static answer per type. The two stay in
- *  sync by convention; if you add a new alwaysDirty processor
- *  whose output players observe at runtime, list it here. */
+/** Processors whose output genuinely changes at runtime in the player.
+ *  Keyed by processor type rather than reading `processor.alwaysDirty` off the
+ *  live engine because `bakePipeline` decides what to freeze BEFORE walking the
+ *  live engine — we need a static answer per type. The two stay in sync by
+ *  convention; if you add a new alwaysDirty processor whose output players
+ *  observe at runtime, list it here. */
 const RUNTIME_DYNAMIC_PROCESSORS: ReadonlySet<string> = new Set([
     'timer',
     'envelope',
@@ -484,10 +345,8 @@ function buildAdjacencyMaps(graph: PublishedPipeline['graph']) {
     return { incomingEdges, outgoingEdges }
 }
 
-/** True iff the node has at least one output of a bake-supported
- *  slot type (CONTOUR or TEXTURE). Used by the demotion pass: a
- *  pure boundary node whose output isn't bakeable can't become a
- *  constant source — we keep it live as a regular processor. */
+/** Used by demotion — pure boundary node whose output isn't bakeable can't
+ *  become a constant source; we keep it live as a regular processor. */
 function hasBakeableOutput(node: SerializedNode): boolean {
     const entry = PROCESSOR_CATALOG[node.data.processor]
     if (!entry) return false
@@ -497,11 +356,10 @@ function hasBakeableOutput(node: SerializedNode): boolean {
     return false
 }
 
-/** A processor is bake-eligible iff its `def.pure === true` OR it's
- *  a `segmentation` whose live instance reports
- *  `hasPolygonOverride` (we treat that as a pure passthrough — the
- *  polygon is constant, SAM is bypassed). The latter check requires
- *  reading the live processor instance off the engine. */
+/** Bake-eligible iff `def.pure === true` OR a `segmentation` whose live instance
+ *  reports `hasPolygonOverride` (treated as pure passthrough — polygon is
+ *  constant, SAM is bypassed). The latter requires reading the live processor
+ *  instance off the engine. */
 function isProcessorPureForBake(node: SerializedNode, engine: DataflowEngine): boolean {
     const entry = PROCESSOR_CATALOG[node.data.processor]
     if (!entry) return false
@@ -533,12 +391,10 @@ async function resolveBake(
     const entry = PROCESSOR_CATALOG[node.data.processor]
     if (!entry) throw new Error(`unknown processor "${node.data.processor}"`)
 
-    /* Find the first bakeable output by SLOT type. We bake exactly
-       one output per node — there's no real-world processor with
-       multiple bakeable outputs in different slots, and supporting
-       it would require changing the BakedAsset shape (multi-payload
-       per node). If a future processor needs it, add a new
-       BakedAsset kind and revisit. */
+    /* We bake exactly one output per node — no real-world processor has multiple
+       bakeable outputs in different slots, and supporting it would require
+       changing BakedAsset to multi-payload. If a future processor needs it,
+       add a new BakedAsset kind and revisit. */
     for (const out of entry.def.outputs) {
         const value = outputs[out.name]
         if (value == null) continue
@@ -600,31 +456,24 @@ function serializeContour(c: ContourSamples): Record<string, unknown> {
 }
 
 function estimateContourBytes(c: ContourSamples): number {
-    /* number[] in JSON: ~12 bytes per element conservatively
-       (digits + comma + occasional sign). Three buffers of total
-       size N×5 floats. */
+    /* number[] in JSON: ~12 bytes per element conservatively (digits + comma +
+       occasional sign). Three buffers of total size N×5 floats. */
     return c.count * 5 * 12
 }
 
-/** Encode the contents of a `TextureSource` as a PNG data URL.
+/** Encode a `TextureSource` as a PNG data URL.
+ *  Wraps the raw source in a one-shot Texture so it can be fed to
+ *  `renderer.extract.base64`. Pixi v8's `ExtractSystem.canvas`/`.base64` are
+ *  monkey-patched at engine boot (`pixi-patches.ts`) to destroy the intermediate
+ *  RenderTexture they would otherwise leak.
  *
- *  Wraps the raw `TextureSource` in a one-shot `Texture` so it
- *  can be fed to `renderer.extract.base64`. Pixi v8's
- *  `ExtractSystem.canvas` / `.base64` are monkey-patched at
- *  engine boot (`packages/runtime/src/node-engine/pixi-patches.ts`)
- *  to destroy the intermediate `RenderTexture` they would
- *  otherwise leak — the same patch covers our extract here.
- *
- *  Note: this round-trips RGBA through Canvas2D, which premultiplies
- *  on store and un-premultiplies on read. That used to corrupt RGB
- *  on `A=0` pixels (`RGB *= 0`, then `0/0 → 0`). The SDF format
- *  was rewritten upstream to keep `A=1` everywhere (signed distance
- *  packed into RGB, see `pipeline/passes/sdf-pure.ts`), which makes
- *  the round trip lossless for our texture set. If a future
- *  bake-target output puts semantic data in alpha and needs
- *  arbitrary `A` values, we'll need to switch to a raw-pixel path
- *  (`extract.pixels` → base64 → `BufferImageSource`) — see git
- *  history for an earlier draft of that approach. */
+ *  Round-trips RGBA through Canvas2D, which premultiplies on store and
+ *  un-premultiplies on read — used to corrupt RGB on `A=0` pixels (`RGB *= 0`,
+ *  then `0/0 → 0`). The SDF format was rewritten upstream to keep `A=1`
+ *  everywhere (signed distance packed into RGB; see `sdf-pure.ts`), making the
+ *  round trip lossless for our texture set. A future bake target putting
+ *  semantic data in alpha needs a raw-pixel path (`extract.pixels` → base64 →
+ *  `BufferImageSource`) — see git history for an earlier draft. */
 async function extractTextureToPng(engine: DataflowEngine, source: any): Promise<string> {
     const { Texture } = await import('pixi.js')
     const tex = new Texture({ source })

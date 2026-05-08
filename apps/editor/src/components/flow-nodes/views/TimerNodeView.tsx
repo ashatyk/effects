@@ -12,11 +12,6 @@ import type { PipelineNodeData } from '../types'
 
 const PREVIEW_H = 60
 
-/**
- * Graph card: live phase preview canvas — visualises the running clock
- * even when the node is not selected. Editable params (mode, duration,
- * phase offset, paused) live in `TimerNodeSettings`.
- */
 export const TimerNodeView = memo(({ id, data }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const mode = (data.params.mode ?? 'looped') as TimerMode

@@ -5,23 +5,17 @@ import type { DataflowEngine } from '@effects/runtime'
 const THROTTLE_MS = 33
 
 /**
- * Stream the `publishRoot` node's `texture` output into a Canvas2D.
+ * Stream the publishRoot node's `texture` into a Canvas2D via `extract.pixels`.
+ * Mirrors `runtime/processors/preview.ts` — wrap upstream TextureSource in a
+ * single reused Texture; pull canvas size from extracted buffer so the sink
+ * works regardless of which effect is upstream.
  *
- * Mirrors the pattern in `runtime/processors/preview.ts` — wrap the
- * upstream `TextureSource` in a single reused `Texture` and run
- * `renderer.extract.pixels` periodically. We pull the canvas size
- * from the extracted pixel buffer so the sink works regardless of
- * which effect is upstream (effects publish at their declared canvas
- * size; the consumer doesn't need to know it ahead of time).
+ * Throttle fixed at 33 ms (~30 FPS extract): the engine itself may tick faster
+ * (`setTargetFps`), but readback is the most expensive step, so capping here
+ * keeps main-thread work bounded on weak hardware.
  *
- * Throttle is fixed at 33 ms (~30 FPS extract). The engine itself
- * may tick faster — see `DataflowEngine.setTargetFps()` — but readback
- * to user canvas is the most expensive step, so capping it here keeps
- * the player's main-thread work bounded even on weak hardware.
- *
- * Returns an unsubscribe function that releases the engine
- * subscription AND destroys the wrapper texture (NOT the upstream
- * source — ownership stays with the upstream node).
+ * Returned unsubscribe releases the engine subscription AND destroys the wrapper
+ * texture (NOT the upstream source — ownership stays with the upstream node).
  */
 export function streamPublishRootToCanvas(
     engine: DataflowEngine,
@@ -62,18 +56,16 @@ export function streamPublishRootToCanvas(
             ctx.clearRect(0, 0, w, h)
             ctx.putImageData(new ImageData(data as unknown as ImageDataArray, w, h), 0, 0)
         } catch {
-            /* swallow extract errors — they typically mean the
-               upstream texture is mid-resize / mid-init. Next tick
-               will retry. */
+            /* Swallow extract errors — typically mean upstream texture is
+               mid-resize / mid-init. Next tick retries. */
         } finally {
             extracting = false
         }
     }
 
     const unsub = engine.subscribeNode(rootNodeId, () => { void draw() })
-    /* Kick once on mount so the canvas paints immediately if the
-       graph already produced a frame before the subscription
-       attached. */
+    /* Kick once on mount so the canvas paints immediately if the graph already
+       produced a frame before subscription attached. */
     void draw()
     return () => {
         unsub()

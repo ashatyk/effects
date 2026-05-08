@@ -2,7 +2,7 @@
 import { memo, useMemo, useCallback } from 'react'
 import Stack from '@mui/material/Stack'
 import { useSetParam } from '../hooks/useSetParam'
-import { ActionButton, ColorField, Field, SelectField, SliderField } from '@effects/ui'
+import { ColorField, Field, SelectField, SliderField } from '@effects/ui'
 import { effects } from '@effects/runtime'
 import type { FieldDef } from '@effects/runtime/pipeline/types'
 import type { NodeSettingsProps } from './types'
@@ -105,33 +105,6 @@ export const ConfigNodeSettings = memo(({ id, data }: NodeSettingsProps) => {
 
     const handleScalar = useCallback((uName: string, v: number) => set(uName, v), [set])
 
-    const handleExport = useCallback(() => {
-        if (!effectCfg) return
-        const out: Record<string, any> = { effect: effectName }
-        for (const field of effectCfg.fields) {
-            const uName = field.uniformName ?? field.name
-            const isScalar = field.kind === 'f32' || field.kind === 'i32'
-            if (isScalar) {
-                out[uName] = (data.params[uName] ?? field.default) as number
-            } else {
-                const def = field.default as number[]
-                const arr: number[] = []
-                for (let i = 0; i < def.length; i++) {
-                    arr.push((data.params[`${uName}_${i}`] ?? def[i]) as number)
-                }
-                out[uName] = arr
-            }
-        }
-        const json = JSON.stringify(out, null, 2)
-        const blob = new Blob([json], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `${effectName}-config.json`
-        a.click()
-        URL.revokeObjectURL(url)
-    }, [effectCfg, effectName, data.params])
-
     const handleColor = useCallback((uName: string, hex: string) => {
         const def = effectCfg?.fields.find(f => (f.uniformName ?? f.name) === uName)?.default as number[] | undefined
         const n = def?.length ?? 3
@@ -145,7 +118,6 @@ export const ConfigNodeSettings = memo(({ id, data }: NodeSettingsProps) => {
     return (
         <>
             <SelectField label="effect" value={effectName} options={names} onChange={v => set('effect', v)} />
-            <ActionButton onClick={handleExport} variant="primary">Export config</ActionButton>
             {effectCfg?.fields.map(field => {
                 const uName = field.uniformName ?? field.name
                 const isScalar = field.kind === 'f32' || field.kind === 'i32'

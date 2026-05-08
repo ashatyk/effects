@@ -6,10 +6,7 @@ import { previewDef } from '@effects/runtime/node-engine/processors/preview'
 import { PreviewProcessor } from '@effects/runtime/node-engine/processors/preview'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: live image preview of the wired upstream texture. Save
- * button lives in `PreviewNodeSettings`.
- */
+// Save button lives in PreviewNodeSettings.
 export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -38,6 +35,8 @@ export const PreviewNodeView = memo(({ id }: NodeProps & { data: PipelineNodeDat
         subRef.current?.()
         const unsub = engine.subscribeNode(id, draw)
         subRef.current = unsub
+        // Paint once on mount: preview isn't alwaysDirty, so canvas stays empty after remount otherwise.
+        draw()
         return unsub
     }, [engine, id, draw])
 

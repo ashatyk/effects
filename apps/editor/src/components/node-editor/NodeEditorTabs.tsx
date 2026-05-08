@@ -6,16 +6,6 @@ import AddIcon from '@mui/icons-material/Add'
 import CloseIcon from '@mui/icons-material/Close'
 import { useScene } from './SceneContext'
 
-/**
- * Horizontal tab strip between the toolbar and the canvas. One tab per
- * scenario page. Clicking a tab switches; double-clicking renames
- * inline; the small "x" deletes (with a confirm if the page isn't
- * empty); the trailing "+" appends a new page.
- *
- * The strip is intentionally compact (32px) so it doesn't eat editor
- * surface; the active tab is the only one with the accent fill so the
- * eye locks onto it without scanning.
- */
 export const NodeEditorTabs = memo(function NodeEditorTabs() {
     const { pages, activePageId, addPage, removePage, renamePage, switchPage } = useScene()
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -107,8 +97,6 @@ const PageTab = memo(function PageTab({
 }: PageTabProps) {
     const inputRef = useRef<HTMLInputElement | null>(null)
     const [draft, setDraft] = useState(name)
-    /* When entering edit mode, seed the draft with the current name and
-       focus + select the input so the user can replace it immediately. */
     useEffect(() => {
         if (editing) {
             setDraft(name)
@@ -140,10 +128,6 @@ const PageTab = memo(function PageTab({
                 bgcolor: active ? 'action.selected' : 'transparent',
                 borderRight: 1,
                 borderColor: 'divider',
-                /* Active tab gets a subtle accent strip on top so the
-                   selected page is unmistakable even when colour
-                   contrast is low (high-DPI dark themes can wash out
-                   selected-bg by themselves). */
                 position: 'relative',
                 '&::after': active ? {
                     content: '""',

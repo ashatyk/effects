@@ -1,6 +1,5 @@
 ---
 description: Comprehensive project context for the Effects visual node editor
-alwaysApply: true
 ---
 
 # Effects — Visual Node Editor for GPU Image Pipelines

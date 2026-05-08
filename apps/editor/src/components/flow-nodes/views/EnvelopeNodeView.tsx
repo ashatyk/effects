@@ -12,11 +12,6 @@ import type { PipelineNodeData } from '../types'
 const PREVIEW_H = 70
 const SAMPLES = 96
 
-/**
- * Graph card: live envelope curve preview with running clip play-heads.
- * Editable params (shape, duration, easings, retrigger) live in
- * `EnvelopeNodeSettings`.
- */
 export const EnvelopeNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const canvasRef = useRef<HTMLCanvasElement | null>(null)

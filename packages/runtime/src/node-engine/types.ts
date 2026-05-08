@@ -159,16 +159,10 @@ export interface HandleDef {
 export interface ProcessorDef {
     type: string
     title: string
-    /**
-     * Visual category — drives node border colour and edge colour. Aligned
-     * with the "Add Node" menu groups so a node's tint matches the section
-     * it was picked from.
-     *
-     * Legacy values ('depth', 'ai', 'source', 'process', 'marigold', 'dnf')
-     * are retained for backward compatibility with persisted scenes saved
-     * before the depth/marigold/material processors were removed; they
-     * are mapped to fallback colours in `categoryColors.ts`.
-     */
+    /** Visual category — drives node and edge colour. Legacy values
+     *  ('depth' | 'ai' | 'source' | 'process' | 'marigold' | 'dnf') are
+     *  retained for snapshots saved before those processors were removed
+     *  (mapped to fallback colours in categoryColors.ts). */
     category:
         | 'input'
         | 'animTrigger'
@@ -184,47 +178,22 @@ export interface ProcessorDef {
     inputs: HandleDef[]
     outputs: HandleDef[]
     defaultParams: Record<string, unknown>
-    /**
-     * When true the processor is hidden from the "Add Node" picker. It can
-     * still be loaded from saved snapshots and instantiated programmatically;
-     * only the UI catalog filters it out. Use for legacy / superseded nodes.
-     */
+    /** Hidden from the "Add Node" picker but still loadable from saved
+     *  snapshots and creatable programmatically. Use for legacy nodes. */
     hidden?: boolean
 
     /**
-     * Marks the processor as a **pure function** of `(inputs, params)` —
-     * its output for a given (inputs, params) tuple is deterministic
-     * and stable across ticks. The processor MUST NOT depend on
-     * wall-clock time, RNG without a seeded param, event counts,
-     * external mutable state, or anything that changes between ticks
-     * unrelated to inputs/params changing.
+     * Pure function of (inputs, params) — output deterministic and stable
+     * across ticks. MUST NOT read wall-clock, unseeded RNG, event counts,
+     * or any external mutable state. Used by packages/player/src/baking.ts
+     * as the constant-folding eligibility gate; baked subgraphs run once
+     * at export and their outputs land in SupplierConfig.baked.
      *
-     * Constant-folding (`packages/player/src/baking.ts`) uses this
-     * flag as the eligibility gate: a processor is "frozen" if it's
-     * pure AND every one of its inputs comes from a frozen processor
-     * (or from a frozen subgraph already collapsed to a constant
-     * source). The supplier app pre-runs frozen subgraphs once at
-     * export time and embeds their outputs in `SupplierConfig.baked`,
-     * so the Tier-3 player never instantiates them — bundle, RAM,
-     * and graph-evaluation overhead all drop. See `baking.mdc`.
-     *
-     * Default `false`. Setting `true` is a contract: any future change
-     * to the processor that breaks purity (adds a clock read, an
-     * event listener, etc.) breaks every config baked against the old
-     * behaviour. Test carefully.
-     *
-     * Counter-examples (intentionally NOT pure even though they LOOK
-     * deterministic):
-     *  - `segmentation` — has a polygon-override branch that's pure,
-     *    but the SAM-driven branch reads worker state. The processor
-     *    declares `pure: false` and the bake step special-cases it
-     *    via `hasPolygonOverride`.
-     *  - `effect` — `alwaysDirty`; output texture pixels change every
-     *    frame regardless of input identity (animation channels
-     *    drive uniforms in place).
-     *  - `publishRoot` — pass-through, technically pure, but it's the
-     *    bake target — the bake step reads its upstream, not the
-     *    publishRoot itself.
+     * Default false. Counter-examples that look pure but aren't:
+     *  - `segmentation` — SAM branch reads worker state (override branch
+     *    is pure; bake step special-cases via hasPolygonOverride).
+     *  - `effect` — alwaysDirty; output pixels change every frame.
+     *  - `publishRoot` — pass-through, but it's the bake target itself.
      */
     pure?: boolean
 }

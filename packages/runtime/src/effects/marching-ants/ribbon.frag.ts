@@ -15,23 +15,19 @@ uniform float uContourLen;     // total perimeter in px (set by pass runner)
 uniform vec4  uColor;          // dash colour
 uniform vec4  uColorAlt;       // gap  colour (alpha=0 => transparent gap)
 
-/* Animation channels — vec4(drive, raw, value, state).
-   Slot 2: uChan2.z — width multiplier on uBandHeight (matches vert).
-   Slot 3: uChan3.z — spacing multiplier on dash+gap period.
-   Slot 4: uChan4.z — intensity multiplier on alpha.
-   .z is the controller-mapped value (lerp(min, max, raw)). */
+/* uChan2.z = width multiplier on uBandHeight (matches vert).
+   uChan3.z = spacing multiplier on dash+gap period.
+   uChan4.z = alpha multiplier. */
 uniform vec4 uChan2;
 uniform vec4 uChan3;
 uniform vec4 uChan4;
 
-/* Signed-distance to a rounded box centred at origin.
-   b = half-extents (without rounding), r = corner radius. */
+// SDF to a rounded box centred at origin (b=half-extents, r=corner radius).
 float sdRoundedBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-/* Cross-band rectangle mask used by the gap colour. */
 float bandMask(float vY, float bandH) {
     float yCentered = abs(vY - 0.5) * 2.0;
     float aaUV = clamp(uCrossAA / max(bandH, 1.0), 0.0, 0.5);
@@ -39,14 +35,13 @@ float bandMask(float vY, float bandH) {
 }
 
 void main() {
-    /* Animated band thickness and dash-period scaling. */
     float bandH    = uBandHeight * uChan2.z;
     float dashBase = uDashLen    * uChan3.z;
     float gapBase  = uGapLen     * uChan3.z;
 
-    /* --- snap period so the closed contour holds a whole number of dashes,
-           preserving the user-set dash:gap ratio. Eliminates the seam dash
-           where mod() wraps from total -> 0. ---------------------------- */
+    /* Snap period so the closed contour holds a whole number of dashes
+       (preserves dash:gap ratio). Without this, mod() wraps total → 0
+       leaves a visible seam dash. */
     float requested = max(dashBase + gapBase, 1.0);
     float periods   = max(floor(uContourLen / requested + 0.5), 1.0);
     float period    = max(uContourLen / periods, 1.0);
@@ -55,10 +50,9 @@ void main() {
     float halfDash  = dashLen * 0.5;
     float halfBand  = bandH * 0.5;
 
-    /* --- signed arc-distance to the *nearest* dash centre, wrapped across
-           the period seam. Without this wrap the second half of any dash
-           that spans a period boundary would be cut off (visible as
-           "rounded only on one side"). --------------------------------- */
+    /* Signed arc-distance to the *nearest* dash centre, wrapped across
+       the period seam — otherwise dashes spanning a boundary appear
+       "rounded only on one side". */
     float arc = mod(vUV.x - halfDash + period * 0.5, period) - period * 0.5;
     vec2  p   = vec2(arc, (vUV.y - 0.5) * bandH);
 
@@ -66,11 +60,10 @@ void main() {
     float r    = clamp(uCornerRadius, 0.0, maxR);
     float dist = sdRoundedBox(p, vec2(halfDash, halfBand), r);
 
-    /* dist <= 0 inside the rounded rect; smooth out the edge over uEdgeAA. */
     float aa   = max(uEdgeAA, 0.5);
     float dash = 1.0 - smoothstep(-aa, 0.0, dist);
 
-    /* "over" composite: dash on top of a rectangular gap-coloured band. */
+    // "over" composite: dash on top of a rectangular gap-coloured band.
     float band  = bandMask(vUV.y, bandH);
     float dashA = uColor.a * dash;
     float gapA  = uColorAlt.a * band * (1.0 - dash);

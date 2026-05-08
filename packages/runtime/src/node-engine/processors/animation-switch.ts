@@ -28,7 +28,6 @@ export const animationSwitchDef: ProcessorDef = {
 const idleAnimation = (): AnimationSignal => ({ channels: {} })
 const idleChannel = (): ChannelSignal => ({ time: 0, raw: 0, value: 0, state: 0 })
 
-/** Snapshot of the live transition exposed for the NodeView preview. */
 export interface AnimationSwitchSnapshot {
     currentSide: SwitchSide
     fromSide: SwitchSide
@@ -38,44 +37,20 @@ export interface AnimationSwitchSnapshot {
     profile: SwitchProfile
     eventCount: number
     flippedThisFrame: boolean
-    /** Sorted union of channel ids present on either side (or in the captured
-     *  re-emit snapshot). Lets the view enumerate channels for a per-channel
-     *  readout without re-walking the upstream packets. */
+    // Sorted union of channel ids across both sides (and the captured re-emit snapshot).
     channelIds: string[]
 }
 
-/**
- * Two-state cross-fade between ANIMATION `animation_a` and ANIMATION
- * `animation_b`, gated by a discrete EVENT on `event`. Each new event toggles
- * the currently-selected side (A↔B), starting a per-channel cross-fade with
- * the matching direction's duration + easing profile.
- *
- *   animation_a ─┐
- *                ├──► (event toggles side) ──► animation
- *   animation_b ─┘                ▲
- *                                 │
- *                              EVENT (EventEmitter / future event sources)
- *
- * Cross-fade is computed per channel and per scalar field (`time`, `raw`,
- * `value` are all lerped). `state` is the OR of from/to/upstream so a clip
- * mid-flight keeps downstream nodes ticking. Channels present on only one
- * side are lerped against an idle channel (`{ time:0, raw:0, value:0,
- * state:0 }`) so a side that publishes a subset of the controller pool
- * doesn't snap the missing channels.
- *
- * Re-emitting mid-morph captures the entire output `AnimationSignal` and
- * crossfades from that captured snapshot into the new target side — same
- * visual-continuity contract as `signalSwitch`, applied per channel.
- *
- * `alwaysDirty = true` because the morph clock is internal — the engine
- * has no other way of knowing the output is changing during a transition
- * when both upstream sides are momentarily quiet.
- */
+// Per-channel cross-fade applied to time/raw/value; state is the OR so an active
+// clip keeps downstream nodes ticking. Channels present on only one side lerp
+// against an idle channel so subsets don't snap. Re-emit mid-morph captures the
+// whole AnimationSignal — same visual-continuity contract as signalSwitch.
+// alwaysDirty: morph clock is internal; engine can't otherwise notice output
+// changing while both inputs are momentarily quiet.
 export class AnimationSwitchProcessor extends BaseProcessor {
     readonly def = animationSwitchDef
     alwaysDirty = true
 
-    /** Live state mirrored to the NodeView. */
     lastAnimation: AnimationSignal | null = null
     lastA: AnimationSignal | null = null
     lastB: AnimationSignal | null = null
@@ -98,9 +73,8 @@ export class AnimationSwitchProcessor extends BaseProcessor {
     private transitionToSide: SwitchSide = 'a'
     private transitionDurationMs = 0
     private transitionProfile: SwitchProfile = 'easeInOut'
-    /** Captured `output` at the moment a morph started. Used as the alpha=0
-     *  endpoint when re-flipping mid-morph so we don't snap to a stale
-     *  upstream value on any channel. */
+    // Captured AnimationSignal at flip time; used as the from-endpoint while
+    // transitionFromCaptured is true (set on re-flips mid-morph).
     private transitionFromAnimation: AnimationSignal | null = null
     private transitionFromCaptured = false
     private lastSeenEventCount = -1
@@ -121,9 +95,8 @@ export class AnimationSwitchProcessor extends BaseProcessor {
             this.currentSide = initialSide
             this.transitionFromSide = initialSide
             this.transitionToSide = initialSide
-            /* Bootstrap event counter so a saved-and-restored graph (or one
-               wired to a long-running EventEmitter) doesn't trigger a phantom
-               flip on the very first execute. */
+            // Bootstrap from upstream count so a restored graph / long-running EventEmitter
+            // doesn't trigger a phantom flip on first execute.
             this.lastSeenEventCount = ev?.count ?? 0
             this.initialised = true
         }
@@ -136,9 +109,6 @@ export class AnimationSwitchProcessor extends BaseProcessor {
             const nextSide: SwitchSide = this.currentSide === 'a' ? 'b' : 'a'
 
             const wasTransitioning = this.transitionStartMs > 0
-            /* Snapshot the *currently-visible* output (or the live from-side
-               when settled) so a re-emit mid-morph crossfades from a frozen
-               packet rather than snapping back to the stale upstream side. */
             const visibleAnim = this.lastAnimation ?? (this.currentSide === 'a' ? a : b)
 
             this.transitionFromSide = this.currentSide
@@ -181,9 +151,7 @@ export class AnimationSwitchProcessor extends BaseProcessor {
             }
         }
 
-        /* Build the channel-id union so a side that publishes fewer channels
-           still surfaces every active channel from the other side (with the
-           missing ones lerping against an idle channel rather than dropping). */
+        // Union ids so a side publishing a subset still surfaces every channel.
         const ids = new Set<string>()
         for (const k of Object.keys(a.channels)) ids.add(k)
         for (const k of Object.keys(b.channels)) ids.add(k)
@@ -204,9 +172,7 @@ export class AnimationSwitchProcessor extends BaseProcessor {
                 time:  fromCh.time  + (toCh.time  - fromCh.time)  * shapedAlpha,
                 raw:   fromCh.raw   + (toCh.raw   - fromCh.raw)   * shapedAlpha,
                 value: fromCh.value + (toCh.value - fromCh.value) * shapedAlpha,
-                /* Either-side state preserves "active clip" semantics through
-                   the morph — important for shaders that gate behaviour on
-                   `uChan{i}.w` (e.g. envelope-driven highlights). */
+                // OR preserves "active clip" semantics for shaders gating on uChan{i}.w.
                 state: ((fromCh.state | toCh.state) ? 1 : 0) as 0 | 1,
             }
             out.channels[id] = lerped

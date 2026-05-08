@@ -1,11 +1,19 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import Box from '@mui/material/Box'
+import Typography from '@mui/material/Typography'
+import SettingsIcon from '@mui/icons-material/Settings'
+import PushPinIcon from '@mui/icons-material/PushPin'
 import { PublishInspector } from './PublishInspector'
+import { PinsPanel } from './PinsPanel'
 
 const STORAGE_KEY = 'nodeEditor.rightRail.width.v1'
+const PINS_HEIGHT_KEY = 'nodeEditor.rightRail.pinsHeight.v1'
 const MIN_WIDTH = 280
 const MAX_WIDTH = 720
 const DEFAULT_WIDTH = 360
+const MIN_PINS_HEIGHT = 80
+const MIN_SETTINGS_HEIGHT = 120
+const DEFAULT_PINS_HEIGHT = 280
 
 function readStoredWidth(): number {
     try {
@@ -17,27 +25,31 @@ function readStoredWidth(): number {
     } catch { return DEFAULT_WIDTH }
 }
 
-/**
- * Right-side rail. Hosts the Settings panel as a **permanent**
- * surface — no open/closed state, no toolbar toggle, no close
- * affordance. The rail's width is the only thing the user controls,
- * via a single resize handle on its left edge (persisted to
- * `localStorage[STORAGE_KEY]`).
- *
- * Historically this rail also stacked a Pin terminal under the
- * Settings panel. The pin terminal was retired; the underlying
- * `PinContext` + per-card `PinToggle` survive as latent
- * infrastructure should we resurrect a different pinning UI later,
- * but no surface in the editor currently consumes pinned-node IDs
- * for display.
- */
+function readStoredPinsHeight(): number {
+    try {
+        const raw = localStorage.getItem(PINS_HEIGHT_KEY)
+        if (!raw) return DEFAULT_PINS_HEIGHT
+        const n = parseInt(raw, 10)
+        if (!Number.isFinite(n)) return DEFAULT_PINS_HEIGHT
+        return Math.max(MIN_PINS_HEIGHT, n)
+    } catch { return DEFAULT_PINS_HEIGHT }
+}
+
+// Both Settings + Pins panels stay mounted so engine subscriptions inside pinned cards keep ticking.
 export const RightRail = memo(function RightRail() {
     const [width, setWidth] = useState<number>(() => readStoredWidth())
     const [resizing, setResizing] = useState(false)
+    const [pinsHeight, setPinsHeight] = useState<number>(() => readStoredPinsHeight())
+    const [resizingPins, setResizingPins] = useState(false)
+    const railRef = useRef<HTMLDivElement | null>(null)
 
     useEffect(() => {
         try { localStorage.setItem(STORAGE_KEY, String(width)) } catch { /* */ }
     }, [width])
+
+    useEffect(() => {
+        try { localStorage.setItem(PINS_HEIGHT_KEY, String(pinsHeight)) } catch { /* */ }
+    }, [pinsHeight])
 
     const onResizeStart = useCallback((e: React.MouseEvent) => {
         e.preventDefault()
@@ -56,8 +68,30 @@ export const RightRail = memo(function RightRail() {
         window.addEventListener('mouseup', onUp)
     }, [])
 
+    const onPinsResizeStart = useCallback((e: React.MouseEvent) => {
+        e.preventDefault()
+        setResizingPins(true)
+        const onMove = (ev: MouseEvent) => {
+            const rail = railRef.current
+            if (!rail) return
+            const rect = rail.getBoundingClientRect()
+            const next = rect.bottom - ev.clientY
+            const max = Math.max(MIN_PINS_HEIGHT, rect.height - MIN_SETTINGS_HEIGHT)
+            const clamped = Math.max(MIN_PINS_HEIGHT, Math.min(max, next))
+            setPinsHeight(clamped)
+        }
+        const onUp = () => {
+            setResizingPins(false)
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+    }, [])
+
     return (
         <Box
+            ref={railRef}
             component="aside"
             sx={{
                 position: 'relative',
@@ -98,7 +132,101 @@ export const RightRail = memo(function RightRail() {
                     },
                 }}
             />
-            <PublishInspector />
+
+            <SectionHeader icon={<SettingsIcon sx={{ fontSize: 14, color: 'text.secondary', display: 'block' }} />}>
+                Settings
+            </SectionHeader>
+            <Box
+                sx={{
+                    flex: 1,
+                    minHeight: MIN_SETTINGS_HEIGHT,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                }}
+            >
+                <PublishInspector />
+            </Box>
+
+            <Box
+                role="separator"
+                aria-orientation="horizontal"
+                onMouseDown={onPinsResizeStart}
+                sx={{
+                    position: 'relative',
+                    height: 6,
+                    marginTop: '-3px',
+                    marginBottom: '-3px',
+                    cursor: 'row-resize',
+                    flexShrink: 0,
+                    zIndex: 2,
+                    '&:hover::after': { backgroundColor: 'rgba(255, 255, 255, 0.18)' },
+                    '&::after': {
+                        content: '""',
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: 3,
+                        height: 1,
+                        backgroundColor: resizingPins ? 'rgba(255, 255, 255, 0.40)' : 'transparent',
+                        transition: 'background-color 120ms ease',
+                    },
+                }}
+            />
+
+            <Box
+                sx={{
+                    height: pinsHeight,
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderTop: 1,
+                    borderColor: 'divider',
+                    overflow: 'hidden',
+                }}
+            >
+                <SectionHeader icon={<PushPinIcon sx={{ fontSize: 14, color: 'text.secondary', display: 'block' }} />}>
+                    Pins
+                </SectionHeader>
+                <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    <PinsPanel />
+                </Box>
+            </Box>
         </Box>
     )
 })
+
+function SectionHeader({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                // Match Scene Outline header height so both rails align across the editor's top edge.
+                height: 32,
+                flexShrink: 0,
+                px: 1.5,
+                bgcolor: 'background.default',
+                borderBottom: 1,
+                borderColor: 'divider',
+            }}
+        >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, lineHeight: 1 }}>
+                {icon}
+                <Typography
+                    variant="caption"
+                    component="span"
+                    sx={{
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.6,
+                        fontWeight: 700,
+                        color: 'text.primary',
+                        lineHeight: 1,
+                    }}
+                >
+                    {children}
+                </Typography>
+            </Box>
+        </Box>
+    )
+}

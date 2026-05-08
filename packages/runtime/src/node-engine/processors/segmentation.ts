@@ -33,32 +33,12 @@ export class SegmentationProcessor extends BaseProcessor {
     private lastImageSrc: any = null
     private cachedContour: ContourSamples | null = null
     private cachedPolygonRef: number[] | null = null
-    /**
-     * When the consumer (Tier-3 player or supplier import) set a
-     * pre-computed polygon directly via {@link setPolygonOverride},
-     * this flag suppresses ALL SAM lifecycle — no worker spawn,
-     * no transformers.js / OpenCV / SlimSAM downloads, no
-     * `extract.canvas` for the source image. The processor reduces
-     * to a static "polygon → contour" function.
-     *
-     * This is the production path. The SAM worker exists ONLY for
-     * the supplier app where the supplier interactively places
-     * hint points; everywhere else the polygon should travel in
-     * the published config.
-     */
+    // While true, suppresses ALL SAM lifecycle (no worker, no model download,
+    // no extract.canvas) so the Tier-3 player can ship a "polygon → contour"
+    // pure function. The SAM worker exists only for supplier interactive mode.
     private hasPolygonOverride = false
 
-    /**
-     * Set a precomputed polygon (flat `[x0, y0, x1, y1, ...]` in
-     * pixel space) directly. Bypasses SAM entirely. Use from
-     * Tier-3 player / config import paths.
-     *
-     * Subsequent `decode()` calls (supplier interactive mode)
-     * will still run SAM — the override flag persists until the
-     * SAM worker actually produces a fresh result, at which
-     * point the override is cleared and normal interactive flow
-     * resumes.
-     */
+    // Cleared by decode() so a subsequent SAM result takes over interactively.
     setPolygonOverride(polygon: number[]): void {
         if (!Array.isArray(polygon) || polygon.length < 6) return
         this.polygon = [...polygon]
@@ -72,11 +52,8 @@ export class SegmentationProcessor extends BaseProcessor {
     }
 
     private initSam(): void {
-        /* When a polygon override is active, the consumer (Tier-3
-           player) never wants the SAM worker — bailing here keeps
-           the ~150 MB ML stack out of the renderer process. The
-           supplier app code path always clears the override before
-           calling `decode`, so its interactive flow is unchanged. */
+        // Bail under polygon override: keeps the ~150 MB ML stack out of the
+        // Tier-3 renderer. Supplier flow clears the override before decode().
         if (this.hasPolygonOverride) return
         if (this.worker) return
         const worker = createSamWorker()
@@ -140,18 +117,9 @@ export class SegmentationProcessor extends BaseProcessor {
     }
 
     decode(points: SamPoint[]): void {
-        /* Interactive supplier flow takes over from any prior config-
-           supplied polygon. The override is cleared so SAM init can
-           proceed; once SAM produces a fresh polygon
-           (`decode_result`) it lives directly in `this.polygon` and
-           the override stays cleared. */
         this.hasPolygonOverride = false
         if (!this.worker) {
-            /* Race-safe path: if decode is called before image was
-               extracted (e.g. supplier dropped a fresh image and
-               immediately added a marker), we still need the worker.
-               initSam is a no-op when the worker exists or override
-               is on; here neither is true so it actually spawns. */
+            // Race-safe spawn: supplier may decode before the image was extracted.
             this.initSam()
             return
         }
@@ -169,16 +137,10 @@ export class SegmentationProcessor extends BaseProcessor {
         if (src !== this.lastImageSrc && src != null) {
             this.lastImageSrc = src
 
-            /* SAM bypass: when the polygon was supplied by config
-               (Tier-3 player path), we don't extract the image and
-               we don't initialise the worker. The polygon already
-               in `this.polygon` is what `buildContour` consumes. */
             if (!this.hasPolygonOverride) {
                 this.initSam()
 
-                /* The wrapper is one-shot: extract reads from the upstream
-                   source then we drop the wrapper so it doesn't accumulate
-                   across image changes. Source itself is owned upstream. */
+                // One-shot Texture wrapper; source is owned upstream so we destroy() the wrapper only.
                 const texture = new Texture({ source: src })
                 const renderer = engine.app.renderer as any
                 Promise.resolve()
@@ -204,14 +166,7 @@ export class SegmentationProcessor extends BaseProcessor {
         return { contour: this.buildContour() }
     }
 
-    /**
-     * Build a `ContourSamples` packet directly from the SAM-derived polygon
-     * point list. The output is the platform-agnostic shape every downstream
-     * consumer (`contourPreview`, `contourResample`, `sdfFromContour`,
-     * `effect.contour`) expects, so the segmentation node now plugs straight
-     * into them without an intermediate adapter. Cached by reference so we
-     * don't recompute the buffers when SAM hasn't fired a new mask.
-     */
+    // Cached by polygon reference so unchanged masks reuse the typed-array packet.
     private buildContour(): ContourSamples | null {
         const poly = this.polygon
         if (poly.length < 6) {
@@ -221,9 +176,7 @@ export class SegmentationProcessor extends BaseProcessor {
         }
         if (this.cachedContour && this.cachedPolygonRef === poly) return this.cachedContour
 
-        /* SAM emits a closed loop with the first point repeated as the last.
-           Drop the duplicate so downstream consumers see a clean ring whose
-           closing edge is implicit (i ↔ (i+1) % count). */
+        // SAM emits a closed loop with first point repeated; drop the duplicate.
         let M = poly.length >> 1
         if (
             M >= 2 &&
@@ -253,9 +206,7 @@ export class SegmentationProcessor extends BaseProcessor {
             total += Math.hypot(dx, dy)
             arcS[i] = total
         }
-        /* Closing edge: only contributes to totalLength, not to arcS (whose
-           last entry stays at the last raw vertex's distance — same convention
-           as ContourResample's output). */
+        // Closing edge contributes to totalLength but NOT to arcS (matches ContourResample's convention).
         {
             const dx = positions[0] - positions[(M - 1) * 2]
             const dy = positions[1] - positions[(M - 1) * 2 + 1]

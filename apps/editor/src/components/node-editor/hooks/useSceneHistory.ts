@@ -26,25 +26,16 @@ import {
 
 type PNode = Node<PipelineNodeData>
 
-/* Subset of `SceneSnapshot` that history operations actually need to
-   serialize / restore. Exported so callers (initial load, import) can
-   construct compatible payloads without leaking all of SceneSnapshot's
-   metadata fields (id, timestamp). */
+// nodes/edges/viewport are populated only when reading a pre-pages snapshot.
 export type ScenePayload = Pick<SceneSnapshot,
     'pages' | 'activePageId' | 'nodeIdCounter' | 'pinnedIds' | 'manifestVersion' |
-    /* Legacy fields — only populated when reading a pre-pages snapshot. */
     'nodes' | 'edges' | 'viewport'>
 
 interface Deps {
     pages: PageState[]
     activePageId: string
-    /* Bulk-replace the entire scene; called by `applySnapshot` when
-       restoring history / imports. */
     replaceScene: (pages: PageState[], activePageId: string) => void
     engineRef: React.MutableRefObject<DataflowEngine | null>
-    /* UX state captured alongside the graph. Both are read at serialize
-       time and written back at restore time so undo/redo recovers the
-       full editor surface. */
     pinnedIds: string[]
     setPinnedIds: (ids: string[]) => void
     getViewport: () => Viewport
@@ -73,7 +64,6 @@ export function useSceneHistory({
                 if (typeof w === 'number') sn.width = w
                 if (typeof h === 'number') sn.height = h
                 if (n.style) sn.style = { ...n.style } as Record<string, unknown>
-                /* Engine-side info only exists for real (non-clone) nodes. */
                 if (n.data.cloneOf) return sn
                 if (n.data.processor === 'image' && engine) {
                     const proc = engine.getProcessor<ImageProcessor>(n.id)
@@ -91,9 +81,7 @@ export function useSceneHistory({
                 }
                 return sn
             })
-            /* For the active page, capture the live viewport (the page
-               object only stores it on switch). For inactive pages the
-               stored viewport is already authoritative. */
+            // Active page: capture live viewport (page.viewport is only updated on switch).
             let viewport: Viewport | undefined = page.viewport
             if (page.id === activePageId) {
                 try { viewport = getViewport() } catch { viewport = page.viewport }
@@ -158,18 +146,16 @@ export function useSceneHistory({
     ) => {
         isRestoringRef.current = true
         try {
-            /* Tear down every processor currently in the engine. We
-               rebuild from the snapshot — there's no incremental diff. */
+            // Full rebuild from snapshot — no incremental diff. Skip clones/frames (no engine processor).
             for (const page of pages) {
                 for (const n of page.nodes) {
                     if (n.data.cloneOf) continue
+                    if (n.data.processor === 'frame') continue
                     engine.removeNode(n.id)
                 }
             }
 
-            /* Migrate legacy (single-page) snapshots into one default
-               page. Old snapshots wrote `nodes`/`edges`/`viewport` flat
-               on the snapshot; new snapshots write them inside `pages`. */
+            // Migrate legacy single-page snapshots (flat nodes/edges/viewport) into one default page.
             const incomingPages: SerializedPage[] = snap.pages && snap.pages.length > 0
                 ? snap.pages
                 : [{
@@ -180,10 +166,7 @@ export function useSceneHistory({
                     viewport: snap.viewport,
                 }]
 
-            /* Heal both id counters BEFORE any processor allocation so
-               nextId() / nextPageId() can never collide with restored
-               ids. The node counter walks every page; the page counter
-               walks the page list. */
+            // Heal id counters BEFORE allocations so nextId/nextPageId can't collide with restored ids.
             const fromSnap = snap.nodeIdCounter || 0
             const fromIds = maxNodeIdAcrossPages(incomingPages.map(p => ({
                 id: p.id, name: p.name,
@@ -192,13 +175,8 @@ export function useSceneHistory({
             setNodeIdCounter(Math.max(fromSnap, fromIds))
             setPageIdCounterFromPages(incomingPages)
 
-            /* Migrate event-source nodes that pre-date the `id` /
-               `label` params: anything missing (or empty) gets a
-               deterministic default keyed on the node id so external
-               glue / restored snapshots stay stable across editor
-               sessions. Mutates `sn.data.params` in place — the
-               restored React Flow node and the engine processor are
-               built from the same object below. */
+            // Backfill event-source nodes (eventEmitter/tapZone) missing id/label with deterministic
+            // defaults keyed on node id so external glue stays stable across sessions.
             for (const page of incomingPages) {
                 for (const sn of page.nodes) {
                     if (sn.data.cloneOf) continue
@@ -215,16 +193,17 @@ export function useSceneHistory({
                 }
             }
 
-            /* Restore real nodes per page (skip clones — engine doesn't
-               see them). Drops nodes whose processor type was retired. */
+            // Drop unknown processor types (retired processors in old snapshots). Frames/clones
+            // bypass the catalog check by design.
             const restoredPages: PageState[] = []
             for (const page of incomingPages) {
                 const restoredNodes: PNode[] = []
                 for (const sn of page.nodes) {
                     const isClone = !!sn.data.cloneOf
-                    if (!isClone && !PROCESSOR_CATALOG[sn.data.processor]) continue
+                    const isFrame = sn.data.processor === 'frame'
+                    if (!isClone && !isFrame && !PROCESSOR_CATALOG[sn.data.processor]) continue
 
-                    if (!isClone) {
+                    if (!isClone && !isFrame) {
                         engine.addNode(sn.id, sn.data.processor, { ...sn.data.params })
 
                         if (sn.data.processor === 'image' && sn.data.imageUrl) {
@@ -269,14 +248,13 @@ export function useSceneHistory({
                         ...(sn.style ? { style: sn.style } : {}),
                         ...(typeof sn.width === 'number' ? { width: sn.width } : {}),
                         ...(typeof sn.height === 'number' ? { height: sn.height } : {}),
+                        // Frames paint behind processors; CSS + node.zIndex both needed (CSS beats
+                        // RF's inline elevateNodesOnSelect bump; field keeps RF stacking math consistent).
+                        ...(isFrame ? { zIndex: -1 } : {}),
                     } as PNode)
                 }
-                /* Edge filtering happens in two stages:
-                   - per-page: drop edges whose endpoints don't exist on
-                     this page (legacy state where same edge was on
-                     wrong page after a hand edit);
-                   - resolveSceneForEngine: drops edges whose source is a
-                     deleted clone. */
+                // Per-page filter: drop edges whose endpoints aren't on this page (resolveSceneForEngine
+                // handles the cross-page clone-source resolution later).
                 const aliveIdsOnPage = new Set(restoredNodes.map(n => n.id))
                 const restoredEdges = (page.edges as Edge[])
                     .filter(e => aliveIdsOnPage.has(e.source) && aliveIdsOnPage.has(e.target))
@@ -295,9 +273,6 @@ export function useSceneHistory({
                 : restoredPages[0]?.id ?? DEFAULT_PAGE_ID
             replaceScene(restoredPages, incomingActiveId)
 
-            /* Restore UX state. Both are optional — legacy snapshots
-               written before these fields existed leave the current
-               editor surface untouched. */
             if (Array.isArray(snap.pinnedIds)) {
                 setPinnedIds(snap.pinnedIds)
             }
@@ -307,9 +282,7 @@ export function useSceneHistory({
                 Number.isFinite(activeViewport.x) &&
                 Number.isFinite(activeViewport.y) &&
                 Number.isFinite(activeViewport.zoom)) {
-                /* Wait for React Flow to mount the new active page (the
-                   `key={activePageId}` on <ReactFlow> re-mounts on
-                   restore) before calling setViewport. */
+                // Wait one frame for RF to mount the new active page (key={activePageId} re-mounts on restore).
                 requestAnimationFrame(() => {
                     try { setViewport(activeViewport) } catch { /* viewport not yet ready */ }
                 })

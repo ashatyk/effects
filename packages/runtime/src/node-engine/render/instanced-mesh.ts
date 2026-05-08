@@ -3,15 +3,9 @@ import { Buffer, BufferUsage, Geometry, Mesh, Shader } from 'pixi.js'
 import type { InstancedGeometryDef, PerInstanceAttr } from '../../pipeline/types'
 import type { ContourSamples } from '../types'
 
-/**
- * Per-instance attribute streams. Either resolved from a static contour
- * (default) or supplied directly by the caller (e.g. CPU-resampled scrolling
- * or ribbon segments).
- *
- * The `*Next` arrays are populated only by ribbon-mode resampling: each
- * instance i is a segment from sample i to sample i+1, so vertex shaders can
- * build a strip-quad per segment.
- */
+/** Per-instance attribute streams. `*Next` arrays are only populated by
+ *  ribbon-mode resampling — instance i spans sample i to i+1 so a vertex
+ *  shader can build a strip-quad per segment. */
 export interface InstanceStreams {
     count: number
     positions: Float32Array
@@ -30,24 +24,14 @@ interface BuildArgs {
     resources: Record<string, unknown>
 }
 
-/**
- * Build an instanced Pixi v8 Mesh from an InstancedGeometryDef + per-instance
- * streams. Caller owns destruction of the returned Mesh + its geometry buffers.
- *
- * Per-vertex attributes:
- *   - aLocal: vec2 (pulled from def.perVertex.aLocal)
- *
- * Per-instance attributes are mapped per def.perInstance.map:
- *   - aPosition: vec2 from streams.positions
- *   - aTangent:  vec2 from streams.tangents
- *   - aArcS:     float from streams.arcS
- *   - aIndex:    float, 0..streams.count-1, generated on the fly
- */
+/** Build an instanced Pixi v8 Mesh from an InstancedGeometryDef +
+ *  per-instance streams. Caller owns destruction of returned Mesh +
+ *  geometry buffers. Per-instance attribute mapping follows
+ *  def.perInstance.map; `aIndex` (0..N-1) is generated on the fly. */
 export function buildInstancedMesh(args: BuildArgs): Mesh<Geometry, Shader> {
     const { def, streams, vertex, fragment, resources } = args
     const N = streams.count
 
-    /* per-vertex local geometry — flat Float32Array */
     const local = new Float32Array(def.perVertex.aLocal.length * 2)
     for (let i = 0; i < def.perVertex.aLocal.length; i++) {
         local[i * 2] = def.perVertex.aLocal[i][0]
@@ -77,7 +61,6 @@ export function buildInstancedMesh(args: BuildArgs): Mesh<Geometry, Shader> {
     return new Mesh<Geometry, Shader>({ geometry, shader })
 }
 
-/** Convert a static ContourSamples into per-instance streams (1:1 mapping). */
 export function streamsFromContour(contour: ContourSamples): InstanceStreams {
     return {
         count: contour.count,
@@ -87,11 +70,9 @@ export function streamsFromContour(contour: ContourSamples): InstanceStreams {
     }
 }
 
-/**
- * Resample a closed contour at equally-spaced arc-length intervals, with a
- * time-based offset so the whole strip "scrolls" along the curve. Used by
- * `glyph`-mode scrolling (one instance per glyph anchored on the curve).
- */
+/** Resample a closed contour at equally-spaced arc-length intervals with
+ *  a time-based offset so the strip scrolls along the curve. Used by
+ *  glyph-mode scrolling (one instance per glyph). */
 export function resampleContourScrolling(
     contour: ContourSamples,
     spacingPx: number,
@@ -105,7 +86,6 @@ export function resampleContourScrolling(
     const outTan = new Float32Array(N * 2)
     const outArcS = new Float32Array(N)
 
-    /* Wrap phase into [0, total). */
     let phase = phasePx % total
     if (phase < 0) phase += total
 
@@ -123,15 +103,11 @@ export function resampleContourScrolling(
 }
 
 /**
- * Resample a closed contour into ribbon segments. Each instance is a short
- * arc with start/end position+tangent, so a vertex shader can build a tilted
- * quad strip following the curve.
- *
- * Segment **positions are anchored** to fixed points on the contour and do
- * NOT move with phase — the geometry stays put. `phasePx` is added only to
- * the per-vertex `arcS` (UV.x) so the text appears to scroll *through* the
- * static ribbon instead of the ribbon scrolling under static text. Without
- * this split the two motions cancel out and the text looks frozen.
+ * Resample a closed contour into ribbon segments (start/end pos+tangent
+ * per instance). Segment positions are ANCHORED to fixed contour points
+ * and do not move with phase; phasePx is added only to per-vertex arcS
+ * (UV.x) so text appears to scroll *through* a static ribbon. Without
+ * this split the two motions cancel and the text looks frozen.
  */
 export function resampleContourRibbon(
     contour: ContourSamples,
@@ -174,10 +150,9 @@ export function resampleContourRibbon(
     }
 }
 
-/** Linearly interpolate position+tangent at a given arc-length on the contour. */
 function sampleContourAt(contour: ContourSamples, s: number): [number, number, number, number] {
     const N = contour.count
-    /* The contour was resampled with a uniform step `total / N`. */
+    // contour was resampled with uniform step `total / N`
     const step = contour.totalLength / N
     const t = s / step
     const i0 = Math.floor(t) % N

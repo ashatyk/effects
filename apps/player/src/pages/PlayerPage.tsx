@@ -16,65 +16,23 @@ import {
 import { EventEmitterButtons } from '../components/EventEmitterButtons'
 import { useTapZoneHitTest } from '../hooks/useTapZoneHitTest'
 
-/**
- * The mount payload — picked exclusively by the picker.
- *
- * - `kind: 'baked'` — single self-contained AOT artifact. Player
- *   uses `EffectPlayer.fromBaked` (no config merge, no SAM, no
- *   live overrides on baked nodes — what got baked is frozen).
- * - `kind: 'pipeline'` — original published pipeline + optional
- *   supplier config. Player uses `EffectPlayer.create` (replays
- *   the supplier-style flow live; spawns SAM if the pipeline has
- *   segmentation; supports config swap via "Load config" button).
- *
- * The two modes share rendering / event-dispatch / tap-zone
- * hit-test — the page only branches on which constructor to call
- * and which surface metadata to display.
- */
+// Two mount modes share rendering / event-dispatch / hit-test:
+//   baked   → EffectPlayer.fromBaked (no SAM, no config merge, frozen)
+//   pipeline → EffectPlayer.create (live; supports config swap at runtime)
 export type PlayerMount =
     | { kind: 'baked'; baked: BakedPipeline }
     | { kind: 'pipeline'; pipeline: PublishedPipeline; initialConfig: SupplierConfig | null }
 
 interface Props {
     mount: PlayerMount
-    /** Called by Back — clears App-level state so the picker opens fresh. */
     onClear: () => void
 }
 
-/**
- * The Tier-3 player demo page.
- *
- * Owns one `EffectPlayer` instance bound to a single visible
- * `<canvas>`. The page is intentionally minimal — header, canvas,
- * footer, optional events sidebar. No form, no exposed parameters,
- * no segmentation widget.
- *
- * Two event-dispatch surfaces (the Tier-3 contract for tier-2
- * triggers):
- *  - **`tapZone` nodes** (`kind: 'tap'`) — hit-tested against the
- *    live `ContourSamples` on every canvas click via
- *    `useTapZoneHitTest`. Cursor goes to `pointer` when at least
- *    one tap zone is present, signalling clickability.
- *  - **`eventEmitter` nodes** (`kind: 'event'`) — surface as EMIT
- *    buttons in the right sidebar via `EventEmitterButtons`. No
- *    contour to hit-test; on-demand only.
- *
- * Both paths route through `EffectPlayer.emit(eventId, x?, y?)` so
- * downstream `Envelope` / `SignalSwitch` / `AnimationSwitch` chains
- * see the fresh `event.count` on the next tick — same code path as
- * the supplier's EventTriggerList button. The player demo is the
- * **integration acceptance test** for `@effects/player`: any
- * partner integration that mounts `EffectPlayer.create({ pipeline,
- * config, canvas })` + wires its own click handler / trigger UI
- * gets the same behaviour.
- */
 export function PlayerPage({ mount, onClear }: Props) {
     const navigate = useNavigate()
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const playerRef = useRef<EffectPlayer | null>(null)
-    /* Mirror of playerRef for child-component reactivity (sidebar,
-       hit-test hook). Refs alone don't trigger re-render after the
-       async create resolves; this state push does. */
+    // State mirror of playerRef so children re-render after the async create resolves.
     const [player, setPlayer] = useState<EffectPlayer | null>(null)
     const [activeConfig, setActiveConfig] = useState<SupplierConfig | null>(
         mount.kind === 'pipeline' ? mount.initialConfig : null,
@@ -82,19 +40,15 @@ export function PlayerPage({ mount, onClear }: Props) {
     const [ready, setReady] = useState(false)
     const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null)
 
-    /* Surface metadata reads from whichever object carries it for
-       the active mount. PublishedPipeline and BakedPipeline have
-       structurally identical `id`/`name`/`surface` shapes — the
-       latter is just trimmed to dynamic-only entries. */
+    // PublishedPipeline and BakedPipeline share id/name/surface shape;
+    // baked surface is trimmed to dynamic-only entries.
     const surface = mount.kind === 'baked' ? mount.baked.surface : mount.pipeline.surface
     const headerId = mount.kind === 'baked' ? mount.baked.id : mount.pipeline.id
     const headerName = mount.kind === 'baked' ? mount.baked.name : mount.pipeline.name
     const headerVersion = mount.kind === 'baked' ? mount.baked.pipelineVersion : mount.pipeline.version
 
-    /* Split surface.tapZones[] into the two dispatch UX paths.
-       `event` = sidebar EMIT buttons; `tap` = canvas hit-test.
-       Same code path for baked + pipeline modes — surface shape
-       is identical. */
+    // Split tapZones into the two dispatch UX paths:
+    //   'event' → sidebar EMIT buttons; 'tap' → canvas hit-test.
     const eventZones = useMemo(
         () => surface.tapZones.filter(z => z.kind === 'event'),
         [surface],
@@ -104,11 +58,9 @@ export function PlayerPage({ mount, onClear }: Props) {
         [surface],
     )
 
-    /* Mount the player once per `mount` payload. The config is
-       reapplied below in a separate effect so swapping configs at
-       runtime (Load config button) doesn't tear down the GPU
-       context. Baked mounts ignore live config overrides — what
-       got baked is frozen. */
+    // Mount once per `mount` payload. Config swaps go through a separate
+    // path so they don't tear down the GPU context. Baked mounts ignore
+    // live config overrides — what got baked is frozen.
     useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas) return
@@ -137,22 +89,14 @@ export function PlayerPage({ mount, onClear }: Props) {
             setPlayer(null)
             setReady(false)
         }
-        /* The mount object identity is the structural input. Live
-           config changes flow through the toolbar buttons (Load
-           config / Reset), NOT through a remount. */
+        // Mount identity is the structural input; config changes go via
+        // toolbar buttons (Load config / Reset), NOT a remount.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [mount])
 
-    /* Wire native canvas clicks → tap-zone hit-test → player.emit().
-       The hook is a no-op when `tapZones` is empty, so layouts with
-       only event-emitters (or no events at all) pay nothing.
-       Hit-test reads the live `proc.contour` off the engine — works
-       identically against baked `constantContour` nodes (their
-       output is a real ContourSamples reference) and original
-       segmentation/contourResample chains. */
+    // Hit-test reads live proc.contour from the engine — works equally
+    // against baked constantContour nodes and original segmentation chains.
     useTapZoneHitTest(canvasRef.current, player?.engine ?? null, player, surface)
-
-    /* ── Toolbar actions ─────────────────────────────────────── */
 
     const onBack = useCallback(() => {
         onClear()
@@ -160,10 +104,7 @@ export function PlayerPage({ mount, onClear }: Props) {
     }, [navigate, onClear])
 
     const onLoadConfig = useCallback(async () => {
-        /* Only meaningful in pipeline mount — baked mounts have no
-           SupplierConfig at runtime; everything that wasn't exposed
-           in the surface is frozen. The button is hidden in baked
-           mode so this guard is mostly defensive. */
+        // Defensive: button is hidden in baked mode (no live SupplierConfig).
         if (mount.kind !== 'pipeline') return
         const text = await pickConfigFile()
         if (text == null) return
@@ -178,9 +119,8 @@ export function PlayerPage({ mount, onClear }: Props) {
     }, [mount])
 
     const onResetDefaults = useCallback(() => {
-        /* setConfig with an empty config makes the player fall back
-           to manifest defaults — same path as omitting `config` on
-           initial create. */
+        // setConfig with empty maps falls back to manifest defaults —
+        // same path as omitting `config` on initial create.
         if (!playerRef.current) return
         const empty = playerRef.current.getConfig()
         const cleared = {
@@ -202,7 +142,6 @@ export function PlayerPage({ mount, onClear }: Props) {
             gridTemplateRows: 'auto 1fr auto',
             bgcolor: 'background.default',
         }}>
-            {/* Header */}
             <Box sx={{
                 px: 2, py: 1,
                 borderBottom: '1px solid',
@@ -240,14 +179,12 @@ export function PlayerPage({ mount, onClear }: Props) {
                 </Stack>
             </Box>
 
-            {/* Middle row — canvas (always) + events sidebar (only if kind='event' present) */}
             <Box sx={{
                 display: 'grid',
                 gridTemplateColumns: eventZones.length > 0 ? '1fr auto' : '1fr',
                 minHeight: 0,
                 overflow: 'hidden',
             }}>
-                {/* Canvas */}
                 <Box sx={{
                     p: 2, minHeight: 0, overflow: 'hidden',
                     display: 'flex',
@@ -276,21 +213,13 @@ export function PlayerPage({ mount, onClear }: Props) {
                                 objectFit: 'contain',
                                 display: 'block',
                                 imageRendering: 'auto',
-                                /* 1px frame around the canvas itself (NOT the
-                                   wrapper) so the user can see exactly where
-                                   the publishRoot frame ends — important for
-                                   tap-zone hit-testing and for verifying the
-                                   effect's authored canvas dimensions match
-                                   what was published. */
+                                // Outline (vs border) doesn't enter box-model so it
+                                // never shifts the canvas; lets the user see the
+                                // publishRoot frame boundary for hit-test verification.
                                 outline: '1px solid #2a2a2a',
                                 outlineOffset: 0,
-                                /* Visual affordance: when there are tap-zones,
-                                   the canvas is interactive — show the standard
-                                   "you can click me" cursor. Misses (clicks in
-                                   the letterbox or outside any zone) are
-                                   silently ignored, the cursor stays
-                                   honest about clickability of the canvas
-                                   area, not per-zone. */
+                                // Pointer cursor signals canvas-level clickability
+                                // when any tap-zone is present (not per-zone).
                                 cursor: tapZones.length > 0 ? 'pointer' : 'default',
                             }}
                         />
@@ -325,11 +254,9 @@ export function PlayerPage({ mount, onClear }: Props) {
                     </Box>
                 </Box>
 
-                {/* Events sidebar (event-emitters → buttons) */}
                 <EventEmitterButtons zones={eventZones} player={player} />
             </Box>
 
-            {/* Footer */}
             <Box sx={{
                 px: 2, py: 1,
                 borderTop: '1px solid',

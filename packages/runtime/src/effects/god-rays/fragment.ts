@@ -9,30 +9,19 @@ export default `
     uniform vec2  uResolution;
 
     /* Animation channels — vec4(drive, raw, value, state).
-       Slot 0: appearance progress (0..1) — uChan0.z multiplied into beam
-               intensity.
-       Slot 1: ray rotation phase (radians) — uChan1.z carries the
-               controller-mapped value (slot range defaultMin..defaultMax
-               is in radians, defaults to 0..2π). Wire Timer (looped) →
-               AnimationController and dial slot-1 min/max to set the
-               sweep. The controller's mapping is what governs amplitude
-               here — reading .x would bypass it.
+       Slot 0: appearance progress 0..1 — uChan0.z multiplies beam intensity.
+       Slot 1: ray rotation phase (radians, slot defaults 0..2π) — uChan1.z
+               is the controller-mapped value. Reading .x would bypass the
+               controller's min/max.
        Slot 4: intensity multiplier on final alpha. */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan4;
 
-    /* Pivot point in pixel space — the rotational centre the rays fan
-       around. The Effect runtime binds this for every frame: when no
-       "pivot" input is wired it falls back to the contour's AABB centre
-       (and to the canvas centre if there's also no contour), so the
-       effect always has a sensible focal point. Wire a Contour Pivot
-       node into "effect.pivot" to drive it explicitly (centroid /
-       centre-of-mass / arc / aabb / min / max + offset). */
+    /* Pivot in pixel space. Effect runtime falls back to contour AABB
+       centre (or canvas centre) when no pivot input is wired. */
     uniform vec2  uPivot;
-    /* SDF (signed distance field) is wired through generic texture
-       channel 0. Manifest declares the slot's UI label so the user
-       knows to plug an SDF source into txcn0 on the Effect node. */
+    // SDF wired through generic texture channel 0.
     uniform sampler2D uTxcn0;
 
     uniform float uEdgeFeatherPx;
@@ -48,12 +37,10 @@ export default `
     const float EPS_ATTEN = 1e-3;
     const float INF_F     = 1e9;
 
-    /* SDF format (see pipeline/passes/sdf-pure.ts): RGB carries
-       24-bit biased = signed_d / MAX_D * 0.5 + 0.5 in [0, 1].
-       Decode to signed pixels — negative inside, positive
-       outside (canonical convention). A is always 1 — never
-       sample it for inside/outside; check the sign of the
-       returned value instead. */
+    /* SDF format (pipeline/passes/sdf-pure.ts): 24-bit biased =
+       signed_d / MAX_D * 0.5 + 0.5. Decode to signed pixels (negative
+       inside, positive outside). A is always 1 — check the sign,
+       never the alpha. */
     float unpackSignedFloat24(vec3 rgb, float maxD){
         float n = (rgb.r * 255.0) * 65536.0 +
         (rgb.g * 255.0) *   256.0 +
@@ -86,10 +73,7 @@ export default `
         float dMax = reachPx(uRayFalloff, EPS_ATTEN);
         if (sdist > dMax) discard;
 
-        /* Appearance multiplier comes straight from slot 0. Curve shape
-           (linear, easeIn/Out, S-curve, etc.) is up to the upstream
-           Envelope / Interpolator easing — the shader no longer applies
-           a cubic Bezier intro curve of its own. */
+        // Appearance multiplier comes straight from slot 0; easing is upstream.
         float ax = uResolution.y / uResolution.x;
         vec2  va = vec2((p.x - ctr.x) * ax, (p.y - ctr.y));
         float theta = atan(va.x, va.y);
@@ -97,9 +81,7 @@ export default `
         float f = max(0.0001, uEdgeFeatherPx);
         float startRamp   = smoothstep(0.0, f, sdist);
         float radialAtten = exp(-uRayFalloff * sdist);
-        /* Rotation phase comes from the controller-mapped value of slot 1
-           (radians; slot defaults to 0..2π). Wire a Timer (looped) →
-           AnimationController and tune Timer.durationMs for speed. */
+        // Rotation phase = slot-1 mapped value (radians). Wire Timer→Controller; tune durationMs.
         float phase = uChan1.z + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
         float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * uChan0.z;
         float m = uRayStrength * startRamp * radialAtten * beam;

@@ -20,9 +20,6 @@ export const ImageNodeSettings = memo(({ id }: NodeSettingsProps) => {
             reader.onload = () => {
                 const proc = engine.getProcessor<ImageProcessor>(id)
                 proc?.setImageUrl(reader.result as string, engine)
-                /* Mirror the in-graph rename so the title flips to
-                   `Image: <file>` everywhere (graph card, pin terminal,
-                   settings header). */
                 updateNodeData(id, { label: `Image: ${file.name}` })
             }
             reader.readAsDataURL(file)

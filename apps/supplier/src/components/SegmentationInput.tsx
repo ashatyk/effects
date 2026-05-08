@@ -17,45 +17,16 @@ const COL_EXCLUDE = '#f87171'
 
 interface Props {
     engine: DataflowEngine
-    /** PublishedWholeNode entry where `processor === 'segmentation'`. */
     node: PublishedWholeNode
-    /** Current points from SupplierConfig — drawn as overlay markers. */
     points: SamPoint[]
-    /**
-     * Notify the parent of the latest segmentation state so it can
-     * persist into `SupplierConfig`.
-     *
-     * `points` are the supplier-marked SAM hint markers. `polygon`
-     * is the SAM-computed result (flat `[x0, y0, x1, y1, ...]`),
-     * present whenever the worker has produced a mask. **Saving
-     * `polygon` into the config is critical** — without it the
-     * Tier-3 player would have to re-spawn SAM (~150 MB native
-     * memory) just to recompute what's already known. With it,
-     * the player applies the polygon directly and skips SAM
-     * entirely. */
+    // Saving `polygon` is critical: with it Tier-3 player skips SAM
+    // entirely (~150 MB native memory saved); without it the runtime
+    // must re-spawn SAM to recompute what's already known.
     onChange: (payload: { points: SamPoint[]; polygon?: number[] }) => void
 }
 
-/**
- * Simplified SAM-segmentation widget for supplier UX.
- *
- * Behaviour (much narrower than the editor's SegmentationNodeView):
- *  - **Click** = add an Include point (label=1).
- *  - **Shift+Click** = add an Exclude point (label=0).
- *  - **Right-click on a point** = remove it.
- *  - No Include/Exclude toggle button, no points list, no hover
- *    preview — supplier-grade affordances only.
- *
- * Mask + image are read straight from `SegmentationProcessor` (the
- * same instance the engine drives), so any wiring the author put
- * upstream of segmentation (image upload, contour resample, etc.)
- * just works.
- *
- * The widget polls the processor every 80 ms for status / mask
- * updates — the editor uses `proc.onChange` callbacks but those
- * collide with the editor-side view if both are mounted; polling is
- * a more robust pattern for the supplier.
- */
+// Polling (vs proc.onChange) — onChange callbacks collide if the
+// editor-side view is also mounted; polling is robust for supplier.
 export function SegmentationInput({ engine, node, points, onChange }: Props) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const imgRef = useRef<HTMLImageElement | null>(null)
@@ -65,18 +36,10 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
 
     const proc = useCallback(() => engine.getProcessor<SegmentationProcessor>(node.nodeId), [engine, node.nodeId])
 
-    /* Reference to the polygon length we last forwarded to the
-       parent. Polygon updates after SAM `decode_result` arrive
-       asynchronously via the worker — we don't want to push the
-       same payload to the parent every poll, so we compare the
-       array length (cheap proxy for "has it changed") and only
-       fire when it actually has. */
+    // Polygon length acts as a cheap "has it changed" proxy so we
+    // don't push the same payload to the parent every poll.
     const lastPolygonLenRef = useRef(-1)
 
-    /* Poll the processor for status + mask refresh. The image dataUrl
-       is a stable reference once SAM has encoded it, so we re-trigger
-       redraw whenever the polygon changes (cheap deep-equal proxy via
-       `proc.maskData?.mask.length`). */
     useEffect(() => {
         const t = setInterval(() => {
             const p = proc()
@@ -89,18 +52,13 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
             )
             forceTick(n => n + 1)
 
-            /* Push polygon into the parent's SupplierConfig as soon
-               as SAM produces it. This is what makes the exported
-               `.config.json` self-contained — the Tier-3 player
-               reads `polygon` directly and never spawns SAM. */
+            // Push fresh polygon so the exported config is self-contained.
             const len = p.polygon.length
             if (len !== lastPolygonLenRef.current && len >= 6) {
                 lastPolygonLenRef.current = len
                 onChange({ points, polygon: [...p.polygon] })
             } else if (len === 0 && lastPolygonLenRef.current > 0) {
-                /* SAM cleared its result (image change / explicit
-                   reset). Drop the polygon from config so the next
-                   export doesn't carry a stale shape. */
+                // SAM cleared (image change / reset) — drop stale polygon.
                 lastPolygonLenRef.current = 0
                 onChange({ points })
             }
@@ -108,9 +66,6 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
         return () => clearInterval(t)
     }, [proc, points, onChange])
 
-    /* Redraw on every render — cheap (single drawImage + a few
-       circles). The poll above forces re-renders on mask changes so
-       the supplier sees the SAM result update live. */
     useEffect(() => {
         const canvas = canvasRef.current
         const p = proc()
@@ -202,19 +157,12 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
         const rect = canvas.getBoundingClientRect()
         const nx = (e.clientX - rect.left) / rect.width
         const ny = (e.clientY - rect.top) / rect.height
-        /* Shift = exclude; default = include. Single primary button
-           keeps non-technical supplier UX simple. */
         const label: 0 | 1 = e.shiftKey ? 0 : 1
         const updated: SamPoint[] = [...points, { point: [nx, ny], label }]
-        /* Drop polygon — SAM is about to produce a new one. The
-           poll loop will push the fresh polygon back into config
-           once `decode_result` arrives. */
+        // Drop polygon — SAM will produce a new one; poll loop re-pushes it.
         onChange({ points: updated })
     }, [proc, points, onChange])
 
-    /* Right-click on a point removes it. Falls back to suppressing
-       the browser context menu unconditionally so supplier doesn't
-       see the OS menu over the image. */
     const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
         e.preventDefault()
         e.stopPropagation()
@@ -223,9 +171,7 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
         const rect = canvas.getBoundingClientRect()
         const nx = (e.clientX - rect.left) / rect.width
         const ny = (e.clientY - rect.top) / rect.height
-        /* Hit-test against existing points (10-px radius in canvas
-           coords). Newest matching point wins so the supplier can
-           "undo" their last click intuitively. */
+        // 10-px radius hit-test; newest match wins so right-click "undoes" last add.
         const w = canvas.width || CANVAS_W
         const h = canvas.height || Math.round(CANVAS_W * 0.75)
         const r2 = (10 / w) * (10 / w) + (10 / h) * (10 / h)
@@ -240,8 +186,7 @@ export function SegmentationInput({ engine, node, points, onChange }: Props) {
         }
         if (removeIdx >= 0) {
             const updated = points.filter((_, i) => i !== removeIdx)
-            /* Drop polygon — SAM will be re-decoded with the new
-               point set; poll loop pushes the fresh result back. */
+            // Drop polygon — SAM re-decodes with the new point set.
             onChange({ points: updated })
         }
     }, [points, onChange])

@@ -7,16 +7,8 @@ import {
 } from '@effects/runtime'
 import { resolveSceneForEngine, type PageState } from './sceneResolver'
 
-/**
- * Editor-side wrapper around `@effects/runtime → derivePublishedSurface`.
- *
- * The runtime function works on a flat resolved `(nodes, edges)` view —
- * it knows nothing about pages or clones. Editor stores the scene as
- * `PageState[]` with UI-only clones, so we flatten through
- * `resolveSceneForEngine` first (the same flatten the engine itself
- * runs in `engine.setEdges`), then convert React Flow nodes into the
- * runtime's `SerializedNode` shape.
- */
+// Flatten PageState[] → resolved (nodes, edges) for derivePublishedSurface (which knows nothing
+// about pages/clones). Same flatten engine.setEdges runs.
 export function deriveFromPages(pages: PageState[]): DerivePublishedSurfaceResult {
     const { realNodes, resolvedEdges } = resolveSceneForEngine(pages)
 
@@ -48,21 +40,8 @@ export function deriveFromPages(pages: PageState[]): DerivePublishedSurfaceResul
     return derivePublishedSurface({ nodes, edges })
 }
 
-/** Editor-side helper: stable structural hash of `pages` that changes
- *  whenever anything the publish traversal cares about changes (nodes,
- *  edges, exposed metadata, publish-relevant params). Lets
- *  `useDerivedSurface` skip recomputation on viewport / page-name
- *  edits.
- *
- *  We hash the same things `deriveFromPages → derivePublishedSurface`
- *  reads:
- *   - node id, processor type, cloneOf
- *   - edges
- *   - per-node `exposed` mode/fields/label/hint
- *   - publishRoot params (name/version/effectId)
- *   - tapZone / eventEmitter `id` + `label` params
- *   - config `effect` + `exposed.fields`
- */
+// Stable structural hash that changes whenever the publish traversal would yield a different
+// result (nodes/edges/exposed/publish-relevant params). Lets useDerivedSurface skip viewport edits.
 export function publishStructuralHash(pages: PageState[]): string {
     const parts: string[] = []
     for (const p of pages) {

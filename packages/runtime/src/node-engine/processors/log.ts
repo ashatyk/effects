@@ -9,34 +9,20 @@ export const logDef: ProcessorDef = {
     inputs: [{ name: 'metrics', type: SLOT.METRICS }],
     outputs: [],
     defaultParams: {
-        /* Exponential moving average smoothing factor; 0 = no smoothing
-           (always show last frame), 1 = freeze at first frame. ~0.85 is
-           a good default — reads the trend without flickering. */
+        // EMA factor: 0 = no smoothing, 1 = freeze; 0.85 reads trend without flicker.
         smoothing: 0.85,
     },
 }
 
-/**
- * Pure sink: consumes EffectMetrics frames and remembers a smoothed
- * snapshot for the view layer to display. The view subscribes via
- * `engine.subscribeNode(id, ...)` and reads `lastSmoothed`.
- *
- * We avoid keeping a long history here — that's UI-side state. The
- * processor only owns the EMA so values stay coherent across the
- * editor's react re-renders (which can drop intermediate frames).
- */
+// Pure sink: holds EMA-smoothed metrics snapshot for the view layer (subscribed via
+// engine.subscribeNode). Only the EMA is owned here so values stay coherent across
+// React re-renders that may drop frames.
 export class LogProcessor extends BaseProcessor {
     readonly def = logDef
-    /* Not alwaysDirty: rides upstream propagation. When an animation
-       source is wired into Effect (Timer / AnimationController / ...),
-       Effect re-renders every frame and emits a fresh `metrics` packet,
-       which marks Log dirty downstream. When nothing animates, Effect
-       sleeps and Log sleeps with it — no need to spam `setSnapshot`
-       at idle. The Log view shows the last received frame. */
+    // Not alwaysDirty: rides upstream propagation. Effect emits a fresh metrics
+    // packet only while animating, marking Log dirty; both sleep at idle.
 
-    /** Most recent raw frame, exactly as the upstream Effect emitted it. */
     last: EffectMetrics | null = null
-    /** EMA-smoothed mirror of `last` — same shape, lerped totals. */
     lastSmoothed: EffectMetrics | null = null
 
     execute(inputs: Record<string, any>, params: Record<string, any>): Record<string, any> {
@@ -48,8 +34,7 @@ export class LogProcessor extends BaseProcessor {
         }
         this.last = m
 
-        /* Smoothing factor lives in 0..1; > 0.99 collapses to "freeze"
-           which is rarely useful — clamp to a safe range. */
+        // Clamp <0.99: above that the EMA effectively freezes.
         const a = clamp(Number(params.smoothing ?? 0.85), 0, 0.99)
         this.lastSmoothed = mergeMetrics(this.lastSmoothed, m, a)
         return {}
@@ -58,9 +43,7 @@ export class LogProcessor extends BaseProcessor {
 
 function mergeMetrics(prev: EffectMetrics | null, next: EffectMetrics, alpha: number): EffectMetrics {
     if (!prev || prev.effectName !== next.effectName || prev.passes.length !== next.passes.length) {
-        /* Effect changed (or first frame) → no meaningful history to
-           blend with. Reset to the new value to avoid showing a
-           cross-effect average for a few frames. */
+        // Effect changed or first frame: reset to avoid cross-effect averaging.
         return next
     }
     const blend = (a: number, b: number) => a * alpha + b * (1 - alpha)

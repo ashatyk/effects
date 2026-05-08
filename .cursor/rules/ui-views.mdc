@@ -1,6 +1,5 @@
 ---
 description: UI/editor layer — NodeEditor, BaseNodeShell, EditableStepEdge, contexts, hooks, widgets, theme, grid alignment, headless rendering. Read before changing the editor surface, node views, or widgets.
-alwaysApply: true
 ---
 
 # UI / views layer
@@ -10,6 +9,8 @@ React-flavoured code lives in `src/components/`. Editor surface is `NodeEditor.t
 > **Dual-component contract.** The graph card is **visual-only** — title, handles, live readouts, preview canvases. **No editable controls** as a default. Every parameter widget (slider, picker, file input, text field, point list) lives in the matching `*NodeSettings` component. The two surfaces are decoupled by design: authors tune the canvas card for at-a-glance legibility (compact, dense, focused on visual feedback) while the settings pane is dense with controls + extra readouts the right rail can afford. There is **no shared "headless" mode** — the legacy `<NodeControls>` wrapper + `useIsHeadlessNode` toggle are gone (the `HeadlessNodeContext` module survives only because `BaseNodeShell.HeaderTitle` still falls back through `useHeadlessNodeData` for inline rename; treat `useIsHeadlessNode` as effectively always-false in new code).
 >
 > **Documented exceptions to "visual-only" graph cards.** `EventEmitterNodeView` and `TapZoneNodeView` carry an inline EMIT button. Rationale: the most common authoring loop for both is "wire envelope/switch downstream → click EMIT → watch the pulse propagate". Sending authors into the right rail for every test would defeat the trigger UX. The `*NodeSettings` panes for these two processors keep the identity / throttle controls but **omit** the EMIT button — the canvas button is canonical, and showing two emit buttons in two places creates "which one fires?" confusion. If you need to add another emit-style trigger to the graph (a new event-source processor), follow the same split: button on the canvas, identity/throttle in settings, never both.
+>
+> **`FrameNodeView` is a third exception** but for a different reason: a frame is **not a processor** — it's a UI-only colored rectangle the author drops on the canvas to visually group nodes into "sections". Carries no input/output handles, no engine state, no edges; lives in `pages[].nodes[]` as `{ processor: 'frame', params: { color, label } }`. The view renders its own chrome (NOT `BaseNodeShell`): a thin draggable header strip with inline rename, plus a translucent body with `pointer-events: none` so clicks pass through to nodes laid on top of the frame. Frames are forced to `zIndex: -1` (per-node field + a `.react-flow__node-frame { z-index: -1 !important }` CSS rule) so they always paint behind processor cards even when selected. Spawning is via the toolbar **Frame** button only — frames don't appear in the Add-Node popover or the SceneOutlineSidebar (which lists processor originals, not markup). See `frame-constants.ts` for the palette + hex helpers; `frame-card.css` for chrome styling.
 
 Scene is multi-page (tabs of independent scenarios) and supports UI-only **clones** (viewer aliases of any node anywhere). Engine sees a single flat dataflow — pages and clones resolved by `sceneResolver.resolveSceneForEngine` before reaching `engine.setEdges`.
 
@@ -26,7 +27,7 @@ src/
     │   ├── menuGroups.ts        # Add Node menu
     │   ├── sceneResolver.ts     # PageState + resolveSceneForEngine + cycle check + page id minting
     │   ├── SceneContext.tsx     # Multi-page state provider
-    │   ├── PublishInspector.tsx # right rail: settings pane (per-processor *NodeSettings) + supplier-exposure + PublishRoot summary
+    │   ├── PublishInspector.tsx # right rail: settings pane (per-processor *NodeSettings) + supplier-exposure + bake-behaviour + PublishRoot summary
     │   ├── NodeEditorToolbar.tsx
     │   ├── NodeEditorTabs.tsx
     │   ├── AddNodePopover.tsx
@@ -72,7 +73,7 @@ Three concerns:
 - **Clone insertion** — drag-and-drop from `SceneOutlineSidebar` (left rail). Sidebar lists pages → originals; dragging sets `CLONE_DRAG_MIME = 'application/x-effect-clone-of'` (= origin id); canvas `onDrop` decodes + creates a clone via `addCloneNode`. Click navigates (`jumpToNode`); double-click activates host page without toggling collapse. `AddNodePopover` carries only fresh-processor items.
 - **Engine sees only resolved scene.** Single sync effect `engine.setEdges(resolveSceneForEngine(pages).resolvedEdges)` whenever `pages` changes. `engine.addNode` / `engine.removeNode` happen in `onAddFromPopover` / `onNodesDelete` and skip clones unconditionally.
 - **Cycle prevention** — `wouldCreateCycle(pages, source, target)` resolves both endpoints through clone aliases, BFSes forward over resolved adjacency, rejects if it would reach the candidate source. Same check in `isValidConnection` (UI feedback) and `onConnect` (defensive).
-- **Pin terminal — retired.** The right-rail pin surface was removed when both rails became permanent. `PinContext` and the per-card `PinToggle` icon survive as latent infrastructure (`data.pinned` is still serialised in snapshots), but no surface in the editor currently consumes the pinned-id set for display. If a future phase wants to revive pinning UX, lean on the same `pipelineNodeSettings` registry the Settings panel already uses.
+- **Pins surface — bottom of the right rail, always visible.** `RightRail` stacks two **permanent** surfaces vertically: `PublishInspector` (Settings) on top, `PinsPanel` (Pins) on the bottom. No tab switcher — both panels are always live and always reachable. A 4 px horizontal resize handle between them lets the user adjust the Pins panel height (persisted to `localStorage["nodeEditor.rightRail.pinsHeight.v1"]`, min 80 px; the Settings panel above keeps a 120 px floor). `PinsPanel` iterates `usePinning().pinnedIds`, finds each id in `useScene().pages` (cross-page scan), and mounts the registered `pipelineNodeTypes[data.processor]` component **headless** — wrapped in `HeadlessNodeProvider value={true}` + `NodeIdProvider value={id}` + `HeadlessNodeDataProvider value={data}`. Headless mode in `BaseNodeShell` already suppresses `<Handle>` ports + `NodeResizer`, so each pinned card shows the editor's actual `*NodeView` chrome (header, label, live preview / readouts, pin toggle) **without input/output points**. Caveats inherited from headless mode: pinned cards that read upstream wiring through React Flow's `useStore` (`EffectNodeView`, `AnimationControllerNodeView`) only see edges from the **active** page; engine outputs (`useNodeOutputs`) work cross-page because the engine sees the union scene.
 - **Labels first-class.** `data.label` editable inline by double-clicking the header (graph mode only); empty clears back to `def.title`. CloneNodeView shows the live label of the original, never lets you edit it on the clone.
 - **Broken clones don't cascade-delete.** When the original is deleted the clone keeps existing as a slate-coloured `.pn--clone--broken` placeholder. Edges from broken clones dropped by `resolveSceneForEngine` so the engine doesn't choke.
 
@@ -143,12 +144,15 @@ Lives inside `<ReactFlowProvider>` because `switchPage` / `jumpToNode` consult `
 - **`useSetParam(id)`** → `(key, value) => engine.updateNodeParams(id, { ...params, [key]: value })`.
 - **`useSetNodeLabel(id)`** → `(label) => SceneContext.updateNodeData(id, { label })`. Empty clears to `def.title`. Powers inline rename in `BaseNodeShell.HeaderTitle`.
 - **`useSetExposed(id)`** → `(exposed | undefined) => SceneContext.updateNodeData(id, { exposed })`. `undefined` clears. Used by `PublishInspector`.
+- **`useSetRuntimeDynamic(id)`** → `(on: boolean) => SceneContext.updateNodeData(id, { runtimeDynamic: on ? true : undefined })`. Toggles the per-node "Compute live in player" flag consumed by the supplier-app bake step (`@effects/player → bakePipeline` taint seed). Surfaced by `PublishInspector`'s "Bake behaviour" section, only on bake-eligible processors (pure with a CONTOUR/TEXTURE output, or `segmentation`). See `player.mdc → Bake step`.
 - **`useNodeOutputs(id)`** → `Record<string, unknown>`. Subscribes to `engine.subscribeNode`; initial state hydrated synchronously from `engine.getOutputs(id)` so views see latest values immediately on mount (without this, non-`alwaysDirty` processors like Config show stale data until the user touches an upstream param).
 - **`useCanvasFill`** — Canvas2D sizing helper (DPR-aware).
 
 ## Widgets
 
 All exported through `widgets/index.ts`: `Field`, `NumberField`, `TextFieldRow`, `SelectField`, `SwitchField`, `SliderField`, `ColorField` (when `FieldDef.color = true`), `ActionButton`, `StatusLine` (`normal | muted | error`), `SectionTitle`.
+
+`Field` defaults to `layout='column'` — label above the control, control fills row width. Cleanest for inspector forms with mixed-length / localised labels (no truncation, uniform vertical rhythm). Pass `layout='row'` (or legacy `column={false}`) for compact two-column rows where vertical space is at a premium; row mode uses a fixed `LABEL_W = 130 px` label cell and ellipsis-truncates anything wider, so it's only suitable for short English labels.
 
 Conventions:
 - `slotProps={{ htmlInput: { className: 'nodrag' } }}` on every text input so dragging text doesn't pan the canvas.
@@ -219,11 +223,15 @@ Re-renders both when the wire changes (selector against `s.edges`) and when the 
 
 ## Right rail (`RightRail`)
 
-Permanent right-side surface. Hosts only `PublishInspector` now (the Pin terminal that used to stack under it has been retired — see "Pin terminal — retired" above). No `inspectorOpen` / `pinOpen` props, no toolbar toggle, no close button. The user controls only the rail's width, via a 4 px left-edge resize handle persisted to `localStorage["nodeEditor.rightRail.width.v1"]` (clamped 280..720, default 360).
+Permanent right-side surface. Stacks two always-visible panels vertically — `PublishInspector` (Settings, top, flex-grow) and `PinsPanel` (Pins, bottom, fixed-but-resizable). Each carries its own 32 px section header (`Settings` / `Pins`) so users know which surface they're looking at; both render flush against the rail (no close affordance, no tab strip). The user controls three things, all persisted:
+- Rail width — 4 px left-edge resize handle, `localStorage["nodeEditor.rightRail.width.v1"]`, clamped 280..720, default 360.
+- Pins panel height — 4 px horizontal resize handle between Settings and Pins, `localStorage["nodeEditor.rightRail.pinsHeight.v1"]`, min 80 px, default 280. The Settings panel above keeps a 120 px floor.
+
+Pinned cards in the Pins panel are mounted continuously (no lazy / hidden fallback) so engine subscriptions inside them (`PreviewNodeView`'s `engine.subscribeNode`, `LogNodeView`'s metric polling, etc.) keep ticking even while the user is editing settings.
 
 ## Publish Inspector (Settings panel)
 
-**Right rail.** Permanent surface; renders flush against the rail (no close affordance). Headers as **Settings**. Body is a vertical stack of `SectionBlock`s — each block carries an uppercase heading + a top divider so the panel reads as a sequence of distinct concerns instead of one undifferentiated scroll. The first block (per-node title group: label + `processor · id`) carries no top divider so it sits flush with the panel header. Padding is owned by `SectionBlock` (`px: 2; pt: 2; pb: 2`, `gap: 1`) rather than the body, so dividers run edge-to-edge across the full panel width and headings get breathing room above and below the divider line.
+**Right rail, top half.** Permanent surface; renders flush against the rail (no close affordance, no internal header — the rail's `Settings` section header above the panel labels it). Body is a vertical stack of `SectionBlock`s — each block carries an uppercase heading + a top divider so the panel reads as a sequence of distinct concerns instead of one undifferentiated scroll. The first block (per-node title group: label + `processor · id`) carries no top divider so it sits flush with the panel's top edge. Padding is owned by `SectionBlock` (`px: 2; pt: 2; pb: 2`, `gap: 1`) rather than the body, so dividers run edge-to-edge across the full panel width and headings get breathing room above and below the divider line.
 
 Responsibilities, rendered in this order as separate `SectionBlock`s:
 
@@ -240,7 +248,7 @@ Responsibilities, rendered in this order as separate `SectionBlock`s:
 
 ## Toolbar
 
-Buttons: back link, FPS dropdown, undo/redo, **Publish** (downloads `<effectId>.published.json` via `derivePublishedSurface`; first error → snackbar), export/import/clear. FPS dropdown lists `FPS_OPTIONS` (`[0, 5, 10, 15, 30, 60]`); persisted to `localStorage["nodeEditor.fps.v1"]`. `0` = uncapped.
+Buttons: back link, FPS dropdown, undo/redo, **Frame** (spawns a UI-only colored markup rectangle at the viewport centre — see `FrameNodeView`), **Publish** (downloads `<effectId>.published.json` via `derivePublishedSurface`; first error → snackbar), export/import/clear. FPS dropdown lists `FPS_OPTIONS` (`[0, 5, 10, 15, 30, 60]`); persisted to `localStorage["nodeEditor.fps.v1"]`. `0` = uncapped.
 
 The toolbar carries **no rail-toggle buttons** — Outline (left rail) and Settings (right rail) are permanent workspace surfaces. Don't reintroduce show/hide toggles for either; the rule is "always visible, only width is user-controlled".
 

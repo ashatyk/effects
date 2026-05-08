@@ -7,15 +7,9 @@ import {
 import { ANIMATION_CHANNEL_COUNT, type SlotDef } from '../../pipeline/types'
 import { effects } from '../../effects'
 
-/**
- * Build the input/output schema and default params for the universal
- * AnimationController. Channels are purely positional: `signal_0..signal_{N-1}`
- * carry the raw 0..1 driver, `min_i`/`max_i` map it to the physical range.
- *
- * The trailing `config` input is optional and supplies per-effect slot
- * metadata (label, default min/max) so the controller's UI can show the
- * right names without hard-coding a vocabulary.
- */
+// Channels are positional: signal_i carries the 0..1 driver, min_i/max_i map
+// it to the physical range. `config` is optional and supplies per-effect slot
+// metadata so the UI can show effect-specific labels and default mins/maxes.
 function buildControllerDef(): ProcessorDef {
     const inputs = [
         ...Array.from({ length: ANIMATION_CHANNEL_COUNT }, (_, i) => ({
@@ -42,11 +36,6 @@ function buildControllerDef(): ProcessorDef {
 
 export const animationControllerDef = buildControllerDef()
 
-/**
- * Look up the slot defaults for the effect named in the upstream config.
- * Returns an empty array when the input is absent or the effect is unknown,
- * which makes the controller behave as a pure "0..1 → params" mapper.
- */
 function resolveSlots(configIn: unknown): SlotDef[] {
     if (!configIn || typeof configIn !== 'object') return []
     const name = (configIn as Record<string, unknown>).__effectName
@@ -70,11 +59,8 @@ export class AnimationControllerProcessor extends BaseProcessor {
     readonly def = animationControllerDef
     alwaysDirty = true
 
-    /* Per-channel ref cache. When a channel's (time, raw, value, state)
-       quad is bit-identical to the previous tick, we hand the engine the
-       SAME ChannelSignal object — so the engine's diff-gated notify path
-       sees Object.is matches inside `animation.channels[k]` and bails
-       out without notifying React subscribers. */
+    // Reference-stable channel cache: identical (time, raw, value, state) returns the
+    // same ChannelSignal object so the engine's diff-gated notify path bails at Object.is.
     private prevChannels: (ChannelSignal | null)[] = new Array(ANIMATION_CHANNEL_COUNT).fill(null)
     private prevAnimation: AnimationSignal | null = null
 
@@ -88,10 +74,7 @@ export class AnimationControllerProcessor extends BaseProcessor {
             const sig = inputs[`signal_${i}`] as Signal | null | undefined
             const slot = slotByIndex.get(i)
 
-            /* User-set params take priority; otherwise we honour the slot's
-               manifest defaults so the curve stays semantic when the user
-               hasn't tweaked anything. Falls back to 0..1 when neither
-               source has values (no upstream Config wired). */
+            // User params override slot defaults; falls back to 0..1 with no Config wired.
             const minRaw = params[`min_${i}`]
             const maxRaw = params[`max_${i}`]
             const minV = minRaw !== undefined ? Number(minRaw) : (slot?.defaultMin ?? 0)
@@ -99,15 +82,9 @@ export class AnimationControllerProcessor extends BaseProcessor {
 
             const raw = sig ? clamp01(sig.value) : 0
             const value = lerp(minV, maxV, raw)
-            /* `.time` carries the upstream signal *value* (unclamped) rather
-               than the upstream `Signal.time` field. `Signal.time` from a
-               Timer keeps growing whether the timer is paused or not, so a
-               shader reading `uChan{i}.x` would animate regardless of the
-               user's chosen waveform. The signal's *value* is what the user
-               actually controls (paused timer → static phase, Interpolator
-               sine → oscillates, Timer unbounded → grows linearly); shaders
-               that need monotonic phase drive a Timer in `unbounded` mode
-               and tune `durationMs` to control speed. */
+            // ChannelSignal.time carries Signal.value (unclamped phase), NOT Signal.time.
+            // Signal.time keeps growing through pauses; uChan{i}.x must reflect the user-
+            // controlled waveform (paused timer → static, sine → oscillates, unbounded → grows).
             const time = sig?.value ?? 0
             const state = (sig?.state ?? 0) as 0 | 1
 
@@ -128,9 +105,8 @@ export class AnimationControllerProcessor extends BaseProcessor {
             }
         }
 
-        /* When every channel kept its previous reference, hand back the
-           previous AnimationSignal too so the engine's top-level diff
-           short-circuits at Object.is — no recursion into channels. */
+        // Reuse the prevAnimation ref when every channel matched so the engine's
+        // top-level diff short-circuits at Object.is.
         if (!anyChanged && this.prevAnimation) {
             return { animation: this.prevAnimation }
         }

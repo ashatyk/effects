@@ -30,34 +30,19 @@ import {
 
 interface Props {
     pipeline: PublishedPipeline
-    /** Called by the Back button — clears App-level pipeline state
-     *  so the picker route opens fresh. */
     onClear: () => void
 }
 
-/**
- * Main supplier page. Two-column layout:
- *  left  → form (image slots → segmentation → fields → tap zones).
- *  right → live preview canvas, sticky.
- *
- * State model: every form interaction calls `applyOverride.*` to
- * patch the running engine immediately AND mutates a local
- * `SupplierConfig` so Export captures the latest state. There is no
- * "Apply" button — the live preview reacts on the next engine tick.
- */
+// Every form interaction calls applyOverride.* on the engine AND mutates
+// a local SupplierConfig — no "Apply" button; preview reacts next tick.
 export function SupplierPage({ pipeline, onClear }: Props) {
     const navigate = useNavigate()
     const { engine, ready } = useSupplierRuntime(pipeline)
     const [config, setConfig] = useState<SupplierConfig>(() => emptyConfig(pipeline))
     const [toast, setToast] = useState<{ tone: 'success' | 'error' | 'warning'; text: string } | null>(null)
-    /* Which image slot's bitmap is painted behind the preview canvas.
-       Local UI state — NOT persisted into SupplierConfig (the runtime
-       has no concept of "background", it's a supplier-side preview
-       affordance for verifying outline-only / glow-only effects look
-       right against a real photo). */
+    // Local UI only — not persisted to SupplierConfig; runtime has no
+    // notion of "background", this is a preview affordance.
     const [backgroundSlotId, setBackgroundSlotId] = useState<string | null>(null)
-
-    /* ── Form helpers (all close over engine + config setter) ─── */
 
     const setImage = useCallback((nodeId: string, dataUrl: string) => {
         if (!engine) return
@@ -71,10 +56,8 @@ export function SupplierPage({ pipeline, onClear }: Props) {
     const setSegmentation = useCallback((nodeId: string, payload: { points: SamPoint[]; polygon?: number[] }) => {
         if (!engine) return
         applyOverride.segmentation(engine, nodeId, payload)
-        /* Persist BOTH the supplier-marked points (for re-edit in a
-           later session) and the SAM-computed polygon (the actual
-           Tier-3 payload — the player applies it directly without
-           spawning SAM). */
+        // Persist both points (re-edit) and polygon (Tier-3 payload — player
+        // applies it directly without spawning SAM).
         setConfig(c => ({
             ...c,
             segmentation: { ...c.segmentation, [nodeId]: payload },
@@ -103,8 +86,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
         }))
     }, [engine])
 
-    /* ── Toolbar actions ─────────────────────────────────────── */
-
     const onBack = useCallback(() => {
         onClear()
         navigate('/')
@@ -117,17 +98,11 @@ export function SupplierPage({ pipeline, onClear }: Props) {
 
     const onExportBaked = useCallback(async () => {
         if (!engine) return
-        /* Re-apply the live config first so the engine's outputCache
-           reflects exactly what the export should bake. The preview
-           has already been ticking with these overrides applied, but
-           defensive — a recent setText / setImage may have raced
-           ahead of a tick. */
+        // Defensive re-apply: a recent setText/setImage may have raced
+        // ahead of a tick, so make outputCache reflect what we'll bake.
         applyAllOverrides(engine, pipeline, config)
-        /* Give the engine one frame to flush any async loads (image
-           uploads, text strip rasterisation). One rAF is usually
-           enough for a steady-state scene; if a freshly-uploaded
-           image hasn't decoded yet `bakePipeline` will surface a
-           clear per-node error. */
+        // Give the engine one frame to flush async loads (image decode,
+        // text rasterisation); bakePipeline surfaces per-node errors otherwise.
         await new Promise<void>(r => requestAnimationFrame(() => r()))
         const result = await bakePipeline(engine, pipeline, config)
         if (!result.ok) {
@@ -150,9 +125,7 @@ export function SupplierPage({ pipeline, onClear }: Props) {
         }
         setConfig(parsed.config)
         if (engine) applyAllOverrides(engine, pipeline, parsed.config)
-        /* Same rationale as onReset — the imported config may not
-           carry the slot we previously pointed at, so drop the
-           selection rather than leave a stale toggle. */
+        // Imported config may lack the slot we pointed at — drop selection.
         setBackgroundSlotId(null)
         setToast({ tone: 'success', text: 'Config imported.' })
     }, [engine, pipeline])
@@ -161,15 +134,12 @@ export function SupplierPage({ pipeline, onClear }: Props) {
         const fresh = emptyConfig(pipeline)
         setConfig(fresh)
         if (engine) applyAllOverrides(engine, pipeline, fresh)
-        /* Reset clears every uploaded image; the background pointer
-           would be dangling otherwise (resolves to undefined dataUrl
-           but the toggle button would still read "active"). */
+        // Reset clears every uploaded image, so the background pointer would dangle.
         setBackgroundSlotId(null)
         setToast({ tone: 'warning', text: 'Reset to manifest defaults.' })
     }, [engine, pipeline])
 
-    /* On engine ready, apply whatever's already in `config` (e.g. if
-       the user imported before the engine finished booting). */
+    // Apply config once the engine is ready (handles import-before-boot).
     useEffect(() => {
         if (!ready || !engine) return
         applyAllOverrides(engine, pipeline, config)
@@ -213,7 +183,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         borderColor: { md: 'divider' },
                     }}
                 >
-                    {/* Image slots */}
                     {pipeline.surface.imageSlots.length > 0 && (
                         <Section title="Images">
                             {pipeline.surface.imageSlots.map(slot => (
@@ -231,7 +200,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         </Section>
                     )}
 
-                    {/* Segmentation */}
                     {segmentationNodes.length > 0 && engine && (
                         <Section title="Segmentation">
                             {segmentationNodes.map(node => (
@@ -246,7 +214,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         </Section>
                     )}
 
-                    {/* Text inputs */}
                     {textNodes.length > 0 && engine && (
                         <Section title="Text">
                             {textNodes.map(node => (
@@ -261,7 +228,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         </Section>
                     )}
 
-                    {/* Other whole-node fallbacks */}
                     {otherWholeNodes.length > 0 && (
                         <Section title="Other">
                             {otherWholeNodes.map(node => (
@@ -270,7 +236,6 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         </Section>
                     )}
 
-                    {/* Fields */}
                     {pipeline.surface.fields.length > 0 && (
                         <Section title="Parameters">
                             {pipeline.surface.fields.map(f => (
@@ -285,20 +250,15 @@ export function SupplierPage({ pipeline, onClear }: Props) {
                         </Section>
                     )}
 
-                    {/* Tap zones — interactive emit. Standin for the
-                        Tier-3 hit-tested click; supplier needs to be able
-                        to fire each event by hand to verify the
-                        Envelope/SignalSwitch chains downstream actually
-                        do what the author promised. */}
+                    {/* Tap zones — manual fire stands in for Tier-3 hit-tested
+                        clicks so supplier can verify downstream Envelope/
+                        SignalSwitch chains. */}
                     {pipeline.surface.tapZones.length > 0 && engine && (
                         <Section title="Events">
                             <EventTriggerList engine={engine} zones={pipeline.surface.tapZones} />
                         </Section>
                     )}
 
-                    {/* Empty-surface hint — fires when the published manifest
-                        has no exposable inputs at all. Lets the supplier
-                        verify the file isn't empty by accident. */}
                     {pipeline.surface.imageSlots.length === 0
                         && pipeline.surface.fields.length === 0
                         && pipeline.surface.wholeNodes.length === 0

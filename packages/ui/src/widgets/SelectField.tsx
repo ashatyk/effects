@@ -26,9 +26,11 @@ export function SelectField<T extends string>({
                     htmlInput: { className: 'nodrag' },
                     select: {
                         sx: selectStyle,
-                        MenuProps: {
-                            classes: { paper: 'pn-menu-paper' },
-                        },
+                        /* No `MenuProps.classes.paper`: legacy `.pn-menu-paper`
+                           force-painted the dropdown white (for light-card
+                           popovers) and read as a glaring bright rectangle on
+                           the dark Settings rail. Expose a `light` prop if a
+                           future consumer needs the light variant. */
                     },
                 }}
                 fullWidth

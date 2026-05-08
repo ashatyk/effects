@@ -1,6 +1,5 @@
 ---
 description: Tier-2 publish plane — publishRoot / tapZone processors, data.exposed metadata, derivePublishedSurface traversal, PublishedPipeline schema, supplier inspector. Read before editing publish surface, supplier-facing metadata, or T2/T3 contracts.
-alwaysApply: true
 ---
 
 # Tier-2 Publish Plane
@@ -48,6 +47,21 @@ Why on the node, not on PublishRoot:
 Supplier-facing `label` / `hint` fall back through `data.label` → `def.title` so the supplier always sees something meaningful.
 
 Persistence: rides through `useSceneHistory.serializeScene` via the existing `data: { ...n.data }` spread — no extra serialisation. Restored as-is by `applySnapshot`.
+
+### Editor exposure-toggle gate
+
+`PublishInspector` only renders the **Supplier exposure** section for processor types that pass `isSupplierExposable(processor)`:
+- NOT `publishRoot` (the publication itself) or `frame` (UI-only markup).
+- HAS an entry in `pipelineNodeSettings` — i.e. at least one user-input control. Excludes `effect` (config wired in from upstream), `preview` / `contourPreview` (passthrough visualisers), `sdfFromContour` / `textStrip` (pure passthroughs), `clone` (UI alias). Actions in `pipelineNodeActions` (Preview's "Save image", etc.) are intentionally NOT counted — they're author-only side effects.
+- `def.outputs.length > 0` — terminal sinks (`log`, `contourPreview`) can't be wired downstream and so have no place in the supplier surface.
+
+`derivePublishedSurface` itself does NOT enforce this gate — it still classifies any reached node carrying `data.exposed` (so a manually-set flag from a hand-edited snapshot or an older editor build still works). The gate is purely a UI affordance preventing nonsensical new exposures.
+
+## Per-node `data.runtimeDynamic`
+
+Independent of `exposed` and consumed only by the supplier app's bake step (`@effects/player → bakePipeline`), but lives on `SerializedNode.data` for the same reasons (survives PublishRoot deletion, copy-paste preserves it, ships through the publish trim verbatim — `derivePublishedSurface` doesn't read it, just copies the `data` object).
+
+When `true`, the bake adds the node as an extra taint seed: it (and everything downstream of it) stays live in the trimmed `BakedPipeline` instead of being folded into a `constantTexture` / `constantContour`. Toggled from the editor's right-rail "Bake behaviour" section (`PublishInspector` → `useSetRuntimeDynamic`). Use case: cheap-to-recompute / large-output processors like `sdfFromContour` where the baked texture payload would dominate the artifact size. See `player.mdc → Bake step`.
 
 ## Producer processors
 

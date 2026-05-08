@@ -2,28 +2,10 @@
 import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type ContourSamples } from '../types'
 
-/**
- * Frozen-source processor for {@link ContourSamples}.
- *
- * The supplier app's bake step (`packages/player/src/baking.ts`)
- * pre-runs static contour-producing subgraphs (e.g.
- * `segmentation → contourResample`) once at config-export time and
- * embeds the resulting `ContourSamples` into `SupplierConfig.baked`.
- * On Tier-3 player mount, the original processors are **replaced**
- * with this one — the player never instantiates segmentation /
- * contourResample, never runs them per-tick, and never holds their
- * internal CPU state (resampled positions arrays, chaikin
- * intermediates, SAM polygon caches).
- *
- * This processor's only job is to hand its baked payload back to
- * downstream consumers as a stable reference. Reference equality
- * matters — contourResample / sdfFromContour cache by upstream
- * contour identity, and the engine's `outputsEqual` diff stops
- * spurious re-renders when nothing changed.
- *
- * Hidden from the editor's "Add Node" picker — it has no manual
- * authoring UX. It only exists as a bake-target.
- */
+// Frozen ContourSamples source: bake step (player/baking.ts) replaces
+// segmentation/contourResample subgraphs with this at config export. Hands the
+// payload back as a reference-stable object so downstream identity-caches
+// (contourResample, sdfFromContour, engine outputsEqual diff) don't re-render.
 export const constantContourDef: ProcessorDef = {
     pure: true,
     hidden: true,
@@ -33,13 +15,8 @@ export const constantContourDef: ProcessorDef = {
     inputs: [],
     outputs: [{ name: 'contour', type: SLOT.CONTOUR }],
     defaultParams: {
-        /* Serialised ContourSamples carried inline in the processor's
-           params. Format mirrors `ContourSamples` exactly except
-           Float32Array fields are stored as `number[]` for JSON
-           round-tripping; we rehydrate them on first execute and cache
-           the typed-array packet so downstream gets a normal
-           `ContourSamples` object. Empty by default — bake step
-           always overwrites. */
+        // Inline ContourSamples; Float32Array fields are stored as number[] for JSON
+        // round-trip and rehydrated on first execute. Empty default — bake overwrites.
         version: 1,
         closed: true,
         count: 0,
@@ -54,8 +31,7 @@ export const constantContourDef: ProcessorDef = {
 export class ConstantContourProcessor extends BaseProcessor {
     readonly def = constantContourDef
 
-    /* Cached decoded contour. Rehydrated on first execute (or whenever
-       params change), reference-stable across ticks until then. */
+    // Reference-stable cache: rehydrated only when `params` reference changes.
     private cached: ContourSamples | null = null
     private cachedFrom: Record<string, any> | null = null
 

@@ -13,18 +13,9 @@ interface Props {
     onLoaded: (pipeline: PublishedPipeline) => void
 }
 
-/**
- * First-screen file picker for `<effectId>.published.json` (the
- * artifact `apps/editor` exports via its toolbar Publish button).
- *
- * Validates against the runtime's `PUBLISH_MANIFEST_VERSION` — any
- * mismatch fails closed (the supplier can't safely interpret a
- * future-shape pipeline). On success, the pipeline goes into
- * App-level state and we navigate to `/supplier`.
- *
- * Drop-zone + classic file input both wire to the same `onFile` path
- * so the UX works on browsers without DnD support.
- */
+// Validates `manifestVersion` against runtime's PUBLISH_MANIFEST_VERSION
+// and fails closed on mismatch — supplier can't safely interpret a
+// future-shape pipeline.
 export function ManifestPickerPage({ onLoaded }: Props) {
     const navigate = useNavigate()
     const [error, setError] = useState<string | null>(null)

@@ -29,11 +29,15 @@ import { LogNodeView } from './views/LogNodeView'
 import { CloneNodeView } from './views/CloneNodeView'
 import { PublishRootNodeView } from './views/PublishRootNodeView'
 import { TapZoneNodeView } from './views/TapZoneNodeView'
+import { FrameNodeView } from './views/FrameNodeView'
+import { ConstantTextureNodeView } from './views/ConstantTextureNodeView'
+import { ConstantContourNodeView } from './views/ConstantContourNodeView'
 
 export const pipelineNodeTypes = {
-    /* UI-only viewer alias of another node. Carries `data.cloneOf` =
-       original id; engine never sees it. See `CloneNodeView`. */
+    // UI-only viewer alias (data.cloneOf = origin id); engine never sees clones.
     clone: CloneNodeView,
+    // UI-only section rectangle; not a processor but lives in pages[].nodes[] for undo/import.
+    frame: FrameNodeView,
     number: NumberNodeView,
     constantSignal: ConstantSignalNodeView,
     image: ImageNodeView,
@@ -64,4 +68,7 @@ export const pipelineNodeTypes = {
     log: LogNodeView,
     publishRoot: PublishRootNodeView,
     tapZone: TapZoneNodeView,
+    // Bake-target nodes — only instantiated by read-only BakedPreview, hidden from AddNodePopover via def.hidden.
+    constantTexture: ConstantTextureNodeView,
+    constantContour: ConstantContourNodeView,
 }

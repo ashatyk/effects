@@ -5,11 +5,6 @@ import { StatusLine } from '@effects/ui'
 import { imageDef } from '@effects/runtime/node-engine/processors/image'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: visual-only — title (rename to "Image: <file>" via
- * `data.label` after a load) plus a status hint when nothing is
- * loaded yet. The file picker lives in `ImageNodeSettings`.
- */
 export const ImageNodeView = memo(({ data }: NodeProps & { data: PipelineNodeData }) => {
     const label = data.label ?? 'Image'
     const hasFile = label !== 'Image' && label !== imageDef.title

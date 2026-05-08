@@ -11,27 +11,21 @@ export default `
     uniform vec2  uResolution;
 
     /* Animation channels — vec4(drive, raw, value, state).
-       Slot 0: appearance progress (0..1) — controls overall amplitude.
-       Slot 1: ping-pong drive (0..1) — wire Timer → Interpolator with the
-               'triangle' or 'bell' profile so the value oscillates 0..1..0
-               over the period.
-       Slot 4: intensity multiplier on final colour & alpha.
-       Slot 5: noise time — uChan5.x drives fbm drift (unbounded value). */
+       Slot 0: appearance progress 0..1 — overall amplitude.
+       Slot 1: ping-pong drive 0..1 — wire Timer → Interpolator (triangle
+               or bell profile) so the value oscillates 0..1..0.
+       Slot 4: intensity multiplier on colour & alpha.
+       Slot 5: noise time — uChan5.x drives fbm drift (unbounded). */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan4;
     uniform vec4 uChan5;
 
-    /* SDF wired through generic texture channel 0. RGB packs a
-       signed normalised distance in [-1, +1] biased to [0, 1];
-       A is always 1 — see SdfFromContour processor. Negative
-       inside, positive outside (canonical SDF convention). */
+    // SDF wired through txcn0 (canonical signed distance in pixels).
     uniform sampler2D uTxcn0;
 
-    // Полигон
     uniform vec4 uPointAABB;
 
-    // Эффект
     uniform float uCenterTranslation;
     uniform float uEdgeFeatherPx;
     uniform float uWaveBasePx;
@@ -43,27 +37,25 @@ export default `
     uniform float uNoiseScalePx;
     uniform float uNoiseAmpPx;
 
-    // --- Зубчатый профиль волны по углу вокруг центра ---
-    // 0=tri-wrap, 1=saw, 2=square
+    // Angular tooth profile around centre. uToothShape: 0=tri-wrap, 1=saw, 2=square.
     uniform float uToothShape;
     uniform float uToothMix;       // 0..1
-    uniform float uToothAmpPx;     // амплитуда в px
-    uniform float uToothCount;     // число зубцов по кругу
-    uniform float uToothPhase;     // сдвиг [0..1]
-    uniform float uToothSharp;     // для saw >=1
-    uniform float uToothDuty;      // для square [0..1]
-    uniform float uToothSmooth;    // для square ~0..0.49
+    uniform float uToothAmpPx;
+    uniform float uToothCount;     // teeth around the circle
+    uniform float uToothPhase;     // [0..1]
+    uniform float uToothSharp;     // saw, >= 1
+    uniform float uToothDuty;      // square, [0..1]
+    uniform float uToothSmooth;    // square, ~0..0.49
 
     float saturate(float x){ return clamp(x,0.0,1.0); }
 
 ${NOISE_GLSL}
 
-    /* Bipolar fbm in [-1, 1] used by the wave displacement. */
+    // Bipolar fbm in [-1, 1] used for wave displacement.
     float jaggedNoise(vec2 p){
         return 2.0 * fbm2D(p) - 1.0;
     }
 
-    // --- Угловой зубчатый профиль ---
     float toothSaw01(float x, float sharp){
         return pow(fract(x), max(sharp, 1e-3));
     }
@@ -121,10 +113,9 @@ ${NOISE_GLSL}
         return m1 * m2;
     }
 
-    /* See pipeline/passes/sdf-pure.ts for the format. RGB packs a
-       signed normalised distance in [-1, +1] biased to [0, 1];
-       A=1 always. Returns signed pixels — negative inside,
-       positive outside. */
+    /* SDF format (pipeline/passes/sdf-pure.ts): RGB packs 24-bit biased
+       distance in [-1,+1]→[0,1]; A=1 always. Returns signed pixels —
+       negative inside, positive outside. */
     float unpackSignedFloat24(vec3 rgb, float maxD){
         float n = (rgb.r * 255.0) * 65536.0 +
         (rgb.g * 255.0) * 256.0 +
@@ -143,32 +134,19 @@ ${NOISE_GLSL}
 
         float halfW = max(uWaveWidthPx, 0.0) * 0.5;
 
-        /* Sample the SDF — signed distance in pixels. Discard
-           anything strictly inside the silhouette (sd < 0); the
-           wave only exists in the outside half-plane. d (the
-           absolute distance) is what the wave-shaping math
-           below expects. */
+        // Wave only exists outside the silhouette; absolute distance drives the math below.
         float sd = unpackSignedFloat24(texture(uTxcn0, vUV).rgb, 1200.0);
         if (sd < 0.0) {
             discard;
         }
         float d = sd;
 
-        /* Appearance, wave and noise drives all come from upstream
-           animation graph — the shader does no internal interpolation
-           or fract-based phase generation any more.
-
-             apear      = uChan0.z   ramped via Envelope / Interpolator easing.
-             halfBipolar = uChan1.z   oscillates 0..1..0 (Timer looped →
-                           Interpolator triangle / bell profile); remap to
-                           -1..1 so the wave swings symmetrically. Reading
-                           .z (controller-mapped value) instead of .x means
-                           the slot's min/max range governs amplitude — a
-                           Timer in 'unbounded' mode no longer leaks past
-                           the configured 0..1 range here.
-             noiseDrive = uChan5.x — canonical noise convention: drift
-                           uses unclamped .x for monotonic growth (slot 5
-                           is the dedicated noise time channel). */
+        /* All drives come from upstream animation graph.
+             apearInter  = uChan0.z eased upstream.
+             halfBipolar = 2*uChan1.z - 1 — reading .z means slot min/max
+                           governs amplitude; .x would leak past 0..1 in
+                           Timer 'unbounded' mode.
+             noise drift = uChan5.x (canonical, unclamped). */
         float apearInter = uChan0.z;
         float halfBipolar = 2.0 * uChan1.z - 1.0;
 
@@ -180,9 +158,7 @@ ${NOISE_GLSL}
 
         float dTooth = toothOffsetPx(q, centerPx, apearInter);
 
-        /* a1 = filled wave body, a2 = darker edge halo. The two-wave
-           composition (filled + outline) is preserved; multi-wave looks
-           are achieved by stacking another Effect node on top. */
+        // a1 = filled wave body, a2 = edge halo. Multi-wave = stack Effect nodes.
         float a1 = saturate(waveAlpha(q, d, centerOffset1, halfW,       sc, drift, centerN, dTooth) * uOpacity);
         float a2 = saturate(waveAlpha(q, d, centerOffset1, halfW + 2.0, sc, drift, centerN, dTooth) * (uOpacity * 0.2));
 

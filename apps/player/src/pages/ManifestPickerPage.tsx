@@ -18,13 +18,7 @@ import {
 } from '@effects/player'
 
 interface Props {
-    /** Pipeline + optional config path. Used when the user drops a
-     *  `.published.json` (and optionally a `.config.json`). The
-     *  player runs the full original graph live — supplier-style. */
     onLoadedPipeline: (pipeline: PublishedPipeline, config: SupplierConfig | null) => void
-    /** Baked AOT path. Used when the user drops a `.baked.json` —
-     *  the player runs the pre-trimmed graph with no SAM, no config
-     *  merge. This is the production-recommended path. */
     onLoadedBaked: (baked: BakedPipeline) => void
 }
 
@@ -32,25 +26,10 @@ interface PickedPipeline { name: string; pipeline: PublishedPipeline }
 interface PickedConfig { name: string; config: SupplierConfig }
 interface PickedBaked { name: string; baked: BakedPipeline }
 
-/**
- * First-screen file picker for the Tier-3 player demo.
- *
- * Three accepted file shapes — auto-detected by inspecting the JSON:
- *
- * 1. `.baked.json` (carries `bakeManifestVersion`) — single-file
- *    AOT artifact. Selecting one switches the picker into
- *    **baked mode** and disables the pipeline+config slots.
- *
- * 2. `.published.json` (carries `manifestVersion` but no
- *    `bakeManifestVersion`) — fills the pipeline slot. Switches
- *    out of baked mode.
- *
- * 3. `.config.json` (carries `pipelineId`) — fills the config
- *    slot, only valid after a pipeline is loaded.
- *
- * Render button enables once either (1) baked is loaded OR
- * (2) pipeline is loaded (with or without config).
- */
+// Auto-detects three file shapes:
+//   .baked.json (bakeManifestVersion) → baked mode (mutually exclusive).
+//   .published.json (manifestVersion) → pipeline slot.
+//   .config.json (pipelineId)         → config slot, requires pipeline.
 export function ManifestPickerPage({ onLoadedPipeline, onLoadedBaked }: Props) {
     const navigate = useNavigate()
     const [pickedBaked, setPickedBaked] = useState<PickedBaked | null>(null)
@@ -73,15 +52,14 @@ export function ManifestPickerPage({ onLoadedPipeline, onLoadedBaked }: Props) {
         }
         const j = parsed as Record<string, unknown>
 
-        /* Detection priority (most specific first):
-            1. bakeManifestVersion → baked
-            2. surface + graph + manifestVersion → pipeline
-            3. pipelineId → config (requires a pipeline already loaded) */
+        // Detection priority (most specific first):
+        //   bakeManifestVersion → baked
+        //   surface + graph + manifestVersion → pipeline
+        //   pipelineId → config (requires a pipeline already loaded)
         if (typeof j.bakeManifestVersion === 'number') {
             const result = parseBaked(text)
             if (!result.ok) { setError(result.error); return }
-            /* Baked mode is mutually exclusive with pipeline+config —
-               clear the other slots so the UI can't confuse modes. */
+            // Baked mode is mutually exclusive with pipeline+config.
             setPickedPipeline(null)
             setPickedConfig(null)
             setPickedBaked({ name: file.name, baked: result.baked })
@@ -97,9 +75,7 @@ export function ManifestPickerPage({ onLoadedPipeline, onLoadedBaked }: Props) {
             setPickedBaked(null)
             const next = { name: file.name, pipeline: j as unknown as PublishedPipeline }
             setPickedPipeline(next)
-            /* If a config was already picked but for a different
-               pipeline, drop it so we don't try to apply mismatched
-               overrides on Render. */
+            // Drop any pre-picked config that doesn't match the new pipeline.
             if (pickedConfig && pickedConfig.config.pipelineId !== next.pipeline.id) {
                 setPickedConfig(null)
             }

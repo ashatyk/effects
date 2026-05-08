@@ -1,33 +1,20 @@
-/* ── Node Editor shell ── */
-
 .node-editor {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    /* Editor shell backdrop — sits behind every React Flow overlay
-       (controls, minimap, attribution) and shows through whenever the
-       canvas itself is transparent. Slightly lighter than the Geist
-       black we use for chrome (#0a0a0a) so node cards have a calmer
-       contrast band around them and the grid dots stay readable
-       without bumping their alpha. */
+    /* Slightly lighter than the chrome black (#0a0a0a) so node cards
+       get a calmer contrast band and grid dots stay readable. */
     background: #1c1c1e;
 }
 
-/* Body is a single horizontal row: outline | main | right rail.
-   The right rail stacks Settings (top) above the Pin terminal (bottom)
-   internally; both share the rail width. Each region is `min-height: 0`
-   so flex children inside can scroll instead of overflowing the
-   viewport. */
+/* `min-height: 0` on flex children so inner scrollers don't overflow
+   the viewport. */
 .node-editor-body {
     flex: 1;
     display: flex;
     min-height: 0;
 }
 
-/* The central column owns its own page tab strip on top plus the
-   canvas-row below — so the outline + right-rail siblings span the
-   full body height (toolbar bottom to window bottom), and tabs start
-   where the outline ends instead of spanning the whole window. */
 .node-editor-main {
     flex: 1;
     display: flex;
@@ -53,8 +40,6 @@
     width: 100%;
     height: 100%;
 }
-
-/* ── React Flow chrome overrides ── */
 
 .react-flow__edge-path,
 .react-flow__connection-path {

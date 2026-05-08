@@ -7,10 +7,6 @@ import type { SlotDef } from '@effects/runtime/pipeline/types'
 import { effects } from '@effects/runtime'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Look upstream through the React Flow graph for a Config node feeding our
- * `config` input. Returns slot metadata for the active effect when present.
- */
 function selectUpstreamConfigId(nodeId: string) {
     return (s: ReactFlowState) =>
         s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
@@ -31,11 +27,6 @@ function useUpstreamSlots(nodeId: string): Map<number, SlotDef> {
     }, [upstreamId, upstreamOutputs])
 }
 
-/**
- * Graph card: visual-only — handles + slot-aware input labels (`ch4 ·
- * intensity multiplier`). Editable per-slot min/max grid lives in
- * `AnimationControllerNodeSettings`.
- */
 export const AnimationControllerNodeView = memo(function AnimationControllerNodeView(
     { id }: NodeProps & { data: PipelineNodeData },
 ) {

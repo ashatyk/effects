@@ -12,21 +12,12 @@ import { useResolvedNodeId, useHeadlessNodeData } from './context/NodeIdContext'
 import { usePinning } from './context/PinContext'
 import { categoryColor } from './categoryColors'
 import { useSetNodeLabel } from './hooks/useSetNodeLabel'
+import { useAutoGrowNodeBox } from './hooks/useAutoGrowNodeBox'
 import type { PipelineNodeData } from './types'
 
-/* Row pitch for input/output handles inside a node card. MUST equal the
-   editor grid step (`GRID_SIZE = 20` in NodeEditor.tsx) so that connecting
-   to the N-th port of any node still lands on the same dotted grid as the
-   1st port — otherwise edges fanning out of multi-input nodes would drift
-   off-grid by `(ROW_H - GRID_SIZE) * N` per port. */
+// MUST equal GRID_SIZE so the N-th port still lands on a grid dot.
 const ROW_H = 20
-/* Top inset of the first port row inside `.pn-handles`. Combined with the
-   fixed `.pn-header` height (36 px in `styles/node-card.css`) and the
-   4 px `.pn` top border, this puts the centre of the FIRST port at
-   exactly Y = 60 px from the node's top edge — i.e. 3 grid cells down —
-   so every port's midpoint lands on a dot of the editor grid. Subsequent
-   ports inherit this alignment because ROW_H is also a multiple of
-   GRID_SIZE. */
+// Combined with .pn-header (36px) and .pn top border (4px), puts the first port at Y=60px (3 grid cells).
 const ROW_TOP_PAD = 10
 const DEFAULT_MIN_WIDTH = 160
 const DEFAULT_MIN_HEIGHT = 40
@@ -39,26 +30,11 @@ interface Props {
     children?: React.ReactNode
     minWidth?: number
     minHeight?: number
-    /* Mark this card as a viewer-only clone of another node. Adds the
-       dashed `.pn--clone` class and the REF badge in the header. */
     isClone?: boolean
-    /* Allow the user to rename the node by double-clicking the header
-       title. Defaults to true for real nodes; CloneNodeView passes
-       `false` so the title stays a read-only mirror of the original's
-       label. */
     titleEditable?: boolean
 }
 
-/**
- * Renders the chrome around any node view: coloured header, slot handles,
- * widget area. The header hosts a pin toggle that adds/removes this node
- * from the sidebar.
- *
- * Two render modes:
- *   - graph (default): full chrome including <Handle>s for connections.
- *   - headless: no <Handle>s, no resizer; used inside the pin sidebar where
- *     we only care about the widgets and the live preview.
- */
+// Two modes: graph (full chrome + <Handle>s + resizer) and headless (used by the pin sidebar).
 export function BaseNodeShell({
     title, category, inputs, outputs, children, minWidth, minHeight,
     isClone = false, titleEditable = true,
@@ -66,16 +42,10 @@ export function BaseNodeShell({
     const headless = useIsHeadlessNode()
     const nodeId = useResolvedNodeId()
     const maxRows = Math.max(inputs.length, outputs.length)
-    /* Symmetric top/bottom padding (`ROW_TOP_PAD` on each side) so the
-       handles container is grid-aligned both ways and widgets below it
-       start on a dot row too. */
     const handlesH = headless ? 0 : ROW_TOP_PAD + maxRows * ROW_H + ROW_TOP_PAD
     const accent = categoryColor(category)
 
-    /* Selection state for the NodeResizer overlay. We pull it from the
-       React Flow store rather than threading `selected` through all 28
-       NodeView props — the lookup hits a single Map and only re-renders
-       this node when its own selection flips. */
+    // Selection from the RF store — avoids threading `selected` through all 28 NodeView props.
     const flowNodeId = useNodeId()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const selected = useStore((s: any) => {
@@ -83,17 +53,14 @@ export function BaseNodeShell({
         return Boolean(s.nodeLookup?.get?.(flowNodeId)?.selected)
     })
 
-    /* Inline rename state. Owned here (not in SceneContext) because it's
-       transient UI — we only commit to the scene on Enter / blur. */
     const labelEditable = titleEditable && !isClone && !!nodeId && !headless
+
+    const mw = minWidth ?? DEFAULT_MIN_WIDTH
+    const mh = minHeight ?? DEFAULT_MIN_HEIGHT
+    const pnRef = useAutoGrowNodeBox(!headless && !!flowNodeId, mw, mh)
 
     return (
         <>
-            {/* Resizer is mounted next to the card chrome (not inside it)
-                so its absolute-positioned edges/corners overlay the
-                ReactFlow node bounding box, not the inner card. The
-                react-flow store-driven `snapToGrid` makes resize itself
-                grid-aligned without extra wiring. */}
             {!headless && (
                 <NodeResizer
                     minWidth={minWidth ?? DEFAULT_MIN_WIDTH}
@@ -104,11 +71,8 @@ export function BaseNodeShell({
                 />
             )}
             <div
+                ref={pnRef}
                 className={`pn${headless ? '' : ' pn--graph'}${isClone ? ' pn--clone' : ''}`}
-                /* The category accent IS the top border (thicker than the side
-                 * borders). Driving it through a CSS variable keeps the border
-                 * radius and corner geometry handled natively by the browser
-                 * — much cleaner than overlaying a separate strip. */
                 style={{
                     minWidth: minWidth ?? undefined,
                     ['--pn-accent' as string]: accent,
@@ -123,9 +87,6 @@ export function BaseNodeShell({
                     {isClone && <span className="pn-header-ref-badge" title="UI reference to another node">REF</span>}
                     {nodeId && <PinToggle nodeId={nodeId} headless={headless} />}
                 </div>
-                {/* Everything below the header lives inside `.pn-body` — its
-                    rounded top corners "arch" against the accent backdrop
-                    on `.pn`, replacing the previous flat header underline. */}
                 {(!headless || children) && (
                     <div className="pn-body">
                         {!headless && (
@@ -168,21 +129,7 @@ export function BaseNodeShell({
     )
 }
 
-/**
- * Renders the header title. The displayed text is the live label from
- * either:
- *   - the React Flow store (graph mode — node lives in the active page
- *     and the store is the source of truth), or
- *   - the headless data context (pin sidebar — the parent injects the
- *     live `data` via `HeadlessNodeDataProvider` so renames done on
- *     other pages still reflect here),
- * falling back to the `title` prop (`def.title`) when no label is set.
- *
- * When `editable` is true, double-clicking swaps the static label for
- * an inline input that commits on Enter / blur and aborts on Escape.
- * The hooks are mounted unconditionally to keep React's hook order
- * stable; when `editable` is false the commit path is never invoked.
- */
+// Live label from RF store (graph) or HeadlessNodeData (sidebar); falls back to `title` (def.title).
 function HeaderTitle({
     title, editable, nodeId,
 }: { title: string; editable: boolean; nodeId: string | null | undefined }) {
@@ -259,9 +206,6 @@ function PinToggle({ nodeId, headless }: { nodeId: string; headless: boolean }) 
                 className="nodrag"
                 onClick={(e) => { e.stopPropagation(); togglePin(nodeId) }}
                 sx={{
-                    /* Match the unified light header title — pinned vs
-                       unpinned is differentiated via opacity (and the
-                       filled/outlined pin glyph), not a second colour. */
                     color: '#f5f5f5',
                     opacity: pinned ? 1 : 0.7,
                     p: 0.25,

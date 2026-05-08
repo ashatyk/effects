@@ -8,12 +8,6 @@ import type { PipelineNodeData } from '../types'
 
 const DEFAULT_FONT = '"Inter", "Helvetica Neue", "Arial", "Noto Sans", sans-serif'
 
-/**
- * Graph card: visual-only — paints "Aa" in the selected typography so
- * the active style is recognisable at a glance, plus a one-line
- * summary of the stylistic params. Editor controls live in
- * `TextStyleNodeSettings`.
- */
 export const TextStyleNodeView = memo(({ data }: NodeProps & { data: PipelineNodeData }) => {
     const font = (data.params.font ?? DEFAULT_FONT) as string
     const letterSpacing = (data.params.letterSpacing ?? 0) as number
@@ -29,10 +23,8 @@ export const TextStyleNodeView = memo(({ data }: NodeProps & { data: PipelineNod
                     fontSize: 28,
                     lineHeight: 1.1,
                     letterSpacing: `${letterSpacing}px`,
-                    /* See `TextNodeView` rationale — `text.primary` is
-                     * dark-theme white and reads as invisible on the
-                     * light card surface. `--pn-text` is the dark token
-                     * scoped to `.pn`. */
+                    /* `text.primary` is dark-theme white (invisible on the light card);
+                       `--pn-text` is the dark token scoped to `.pn`. See `TextNodeView`. */
                     color: 'var(--pn-text, #0a0a0a)',
                     textAlign: 'center',
                     py: 0.5,

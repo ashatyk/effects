@@ -1,6 +1,5 @@
 ---
 description: Tier-3 web runtime — packages/player (@effects/player) + apps/player demo. EffectPlayer facade, applyOverrides + canvas-sink + SupplierConfig + exporter live here. Supplier app and any future Tier-3 integration consume this. Read before changing the Tier-3 contract or moving runtime helpers.
-alwaysApply: true
 ---
 
 # Tier-3 Player (`packages/player` + `apps/player`)
@@ -235,9 +234,21 @@ Run `npm run dev:player` from the repo root.
 - **WASM Rust+wgpu core.** Phase-3 work per `product-vision.mdc → Suggested ordering`. Current `@effects/player` is the contract that survives that swap.
 - **Multiple players sharing one Pixi App / GL context.** Each `EffectPlayer.create` allocates its own. Resource sharing is a future optimisation.
 
+## Bake step (`packages/player/src/baking.ts`)
+
+`bakePipeline(engine, pipeline, config)` constant-folds frozen subgraphs of a `PublishedPipeline + SupplierConfig` into a self-contained `BakedPipeline` (replaces eligible nodes with `constantContour` / `constantTexture` carrying their pre-computed output as params). Exported by the supplier app's "Export baked" toolbar button.
+
+Taint seeds (anything reachable downstream of a seed stays live):
+1. **Processor type** — `RUNTIME_DYNAMIC_PROCESSORS` (timer, envelope, combineSignals, signalSwitch, animationController, animationSwitch, eventEmitter, tapZone, effect).
+2. **Per-node opt-in** — `data.runtimeDynamic === true`. Authoring-time escape hatch toggled from the editor's right-rail "Bake behaviour" section (`PublishInspector` → `useSetRuntimeDynamic`). Used to keep cheap-to-recompute / large-output pure processors live in the trimmed pipeline (e.g. `sdfFromContour` whose baked SDF texture is multi-hundred-KB but recomputing per frame is essentially free). Upstream pure subgraphs continue to bake into constants and feed the now-live consumer; everything downstream of the marked node also stays live.
+
+The "Bake behaviour" toggle is shown only on bake-eligible processors (`def.pure === true` with at least one CONTOUR/TEXTURE output, or `segmentation`) — for non-pure / non-bakeable processors the flag would be a UI no-op. See `isBakeEligibleProcessor` in `PublishInspector.tsx`.
+
 ## Pitfalls
 
 - Importing React anywhere under `packages/player/` → kills the Tier-3 contract. Keep React-free so it survives WASM extraction.
+- Marking many bake-eligible nodes `runtimeDynamic` → defeats the bake entirely; the `.baked.json` ends up nearly identical to the `.published.json + .config.json` pair. Use sparingly on processors whose payload size hurts more than the per-frame compute cost.
+- Adding a new pure processor with a CONTOUR/TEXTURE output without checking `bakePipeline` behaviour → it becomes auto-baked. Verify the baked payload size is reasonable; if not, document that authors should mark it `runtimeDynamic` in the editor.
 - Exporting a SupplierConfig from a non-supplier flow without `polygon` → published config looks fine, but Tier-3 player quietly falls back to spawning the SAM worker on first use → ~150 MB native memory + multi-second startup latency on mobile. Always export configs from the supplier app where the polling loop in `SegmentationInput` writes the polygon back. Programmatic configs (CLI, fixture) must pre-compute the polygon.
 - Removing `shader.destroy(false)` from `EffectProcessor.execute` → re-introduces the BindGroup leak.
 - Calling `setImage` with a cross-origin URL → engine uses `Assets.load(url)`; without CORS headers the browser blocks the texture upload. Use data URLs for self-contained portability.

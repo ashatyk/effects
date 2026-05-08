@@ -4,13 +4,6 @@ import { useSetParam } from '../hooks/useSetParam'
 import { NumberField, TextFieldRow } from '@effects/ui'
 import type { NodeSettingsProps } from './types'
 
-/**
- * Settings pane: identity (`id`, `label`) + dispatch throttle. The
- * EMIT trigger lives on the graph card itself
- * (`EventEmitterNodeView`) — that's where authors test downstream
- * chains and we don't want them ducking into the right rail for
- * every click.
- */
 export const EventEmitterNodeSettings = memo(({ id, data }: NodeSettingsProps) => {
     const set = useSetParam(id)
     const throttleMs = (data.params.throttleMs ?? 0) as number

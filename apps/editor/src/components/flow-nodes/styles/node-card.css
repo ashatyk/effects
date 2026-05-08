@@ -1,10 +1,6 @@
-/* ── Pipeline Node card chrome ──
-   Nodes carry their own light surface palette via CSS vars so
-   widgets/preview/handles inside a node read the local palette without
-   a separate MUI ThemeProvider. The MUI dark theme defined in theme.ts
-   still governs the toolbar, sidebar chrome, popovers, etc. — only the
-   `.pn` card and its descendants are remapped to a light surface. */
-
+/* `.pn` (and descendants) is remapped to a light palette via CSS vars so
+   widgets read the local theme without a nested MUI ThemeProvider; the dark
+   MUI theme still governs everything outside `.pn`. */
 .pn {
     --pn-bg:               #d4d4d4;
     --pn-bg-alt:           #b4b4b4;
@@ -16,13 +12,9 @@
     --pn-divider-strong:   rgba(0, 0, 0, 0.32);
 
     position: relative;
-    /* Card chrome bg = accent so the body's rounded top corners reveal
-       the header colour beneath (the "arch" effect). The actual content
-       surface lives in `.pn-body`, which paints `--pn-bg` on top with a
-       rounded top edge that cuts into this accent backdrop. We DON'T
-       set `overflow: hidden` on `.pn` because port handles render with
-       `transform: translate(-50%)` and intentionally hang off the left
-       / right edges of the card. */
+    /* Chrome bg = accent so `.pn-body`'s rounded top reveals it as a header
+       arch. No `overflow: hidden` here — port handles intentionally hang off
+       the left/right edges via `transform: translate(-50%)`. */
     background: var(--pn-accent, var(--pn-bg-alt));
     border: 4px solid var(--pn-accent, rgba(0, 0, 0, 0.30));
     border-radius: 10px;
@@ -35,11 +27,8 @@
     height: 100%;
     box-sizing: border-box;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
-    /* Vertical flex column so the body fills any leftover height after
-       the fixed-size header. Without this, `.pn-body` collapses to its
-       content height and the snapped-to-grid surplus at the bottom of
-       a card shows the accent backdrop instead of the surface, giving
-       every node a coloured "chin". */
+    /* Flex column so `.pn-body` fills leftover height after the fixed header,
+       otherwise grid-snap surplus shows the accent backdrop as a "chin". */
     display: flex;
     flex-direction: column;
 }
@@ -50,14 +39,8 @@
     outline-offset: 2px;
 }
 
-/* ── Clone (UI alias) ── */
-
-/* Clones are viewer-only references to an original node living on any
-   page. They get a dashed accent border + a REF badge in the header
-   so the user can tell at a glance that this is a reference, not a
-   live processor. The accent COLOUR is still the original's category
-   (set by CloneNodeView via --pn-accent), so navigation by category
-   still works. */
+/* Clones are viewer-only references; dashed border + REF badge mark them as
+   references, not live processors. Accent still tracks the origin's category. */
 .pn--clone {
     border-style: dashed;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.30);
@@ -84,9 +67,7 @@
     text-transform: uppercase;
 }
 
-/* Inline title editor used when the user double-clicks the header to
-   rename a node. Inherits the header typography so renames feel like
-   in-place text editing rather than a popup. */
+/* Inherits header typography so renames feel like in-place editing. */
 .pn-header-title-input {
     flex: 1;
     min-width: 0;
@@ -98,11 +79,7 @@
     padding: 1px 4px;
     font: inherit;
     font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
-
-/* ── Header ── */
 
 .pn-header {
     box-sizing: border-box;
@@ -117,11 +94,8 @@
     line-height: 1;
     color: #f5f5f5;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    /* Header bg is transparent — the .pn parent already paints the
-       accent backdrop, and the body's rounded-top arch flows naturally
-       out of it. No bottom divider here: the arch IS the separator. */
+    /* Transparent — `.pn` already paints accent; the body's rounded-top arch
+       IS the separator (no bottom divider). */
     background: transparent;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
@@ -135,33 +109,22 @@
     white-space: nowrap;
 }
 
-/* ── Body (handles + widgets surface) ── */
-
-/* Painted slab that sits below the header. Its rounded top corners cut
-   into the accent backdrop, producing the header arch. Bottom corners
-   are rounded to match the inner edge of the 4 px accent border
-   (`.pn` border-radius 10 px − 4 px border = 6 px inner curve), so the
-   gray surface sits flush inside the rounded accent ring without
-   needing `overflow: hidden` on `.pn` (which would clip port dots). */
+/* Bottom radius = 10px outer − 4px accent border = 6px inner curve, so the
+   surface sits flush inside the ring without `overflow: hidden` on `.pn`
+   (which would clip port dots). */
 .pn-body {
     background: var(--pn-bg);
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
     border-bottom-left-radius: 6px;
     border-bottom-right-radius: 6px;
-    /* Grow into the leftover vertical space below the fixed-height
-       header. `min-height: 0` is the standard flexbox escape hatch
-       that lets the body actually shrink/grow inside `.pn` instead of
-       inheriting its intrinsic content height as a hard minimum. The
-       inner column layout (handles + widgets) uses the same trick to
-       hand the surplus down to `.pn-widgets`. */
+    /* `min-height: 0` is the flexbox escape hatch that lets the body shrink/grow
+       inside `.pn` instead of pinning to intrinsic content height. */
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;
 }
-
-/* ── Handles ── */
 
 .pn-handles {
     position: relative;
@@ -195,11 +158,8 @@
     transition: background 0.12s, border-color 0.12s;
 }
 
-/* Centre the port dot on the MIDDLE of the 4 px accent border (i.e.
-   2 px inside the outer edge), not on the inner edge of `.pn-handles`
-   where React Flow places it by default and not on the outer perimeter
-   either. The dot then sits visually nested inside the coloured border
-   ring, fully readable, with no part hanging off into the canvas. */
+/* Centre the port dot on the MIDDLE of the 4px accent border (2px inside the
+   outer edge), not on RF's default inner edge — keeps the dot nested in the ring. */
 .pn-handle.react-flow__handle-left {
     left: -2px !important;
 }
@@ -213,25 +173,18 @@
     border-color: var(--pn-accent, #0a0a0a) !important;
 }
 
-/* ── Widgets area ── */
-
 .pn-widgets {
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     gap: 6px;
-    /* Absorb the leftover height of `.pn-body` so the surface paints
-       all the way down to the rounded inner corner — otherwise the
-       grid-snap surplus shows the accent backdrop as a "chin" below
-       the last widget. Children stay top-aligned (no implicit
-       `justify-content: stretch`); only the gray slab grows. */
+    /* Absorb `.pn-body` surplus so the surface paints down to the inner
+       corner — otherwise grid-snap surplus shows as an accent "chin". */
     flex: 1 1 auto;
     min-height: 0;
 }
 
-/* Divider between handles and widgets — only shown when both exist; in
-   headless mode (no handles) the widgets sit flush against the arch. */
 .pn-handles + .pn-widgets {
     border-top: 1px solid var(--pn-divider);
 }
@@ -243,7 +196,18 @@
     display: block;
 }
 
-/* ── Resize handles ── */
+/* Pinned cards render outside RF's per-node bbox; override the card's
+   `height: 100%` so it collapses to content height inside an `auto` parent. */
+.pn-pinned-host {
+    width: 100%;
+    display: flex;
+    align-items: stretch;
+}
+
+.pn-pinned-host > .pn {
+    height: auto;
+    width: 100%;
+}
 
 .pn-resize-line {
     border-color: transparent !important;

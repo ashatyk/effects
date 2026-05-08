@@ -37,28 +37,7 @@ function readCollapsedPages(): Set<string> {
     } catch { return new Set() }
 }
 
-/**
- * Left-rail outline panel. **Permanent** surface — there is no
- * `visible` flag, no toolbar toggle, no close button. The panel is
- * always mounted alongside the canvas; only its width is user-
- * controlled (right-edge resize handle, persisted to
- * `localStorage[STORAGE_KEY]`).
- *
- * Lists every scene page and the originals inside it (clones are
- * hidden — they're aliases of originals shown elsewhere on the
- * canvas, not first-class scene content). Two primary actions per
- * node row:
- *
- *  1. Click → `jumpToNode` (switches page if needed and centres on it).
- *  2. Drag onto the canvas → creates a viewer-only clone at the drop
- *     coordinates (replaces the older "References" section the
- *     AddNodePopover used to host).
- *
- * Page rows toggle collapse on click; double-click activates the page
- * without collapsing. The active page is highlighted; collapse state
- * persists per page in localStorage so the panel re-opens the way
- * the user left it.
- */
+// Click row → jumpToNode (switches page + centres). Drag row → clone at drop coords.
 export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
     const { pages, activePageId, switchPage, jumpToNode } = useScene()
     const [width, setWidth] = useState<number>(() => readStoredWidth())
@@ -82,16 +61,11 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
         })
     }, [])
 
-    /* Drag handle — fires when the user grabs a node row. The DataTransfer
-       payload is just the original's id; the canvas-side `onDrop` in
-       NodeEditor decodes it and creates a clone at the drop position. */
     const onNodeDragStart = useCallback((event: React.DragEvent, originId: string) => {
         event.dataTransfer.setData(CLONE_DRAG_MIME, originId)
         event.dataTransfer.effectAllowed = 'copy'
     }, [])
 
-    /* Drag tracking for the right-edge resize handle. Width is clamped
-       and persisted on every commit (see `useEffect` above). */
     const onResizeStart = useCallback((e: React.MouseEvent) => {
         e.preventDefault()
         setResizing(true)
@@ -109,11 +83,10 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
         window.addEventListener('mouseup', onUp)
     }, [])
 
-    /* Hide-clones filter is shared across pages — clones are derived
-       and only originals make sense as drag-create sources. */
+    // Outline = originals only (clones are aliases; frames are UI-only markup).
     const pageContents = useMemo(() => pages.map(page => ({
         page,
-        originals: page.nodes.filter(n => !n.data.cloneOf),
+        originals: page.nodes.filter(n => !n.data.cloneOf && n.data.processor !== 'frame'),
     })), [pages])
 
     return (
@@ -136,9 +109,7 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
                 sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    /* Match `NodeEditorTabs` row height so the outline
-                       header sits flush with the tab strip on the
-                       right — IDE-style horizontal alignment. */
+                    // Match NodeEditorTabs row height so the header lines up with the tab strip.
                     height: 32,
                     flexShrink: 0,
                     px: 1.5,
@@ -217,8 +188,6 @@ export const SceneOutlineSidebar = memo(function SceneOutlineSidebar() {
                     )
                 })}
             </Box>
-            {/* Resize hit-strip on the RIGHT edge (mirrors the pin
-                sidebar's left-edge handle). */}
             <Box
                 role="separator"
                 aria-orientation="vertical"
@@ -307,9 +276,11 @@ const NodeRow = memo(function NodeRow({ id, label, typeTitle, typeKey, category,
     return (
         <Tooltip
             title={
-                <Box sx={{ lineHeight: 1.3 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, lineHeight: 1.3 }}>
                     <Box sx={{ fontWeight: 600 }}>{typeLabel}</Box>
-                    <Box sx={{ opacity: 0.7, fontSize: 10, mt: 0.25 }}>{id} · click to jump · drag to add reference</Box>
+                    <Box sx={{ opacity: 0.7, fontSize: 10 }}>{id}</Box>
+                    <Box sx={{ opacity: 0.7, fontSize: 10 }}>click to jump</Box>
+                    <Box sx={{ opacity: 0.7, fontSize: 10 }}>drag to add reference</Box>
                 </Box>
             }
             placement="right"
@@ -320,11 +291,12 @@ const NodeRow = memo(function NodeRow({ id, label, typeTitle, typeKey, category,
                 onDragStart={onDragStart}
                 onClick={onClick}
                 sx={{
+                    position: 'relative',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 0.75,
-                    px: 1,
-                    pl: 3,
+                    pr: 1,
+                    pl: 2,
                     py: 0.5,
                     userSelect: 'none',
                     cursor: 'grab',
@@ -339,11 +311,12 @@ const NodeRow = memo(function NodeRow({ id, label, typeTitle, typeKey, category,
             >
                 <Box
                     sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        left: 0,
+                        width: 6,
                         background: accent,
-                        flexShrink: 0,
                     }}
                 />
                 <span style={{

@@ -21,9 +21,8 @@ export const config: PlaygroundConfig = {
                 phaseSlot: 0,
             },
             geometry: {
-                /* Per-segment quad: 4 corners, indexed as two triangles.
-                   aLocal.x ∈ {0,1} = start/end of segment (along curve)
-                   aLocal.y ∈ {0,1} = inner/outer side of strip */
+                /* Per-segment quad. aLocal.x ∈ {0,1}=start/end along curve;
+                   aLocal.y ∈ {0,1}=inner/outer side of strip. */
                 perVertex: {
                     aLocal: [
                         [0.0, 0.0],

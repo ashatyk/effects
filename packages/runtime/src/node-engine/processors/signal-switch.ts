@@ -2,10 +2,7 @@
 import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type IDataflowEngine, type Signal, type EventSignal } from '../types'
 
-/**
- * Easing curve applied to the crossfade alpha during a transition.
- * `instant` skips the morph and snaps the output to the new side immediately.
- */
+// `instant` snaps to the target side without crossfading.
 export type SwitchProfile =
     | 'instant'
     | 'linear'
@@ -38,59 +35,27 @@ export const signalSwitchDef: ProcessorDef = {
 
 const idleSignal = (): Signal => ({ value: 0, time: 0, age: 0, state: 0, lastTimestampMs: 0 })
 
-/** Snapshot of the live transition exposed for the NodeView preview. */
 export interface SwitchSnapshot {
-    /** Side currently selected after the latest event. Target of any in-flight morph. */
     currentSide: SwitchSide
-    /** Side the morph is fading *from*. Equal to `currentSide` when settled. */
     fromSide: SwitchSide
-    /** Cross-fade alpha in [0, 1]. 1 when settled at `currentSide`. */
     alpha: number
-    /** True while a morph is in progress (alpha < 1). */
     transitioning: boolean
-    /** Duration of the active transition in ms (0 when settled). */
     durationMs: number
-    /** Profile used for the active transition (or the most recent one). */
     profile: SwitchProfile
-    /** Monotonic event counter observed on the event input — exposed so the
-     *  view can show how many flips have happened. */
     eventCount: number
-    /** True for exactly the frame on which a flip happened — the view uses
-     *  this to draw a spike marker on the scope. */
+    // True only on the frame the flip happened (used to draw a spike marker).
     flippedThisFrame: boolean
 }
 
-/**
- * Two-state cross-fade between SIGNAL `signal_a` and SIGNAL `signal_b`,
- * gated by a discrete EVENT on `event`. Each new event toggles the
- * currently-selected side (A↔B), starting a cross-fade with the matching
- * direction's duration + easing profile. So an A→B fade can rush in fast
- * with `easeOut` while a B→A return rolls back slowly with `easeInOut`.
- *
- *   signal_a ─┐
- *             ├──► (event toggles side) ──► signal
- *   signal_b ─┘                ▲
- *                              │
- *                            EVENT (EventEmitter / future event sources)
- *
- * Output during a morph is `lerp(fromSide.value, toSide.value, shapedAlpha)`
- * and `toSide.value` once the morph completes — both inputs keep evolving
- * while the cross-fade is in flight (true cross-fade, not freeze + ramp).
- *
- * Re-emitting mid-morph immediately toggles back and starts a fresh
- * transition from the current `output` value (no queueing). This keeps a
- * rapid double-emit from desyncing — the second event always lands on the
- * currently-visible value rather than ghosting through to the "true" target.
- *
- * `alwaysDirty = true` because the morph clock is internal to this node —
- * the engine has no other way of knowing the output is changing during a
- * transition when both upstream signals are momentarily quiet.
- */
+// True cross-fade (both inputs keep evolving), not freeze + ramp. Re-emitting mid-
+// morph captures the currently-visible value as the new from-endpoint so a rapid
+// double-emit can't ghost through to a stale upstream target.
+// alwaysDirty: the morph clock is internal — the engine has no other way to
+// know the output is changing while both inputs are momentarily quiet.
 export class SignalSwitchProcessor extends BaseProcessor {
     readonly def = signalSwitchDef
     alwaysDirty = true
 
-    /** Live state mirrored to the NodeView. */
     lastSignal: Signal | null = null
     lastA: Signal | null = null
     lastB: Signal | null = null
@@ -107,24 +72,18 @@ export class SignalSwitchProcessor extends BaseProcessor {
     }
 
     private currentSide: SwitchSide = 'a'
-    /** 0 when settled. `performance.now()` of the moment a morph began. */
+    // 0 when settled.
     private transitionStartMs = 0
     private transitionFromSide: SwitchSide = 'a'
     private transitionToSide: SwitchSide = 'a'
     private transitionDurationMs = 0
     private transitionProfile: SwitchProfile = 'easeInOut'
-    /** Captured `output.value` at the moment a morph started. Used as the
-     *  alpha=0 endpoint when re-flipping mid-morph so we don't snap to a
-     *  stale upstream value. */
+    // Captured output.value at flip time; used as the from-endpoint while
+    // transitionFromCaptured is true (set on re-flips mid-morph).
     private transitionFromValue = 0
-    /** True when the active morph crossfades from a captured constant
-     *  (a re-flip mid-morph), false when it crossfades from the live
-     *  upstream value of the from-side. */
     private transitionFromCaptured = false
-    /** Last seen event count — increment by one means a new event this frame. */
     private lastSeenEventCount = -1
-    /** First-execute guard so we don't synthesize a spurious morph from the
-     *  zero-default `currentSide` to whatever `initialSide` says. */
+    // Avoids a spurious morph from the default currentSide to initialSide on first execute.
     private initialised = false
 
     execute(inputs: Record<string, any>, params: Record<string, any>, _engine: IDataflowEngine): Record<string, any> {
@@ -142,9 +101,8 @@ export class SignalSwitchProcessor extends BaseProcessor {
             this.currentSide = initialSide
             this.transitionFromSide = initialSide
             this.transitionToSide = initialSide
-            /* Bootstrap event counter from the input so a saved-and-restored
-               graph (or one connected to a long-running EventEmitter) doesn't
-               trigger a phantom flip on the very first execute. */
+            // Bootstrap from upstream count so a restored graph / long-running EventEmitter
+            // doesn't trigger a phantom flip on first execute.
             this.lastSeenEventCount = ev?.count ?? 0
             this.initialised = true
         }
@@ -152,18 +110,11 @@ export class SignalSwitchProcessor extends BaseProcessor {
         const now = performance.now()
         let flippedThisFrame = false
 
-        /* React to a new event: toggle side and start a fresh transition.
-           Multiple events queued up between executes still count as a single
-           flip (the count moved by N → we still toggle once, because the
-           net parity matters less than visual continuity). */
+        // N events queued between executes still count as one flip (visual continuity > parity).
         if (ev && ev.count > this.lastSeenEventCount) {
             this.lastSeenEventCount = ev.count
             const nextSide: SwitchSide = this.currentSide === 'a' ? 'b' : 'a'
 
-            /* Capture the currently-visible output value so a re-emit mid-
-               morph doesn't snap back to a stale upstream value. The new
-               cross-fade will go from this captured constant to the live
-               value of the new target side. */
             const wasTransitioning = this.transitionStartMs > 0
             const visibleValue = this.lastSignal?.value ?? (this.currentSide === 'a' ? a.value : b.value)
 
@@ -205,11 +156,8 @@ export class SignalSwitchProcessor extends BaseProcessor {
             }
         }
 
-        /* Crossfade endpoints. When `transitionFromCaptured` is set the
-           from-side is a frozen value captured at flip time (avoids snapping
-           when the user re-emits mid-morph); otherwise it's the live
-           upstream value of the from-side, so both inputs continue to
-           evolve through the morph. */
+        // transitionFromCaptured: from-endpoint is the frozen value at flip time
+        // (re-flip mid-morph); otherwise both inputs evolve through the morph.
         const fromVal = this.transitionFromCaptured && this.transitionStartMs > 0
             ? this.transitionFromValue
             : (this.transitionFromSide === 'a' ? a.value : b.value)
@@ -256,11 +204,7 @@ export class SignalSwitchProcessor extends BaseProcessor {
     }
 }
 
-/**
- * Sample the cross-fade easing at `t ∈ [0, 1]`. Exported so the NodeView
- * can preview both A→B and B→A profile curves without re-deriving the
- * formulas. `instant` returns 1 for any `t > 0`.
- */
+// Exported so the NodeView can preview both A→B and B→A profile curves.
 export function applyEasing(profile: SwitchProfile, t: number): number {
     if (!Number.isFinite(t)) return 0
     if (t <= 0) return 0

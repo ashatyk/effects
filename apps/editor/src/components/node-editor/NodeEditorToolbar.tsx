@@ -1,48 +1,57 @@
-import { Link } from 'react-router-dom'
+import { useCallback, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Button from '@mui/material/Button'
-import Stack from '@mui/material/Stack'
-import Tooltip from '@mui/material/Tooltip'
 import Divider from '@mui/material/Divider'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import TextField from '@mui/material/TextField'
 import MenuItem from '@mui/material/MenuItem'
-import ArrowBackIcon from '@mui/icons-material/ArrowBack'
-import UndoIcon from '@mui/icons-material/Undo'
-import RedoIcon from '@mui/icons-material/Redo'
+import Menu from '@mui/material/Menu'
+import ListItemIcon from '@mui/material/ListItemIcon'
+import ListItemText from '@mui/material/ListItemText'
 import IosShareIcon from '@mui/icons-material/IosShare'
 import FileUploadIcon from '@mui/icons-material/FileUpload'
-import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch'
 import SpeedIcon from '@mui/icons-material/Speed'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import VisibilityIcon from '@mui/icons-material/Visibility'
 
-/** Allowed cap values. `0` means "uncapped" (rAF native rate). */
+// 0 = uncapped (rAF native rate).
 export const FPS_OPTIONS = [0, 5, 10, 15, 30, 60] as const
 export type FpsOption = typeof FPS_OPTIONS[number]
 
 interface Props {
-    onUndo: () => void
-    onRedo: () => void
     onExport: () => void
     onImport: () => void
-    onClear: () => void
     onPublish: () => void
     fps: FpsOption
     onFpsChange: (fps: FpsOption) => void
 }
 
-/**
- * Top toolbar. Outline (left rail) and Settings (right rail) are
- * **permanent** workspace surfaces — there are no toggle buttons here
- * for them, and the matching panels expose no close affordance. The
- * legacy Pin terminal was retired with this change; its toolbar
- * button was removed alongside the panel.
- */
+// Undo/Redo and Clear are keyboard-only (see useNodeEditorShortcuts); Clear is intentionally
+// not in the toolbar to avoid an irreversible-wipe footgun.
 export function NodeEditorToolbar({
-    onUndo, onRedo,
-    onExport, onImport, onClear, onPublish,
+    onExport, onImport, onPublish,
     fps, onFpsChange,
 }: Props) {
+    const fileBtnRef = useRef<HTMLButtonElement | null>(null)
+    const [fileOpen, setFileOpen] = useState(false)
+    const closeFileMenu = useCallback(() => setFileOpen(false), [])
+    const runFileAction = useCallback((action: () => void) => () => {
+        setFileOpen(false)
+        action()
+    }, [])
+
+    const fpsBtnRef = useRef<HTMLButtonElement | null>(null)
+    const [fpsOpen, setFpsOpen] = useState(false)
+    const closeFpsMenu = useCallback(() => setFpsOpen(false), [])
+    const runFpsAction = useCallback((v: FpsOption) => () => {
+        setFpsOpen(false)
+        onFpsChange(v)
+    }, [onFpsChange])
+
+    const navigate = useNavigate()
+    const onOpenBakedPreview = useCallback(() => navigate('/baked'), [navigate])
+
     return (
         <Box
             component="header"
@@ -51,90 +60,111 @@ export function NodeEditorToolbar({
                 alignItems: 'center',
                 gap: 1.5,
                 px: 2,
-                py: 1,
+                py: 0,
+                height: 56,
+                minHeight: 56,
                 bgcolor: 'background.paper',
                 borderBottom: 1,
                 borderColor: 'divider',
             }}
         >
-            <Button
-                component={Link}
-                to="/"
-                size="small"
-                variant="text"
-                color="inherit"
-                startIcon={<ArrowBackIcon fontSize="small" />}
+            <Typography
+                component="span"
+                sx={{
+                    color: 'text.primary',
+                    fontFamily: '"Anybody Variable", "Anybody", sans-serif',
+                    fontWeight: 800,
+                    letterSpacing: 0.6,
+                    fontSize: 20,
+                    lineHeight: 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                }}
             >
-                Back
-            </Button>
-            <Divider orientation="vertical" flexItem />
-            <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                Node Pipeline
+                Shadyberry Studio
             </Typography>
             <Box sx={{ flex: 1 }} />
-            {/* Paper paper styling is intentionally NOT pinned to
-                `pn-menu-paper` (which is a light surface used by in-graph
-                node selects). The toolbar is dark, so we let the global
-                MUI dark theme render the dropdown. */}
-            <TextField
-                select
-                size="small"
-                value={String(fps)}
-                onChange={e => onFpsChange(Number(e.target.value) as FpsOption)}
-                slotProps={{
-                    input: {
-                        startAdornment: (
-                            <SpeedIcon fontSize="small" sx={{ color: 'text.secondary', mr: 0.75 }} />
-                        ),
-                    },
-                }}
-                sx={{
-                    width: 150,
-                    '& .MuiInputBase-root': { fontSize: 12, height: 30 },
-                    '& .MuiInputBase-input': { py: 0.5 },
-                }}
-            >
-                {FPS_OPTIONS.map(v => (
-                    <MenuItem key={v} value={String(v)}>
-                        {v === 0 ? 'max fps' : `${v} fps`}
+            <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 0.5 }}>
+                <Button
+                    ref={fpsBtnRef}
+                    size="small"
+                    variant="text"
+                    color="inherit"
+                    onClick={() => setFpsOpen(o => !o)}
+                    startIcon={<SpeedIcon fontSize="small" />}
+                    endIcon={<ExpandMoreIcon fontSize="small" />}
+                >
+                    {fps === 0 ? 'max fps' : `${fps} fps`}
+                </Button>
+                <Menu
+                    anchorEl={fpsBtnRef.current}
+                    open={fpsOpen}
+                    onClose={closeFpsMenu}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    slotProps={{ paper: { sx: COMPACT_MENU_PAPER_SX } }}
+                >
+                    {FPS_OPTIONS.map(v => (
+                        <MenuItem key={v} selected={v === fps} onClick={runFpsAction(v)}>
+                            <ListItemText primary={v === 0 ? 'max fps' : `${v} fps`} />
+                        </MenuItem>
+                    ))}
+                </Menu>
+                <Divider orientation="vertical" flexItem sx={{ mx: 0.5, my: 1 }} />
+                <Button
+                    ref={fileBtnRef}
+                    size="small"
+                    variant="text"
+                    color="inherit"
+                    onClick={() => setFileOpen(o => !o)}
+                    endIcon={<ExpandMoreIcon fontSize="small" />}
+                >
+                    File
+                </Button>
+                <Menu
+                    anchorEl={fileBtnRef.current}
+                    open={fileOpen}
+                    onClose={closeFileMenu}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                    slotProps={{ paper: { sx: COMPACT_MENU_PAPER_SX } }}
+                >
+                    <MenuItem onClick={runFileAction(onPublish)}>
+                        <ListItemIcon><RocketLaunchIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="Publish" />
                     </MenuItem>
-                ))}
-            </TextField>
-            <Stack direction="row" spacing={0.5}>
-                <Tooltip title="Undo (⌘Z)">
-                    <Button size="small" variant="text" color="inherit" onClick={onUndo} startIcon={<UndoIcon fontSize="small" />}>
-                        Undo
-                    </Button>
-                </Tooltip>
-                <Tooltip title="Redo (⌘⇧Z)">
-                    <Button size="small" variant="text" color="inherit" onClick={onRedo} startIcon={<RedoIcon fontSize="small" />}>
-                        Redo
-                    </Button>
-                </Tooltip>
-            </Stack>
-            <Divider orientation="vertical" flexItem />
-            <Stack direction="row" spacing={0.5}>
-                <Tooltip title="Derive supplier-facing pipeline + download JSON">
-                    <Button
-                        size="small"
-                        variant="text"
-                        color="inherit"
-                        onClick={onPublish}
-                        startIcon={<RocketLaunchIcon fontSize="small" />}
-                    >
-                        Publish
-                    </Button>
-                </Tooltip>
-                <Button size="small" variant="text" color="inherit" onClick={onExport} startIcon={<IosShareIcon fontSize="small" />}>
-                    Export
-                </Button>
-                <Button size="small" variant="text" color="inherit" onClick={onImport} startIcon={<FileUploadIcon fontSize="small" />}>
-                    Import
-                </Button>
-                <Button size="small" variant="text" color="error" onClick={onClear} startIcon={<DeleteSweepIcon fontSize="small" />}>
-                    Clear
-                </Button>
-            </Stack>
+                    <MenuItem onClick={runFileAction(onExport)}>
+                        <ListItemIcon><IosShareIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="Export" />
+                    </MenuItem>
+                    <MenuItem onClick={runFileAction(onImport)}>
+                        <ListItemIcon><FileUploadIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="Import" />
+                    </MenuItem>
+                    <Divider />
+                    <MenuItem onClick={runFileAction(onOpenBakedPreview)}>
+                        <ListItemIcon><VisibilityIcon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary="View baked" />
+                    </MenuItem>
+                </Menu>
+            </Box>
         </Box>
     )
 }
+
+const COMPACT_MENU_PAPER_SX = {
+    minWidth: 180,
+    '& .MuiMenuItem-root': {
+        fontSize: 13,
+        minHeight: 32,
+        py: 0.75,
+    },
+    '& .MuiListItemIcon-root': {
+        minWidth: 28,
+        color: 'text.secondary',
+    },
+    '& .MuiListItemText-primary': {
+        fontSize: 13,
+        fontWeight: 500,
+    },
+} as const

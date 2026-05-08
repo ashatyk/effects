@@ -7,22 +7,11 @@ import { streamPublishRootToCanvas } from '@effects/player'
 interface Props {
     engine: DataflowEngine
     pipeline: PublishedPipeline
-    /** Optional dataUrl rendered behind the canvas. Used by the
-     *  "Use as background" toggle on image slots so the supplier can
-     *  preview an effect that produces transparent / outline-only
-     *  output against the source photo (or any uploaded image). */
+    // Painted behind the canvas via CSS so transparent/outline-only
+    // effects can be previewed against the source photo.
     backgroundUrl?: string | null
 }
 
-/**
- * Live preview of the publishRoot's output texture. Subscribes to
- * the engine and copies pixels into a Canvas2D — same throttled
- * extract pattern as the editor's PreviewProcessor.
- *
- * The canvas auto-sizes to the published frame; the wrapping Box
- * sets a max-height so a 1200-px-tall effect doesn't blow out the
- * viewport. Aspect ratio is preserved via `objectFit: contain`.
- */
 export function PreviewCanvas({ engine, pipeline, backgroundUrl }: Props) {
     const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -33,13 +22,10 @@ export function PreviewCanvas({ engine, pipeline, backgroundUrl }: Props) {
         return streamPublishRootToCanvas(engine, root.id, canvas)
     }, [engine, pipeline])
 
-    /* Background is painted via CSS on the same <canvas> element, NOT
-       a sibling <img>. Reason: the canvas autosizes to the published
-       frame dimensions and uses `objectFit: contain` to fit the
-       wrapper; piping the background through CSS guarantees the bitmap
-       coordinates match the canvas pixel grid 1:1, regardless of the
-       wrapper's aspect ratio. Transparent pixels in the engine output
-       composite over the bg naturally — no z-index gymnastics. */
+    // Background is painted via CSS on the canvas itself (not a sibling
+    // <img>): guarantees the bitmap coordinates match the canvas pixel
+    // grid 1:1 regardless of wrapper aspect ratio, and transparent
+    // engine pixels composite over it naturally.
     return (
         <Box
             sx={{
@@ -65,11 +51,8 @@ export function PreviewCanvas({ engine, pipeline, backgroundUrl }: Props) {
                     objectFit: 'contain',
                     display: 'block',
                     imageRendering: 'auto',
-                    /* 1px frame on the canvas itself so the user can see
-                       the publishRoot frame boundary, not just the dark
-                       wrapper around it. Outline (vs border) doesn't
-                       enter the box-model and never shifts the canvas
-                       inside its `objectFit: contain` slot. */
+                    // Outline (vs border) doesn't enter the box-model so it
+                    // never shifts the canvas inside its objectFit slot.
                     outline: '1px solid #2a2a2a',
                     outlineOffset: 0,
                     backgroundImage: backgroundUrl ? `url("${backgroundUrl}")` : undefined,

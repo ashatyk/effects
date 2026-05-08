@@ -5,23 +5,14 @@ import MenuList from '@mui/material/MenuList'
 import MenuItem from '@mui/material/MenuItem'
 import { PROCESSOR_CATALOG } from '@effects/runtime/node-engine/processors'
 import { categoryColor } from '../flow-nodes/categoryColors'
-import type { MenuGroup } from './menuGroups'
+import type { MenuGroup, MenuItemSpec } from './menuGroups'
 
-/**
- * Discriminated union of "what should adding this menu item do":
- *  - `processor`: instantiate a fresh processor from the catalog.
- *  - `clone`: drop a UI-only clone of an existing node by id; engine
- *    is NOT informed.
- *
- * The popover itself only emits `processor` actions today — clones
- * are created via drag-and-drop from the SceneOutlineSidebar onto the
- * canvas. The `clone` variant stays in the union for the (rare)
- * programmatic / restored callers and so the addition path in
- * `NodeEditor.onAddFromPopover` doesn't need a special-case shape.
- */
+// Popover emits processor/frame; clone is created via outline drag-and-drop but kept in the union
+// so NodeEditor.onAddFromPopover doesn't need a special-case shape for restored/programmatic callers.
 export type AddNodeAction =
     | { kind: 'processor'; type: string }
     | { kind: 'clone'; originId: string }
+    | { kind: 'frame' }
 
 interface Props {
     open: boolean
@@ -31,23 +22,6 @@ interface Props {
     onAdd: (action: AddNodeAction) => void
 }
 
-/**
- * Add-Node picker. Displayed at the cursor when the user double-clicks the
- * canvas. Each menu group carries the same category accent the node will
- * wear once placed (header tint, edge colour) — colouring the section
- * header and each item with that accent makes navigation in a long flat
- * list noticeably faster.
- *
- * The MUI Grow transition is disabled (`transitionDuration={0}`); the
- * popover snaps in/out instead of fading, which feels closer to a native
- * context menu and avoids the brief blank frame that bothers
- * keyboard-driven workflows.
- *
- * Note: clone insertion lives in the SceneOutlineSidebar (left rail) —
- * drag a node from the outline onto the canvas. The popover is for
- * brand-new processors only, which keeps the catalog list short and
- * scannable.
- */
 export function AddNodePopover({ open, anchorPosition, onClose, groups, onAdd }: Props) {
     return (
         <Popover
@@ -110,26 +84,25 @@ export function AddNodePopover({ open, anchorPosition, onClose, groups, onAdd }:
                                 {group.title}
                             </Typography>
                             <MenuList dense disablePadding>
-                                {group.items.map(t => {
-                                    const def = PROCESSOR_CATALOG[t].def
-                                    const itemAccent = categoryColor(def.category)
+                                {group.items.map(item => {
+                                    const view = describeItem(item)
                                     return (
                                         <MenuItem
-                                            key={t}
-                                            onClick={() => onAdd({ kind: 'processor', type: t })}
+                                            key={view.key}
+                                            onClick={() => onAdd(view.action)}
                                             sx={{
                                                 fontSize: 12,
                                                 py: 0.5,
                                                 pl: 1.25,
                                                 borderLeft: '3px solid',
-                                                borderLeftColor: itemAccent,
+                                                borderLeftColor: view.accent,
                                                 transition: 'none',
                                                 '&:hover': {
                                                     bgcolor: 'action.hover',
                                                 },
                                             }}
                                         >
-                                            {def.title}
+                                            {view.title}
                                         </MenuItem>
                                     )
                                 })}
@@ -140,4 +113,29 @@ export function AddNodePopover({ open, anchorPosition, onClose, groups, onAdd }:
             </Box>
         </Popover>
     )
+}
+
+interface ItemView {
+    key: string
+    title: string
+    accent: string
+    action: AddNodeAction
+}
+
+function describeItem(item: MenuItemSpec): ItemView {
+    if (item.kind === 'frame') {
+        return {
+            key: 'frame',
+            title: 'Frame',
+            accent: categoryColor('util'),
+            action: { kind: 'frame' },
+        }
+    }
+    const def = PROCESSOR_CATALOG[item.type].def
+    return {
+        key: item.type,
+        title: def.title,
+        accent: categoryColor(def.category),
+        action: { kind: 'processor', type: item.type },
+    }
 }

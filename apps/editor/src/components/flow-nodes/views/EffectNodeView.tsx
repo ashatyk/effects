@@ -7,21 +7,8 @@ import { effects } from '@effects/runtime'
 import type { TextureSlotDef } from '@effects/runtime/pipeline/types'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Walk one hop upstream through React Flow to the Config node feeding our
- * `config` input, and pull the manifest's texture-slot declarations. Mirrors
- * `useUpstreamSlots` in AnimationControllerNodeView, but reads the texture
- * channel labels (`PlaygroundConfig.textures.slots`) instead of animation
- * channels — so the user sees `txcn0 · SDF` style captions next to the
- * matching input handle as soon as a Config is wired in.
- *
- * Reactivity comes from two places:
- *   1. `useStore` selector against the edge list — re-renders when the wire
- *      to `config` is added / removed / re-routed.
- *   2. `useNodeOutputs` on the resolved upstream id — re-renders when the
- *      Config processor publishes a new `__effectName` (user picks a
- *      different effect from its dropdown).
- */
+// One-hop upstream Config lookup → manifest texture-slot labels. Reactive on edge changes
+// (useStore on edges) and Config dropdown changes (useNodeOutputs on __effectName).
 function selectUpstreamConfigId(nodeId: string) {
     return (s: ReactFlowState) =>
         s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
@@ -47,12 +34,7 @@ export const EffectNodeView = memo(function EffectNodeView(
 ) {
     const slotByIndex = useUpstreamTextureSlots(id)
 
-    /* Override the static `txcn{N}` input labels with the slot.label exposed
-       by the upstream config when present. Wiring is much easier when
-       `txcn0` reads as "SDF (signed distance)" right next to the port —
-       mirrors the AnimationController treatment of signal_{N} handles.
-       Falls back to the bare `txcn{N}` label when no Config is connected
-       or when the active effect declares no slot for that index. */
+    // Suffix txcn{N} input labels with upstream slot.label when present (mirrors AnimationController).
     const labelledInputs = useMemo(() => {
         return effectDef.inputs.map(h => {
             const m = /^txcn(\d+)$/.exec(h.name)

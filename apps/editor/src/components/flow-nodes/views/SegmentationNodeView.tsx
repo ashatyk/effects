@@ -7,12 +7,6 @@ import { segmentationDef } from '@effects/runtime/node-engine/processors/segment
 import { SegmentationProcessor } from '@effects/runtime/node-engine/processors/segmentation'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Graph card: visual-only — shows the SAM processor's status and the
- * count of currently-set point hints. The interactive image canvas
- * (point picking + mask preview), Include/Exclude toggle, and points
- * list all live in `SegmentationNodeSettings`.
- */
 export const SegmentationNodeView = memo(({ id }: NodeProps & { data: PipelineNodeData }) => {
     const engine = useEngine()
     const [status, setStatus] = useState('Waiting for image...')

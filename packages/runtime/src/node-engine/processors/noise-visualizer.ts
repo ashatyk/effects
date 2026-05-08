@@ -4,17 +4,8 @@ import { BaseProcessor } from './base-processor'
 import { SLOT, type ProcessorDef, type IDataflowEngine, type Signal } from '../types'
 import { NOISE_GLSL } from '../../pipeline/noise.glsl'
 
-/**
- * Visualizer surfaces — pattern textures whose UVs are warped by the
- * canonical fbm2D noise field. The point is to show what the same
- * `fbm2D` the effects sample is actually doing to a known surface.
- *
- *   chess    — checkerboard, sampled at uv + noise displacement
- *   stripes  — vertical stripes, displaced
- *
- * Displacement amplitude is in UV units (0..1); typical useful
- * range is 0..0.3.
- */
+// Pattern textures whose UVs are warped by the canonical fbm2D noise field.
+// Displacement amplitude is in UV units; typical range 0..0.3.
 export const NOISE_MODES = ['chess', 'stripes'] as const
 export type NoiseMode = typeof NOISE_MODES[number]
 
@@ -43,8 +34,7 @@ void main() {
     vec2 uv = vUV;
     float t = uDrive * uSpeed;
 
-    /* Two decorrelated fbm samples form a 2D vector field that warps
-       the pattern's UVs. Centring around 0.5 → vector in [-1, 1]. */
+    // Two decorrelated fbm samples → 2D vector field; centred to [-1, 1].
     float n1 = fbm2D(uv * uScale + vec2(t, 0.0));
     float n2 = fbm2D(uv * uScale + vec2(t, 11.7));
     vec2 disp = (vec2(n1, n2) - 0.5) * 2.0 * uAmp;
@@ -53,11 +43,9 @@ void main() {
     float v;
 
     if (uMode < 0.5) {
-        // chess: black/white checkerboard, displaced by noise
         vec2 c = floor(p * uCells);
         v = mod(c.x + c.y, 2.0);
     } else {
-        // stripes: vertical stripes, displaced by noise
         v = mod(floor(p.x * uStripes), 2.0);
     }
 
@@ -70,11 +58,6 @@ export const noiseVisualizerDef: ProcessorDef = {
     type: 'noiseVisualizer',
     title: 'Noise Visualizer',
     category: 'util',
-    /* Required Signal input. The visualizer is purely a *consumer* of
-       upstream time: wire Timer → signal (optionally through Interpolator)
-       to animate. Without a wired signal the node renders a static frame
-       (drift = 0), which intentionally mirrors how downstream effects
-       behave when their noise channel has no driver. */
     inputs: [{ name: 'signal', type: SLOT.SIGNAL }],
     outputs: [{ name: 'texture', type: SLOT.TEXTURE }],
     defaultParams: {
@@ -91,11 +74,8 @@ export const noiseVisualizerDef: ProcessorDef = {
 
 export class NoiseVisualizerProcessor extends BaseProcessor {
     readonly def = noiseVisualizerDef
-    /* No internal clock → no need to mark the node dirty every frame.
-       Re-execution is driven entirely by upstream propagation: when a
-       Timer (alwaysDirty) is wired to `signal`, the engine marks this
-       node dirty on each tick automatically. Param edits push through
-       `updateNodeParams` → markDirty as usual. */
+    // No internal clock → not alwaysDirty; re-execution rides upstream
+    // propagation (Timer/AnimationController) and param edits.
 
     execute(inputs: Record<string, any>, params: Record<string, any>, engine: IDataflowEngine): Record<string, any> {
         const mode = (params.mode ?? 'chess') as NoiseMode
@@ -108,14 +88,8 @@ export class NoiseVisualizerProcessor extends BaseProcessor {
         const w = Math.max(8, Math.floor(Number(params.width ?? 384)))
         const h = Math.max(8, Math.floor(Number(params.height ?? 384)))
 
-        /* Drift driver = signal.value (NOT signal.time). A Timer keeps
-           `time` ticking even when paused, so reading time would make
-           every signal animate the field. The `value` field is the
-           actual phase / waveform output: a paused Timer holds a
-           static phase (→ static field), `unbounded` mode grows
-           monotonically (→ steady drift), an Interpolator with sine/
-           triangle profile oscillates (→ breathing). When unwired,
-           drive = 0 and the field is frozen at noise-origin. */
+        // Drive on signal.value (not signal.time): a paused Timer must hold a static field;
+        // `time` keeps ticking through pauses while `value` carries the phase/waveform.
         const sig = inputs.signal as Signal | undefined
         const tDrive = sig?.value ?? 0
 

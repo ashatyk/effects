@@ -10,31 +10,16 @@ export const eventEmitterDef: ProcessorDef = {
     outputs: [{ name: 'event', type: SLOT.EVENT }],
     defaultParams: {
         throttleMs: 0,
-        /* Stable identifier the Tier-3 client uses to dispatch events
-           programmatically. Required by the publish validator
-           (`derivePublishedSurface` reports duplicates as a hard
-           error). Default empty so the autogen path in
-           `NodeEditor.addProcessorNode` mints a unique `evt_<n>` slug
-           on creation; restored snapshots keep their persisted id
-           verbatim so external glue code that pinned to it doesn't
-           break across editor sessions. */
+        // `id` is the Tier-3 dispatch slug; derivePublishedSurface reports duplicates as
+        // a hard error. Empty default lets NodeEditor mint a unique evt_<n>; restored
+        // snapshots keep their persisted id verbatim.
         id: '',
-        /* Supplier-facing label. Optional — falls back to the node's
-           `data.label` or the processor title when unset. */
+        // Supplier-facing label; falls back to data.label or the processor title.
         label: 'Event',
     },
 }
 
-/**
- * On-demand discrete event source. Emits an `EventSignal` with monotonically
- * growing `count` whenever any UI / external integration calls `emit()`.
- * Optional `throttleMs` rejects emits that arrive faster than the configured
- * interval — useful when the Emit button is bound to a keyboard shortcut or
- * driven from a tight loop.
- *
- * `alwaysDirty = true` so downstream consumers (`signalSwitch`, `envelope`)
- * see the freshest event-count every frame.
- */
+// alwaysDirty so signalSwitch/envelope see the freshest event-count each frame.
 export class EventEmitterProcessor extends BaseProcessor {
     readonly def = eventEmitterDef
     alwaysDirty = true
@@ -43,8 +28,6 @@ export class EventEmitterProcessor extends BaseProcessor {
     private lastEmitTime = 0
     private throttleMs = 0
 
-    /** Programmatic API for any UI (Emit button, hotkey, external bridge) to
-     *  push an event. Subject to the configured `throttleMs`. */
     emit(x?: number, y?: number): void {
         const now = performance.now()
         if (this.throttleMs > 0 && now - this.lastEmitTime < this.throttleMs) return

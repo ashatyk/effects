@@ -5,26 +5,12 @@ import type { SupplierConfig } from '@effects/player'
 import { ManifestPickerPage } from './pages/ManifestPickerPage'
 import { PlayerPage } from './pages/PlayerPage'
 
-/**
- * Player-app shell.
- *
- * Two mount paths:
- *
- * 1. **Baked** (production): drop a `.baked.json` and render
- *    immediately — single self-contained AOT artifact, no SAM, no
- *    runtime config merge.
- *
- * 2. **Pipeline + config** (dev / debug): drop a `.published.json`
- *    plus an optional `.config.json` — replays the supplier's
- *    interactive flow, runs the full original graph (segmentation
- *    spawns SAM, etc.). Useful for sanity-checking a pipeline
- *    before bake.
- *
- * App-level state holds whichever mount the picker resolved. Reload
- * clears everything — the demo is intentionally non-persistent.
- * Tier-3 production integrations would call `EffectPlayer.fromBaked`
- * directly with bundled JSON, no router, no picker.
- */
+// Two mount paths:
+//   - baked (.baked.json): self-contained AOT artifact, no SAM, no merge.
+//   - pipeline + optional config (.published.json + .config.json): replays
+//     the supplier flow on the full original graph for pre-bake sanity checks.
+// Tier-3 production integrations skip this picker and call
+// `EffectPlayer.fromBaked` directly with bundled JSON.
 export default function App() {
     const [pipeline, setPipeline] = useState<PublishedPipeline | null>(null)
     const [config, setConfig] = useState<SupplierConfig | null>(null)

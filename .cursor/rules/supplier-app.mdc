@@ -1,6 +1,5 @@
 ---
 description: Tier-2 supplier app — apps/supplier layout, useSupplierRuntime + applyOverrides + canvas-sink, simplified SAM segmentation widget, SupplierConfig schema, Export/Import contract. Read before changing supplier UX or the SupplierConfig handoff format.
-alwaysApply: true
 ---
 
 # Tier-2 Supplier App (`apps/supplier`)

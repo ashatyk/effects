@@ -1,6 +1,5 @@
 ---
 description: Long-term product vision and three-tier architecture for the Effects platform. Read before architectural changes to engine, manifest, or runtime boundaries.
-alwaysApply: true
 ---
 
 # Effects — Product Vision

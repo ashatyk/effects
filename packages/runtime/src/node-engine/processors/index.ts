@@ -70,9 +70,7 @@ export const PROCESSOR_CATALOG: Record<string, ProcessorEntry> = {
     log:             { def: logDef,             create: () => new LogProcessor() },
     publishRoot:     { def: publishRootDef,     create: () => new PublishRootProcessor() },
     tapZone:         { def: tapZoneDef,         create: () => new TapZoneProcessor() },
-    /* Bake-target processors — see `baking.mdc`. Hidden from the
-       editor's "Add Node" picker; only ever created by the Tier-3
-       player when it loads a config with `baked` payloads. */
+    // Bake-target processors (hidden from "Add Node"); only the Tier-3 player creates them.
     constantContour: { def: constantContourDef, create: () => new ConstantContourProcessor() },
     constantTexture: { def: constantTextureDef, create: () => new ConstantTextureProcessor() },
 }

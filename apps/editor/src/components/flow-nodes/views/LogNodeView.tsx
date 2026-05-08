@@ -10,12 +10,8 @@ import { logDef, LogProcessor } from '@effects/runtime/node-engine/processors/lo
 import type { EffectMetrics } from '@effects/runtime/node-engine/types'
 import type { PipelineNodeData } from '../types'
 
-/**
- * Throttle the React render rate against the engine subscription so a
- * 60fps Effect doesn't trigger 60 rerenders per second of the timing
- * widget — the smoothed numbers barely change at that cadence and the
- * extra commits are pure waste.
- */
+/* Throttle React commits — a 60fps Effect would otherwise rerender the timing
+   widget 60×/s with barely-changing smoothed numbers. */
 const RENDER_INTERVAL_MS = 100
 
 function fmtMs(ms: number): string {
@@ -25,19 +21,13 @@ function fmtMs(ms: number): string {
     return `${ms.toFixed(1)} ms`
 }
 
-/**
- * Graph card: live timing readout (effect name, total / cpu / gpu /
- * fps cap, per-pass breakdown). The smoothing slider lives in
- * `LogNodeSettings`.
- */
 export const LogNodeView = memo(function LogNodeView(
     { id }: NodeProps & { data: PipelineNodeData },
 ) {
     const engine = useEngine()
     const [snapshot, setSnapshot] = useState<EffectMetrics | null>(null)
-    /* Mirror the latest snapshot in a ref so the throttled `pull` can
-       compare without putting `snapshot` in the effect deps (which would
-       tear down/re-create the engine subscription on every commit). */
+    /* Mirror snapshot in a ref so the throttled `pull` can compare without
+       `snapshot` in the effect deps (would tear down the subscription per commit). */
     const snapshotRef = useRef<EffectMetrics | null>(null)
     snapshotRef.current = snapshot
 
@@ -47,9 +37,8 @@ export const LogNodeView = memo(function LogNodeView(
             const proc = engine.getProcessor<LogProcessor>(id)
             const m = proc?.lastSmoothed ?? null
             const prev = snapshotRef.current
-            /* Cheap exits to keep React out of the hot path: if there's
-               nothing to show, don't dispatch state updates; if we just
-               updated, swallow until the throttle window passes. */
+            /* Cheap exits to keep React out of the hot path: nothing to show, or
+               within the throttle window. */
             if (!m && !prev) return
             const now = performance.now()
             if (now - lastRender < RENDER_INTERVAL_MS && m && prev

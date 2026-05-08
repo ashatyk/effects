@@ -9,23 +9,18 @@ export default `
     uniform vec2  uResolution;
 
     /* Animation channels — vec4(drive, raw, value, state).
-       Slot 0: appearance progress (0..1) — uChan0.z multiplied into beam
-               intensity.
-       Slot 1: ray rotation phase (radians) — uChan1.z is the controller-
-               mapped value (slot defaults to 0..2π). Wire Timer (looped)
-               → AnimationController; durationMs sets the sweep period.
+       Slot 0: appearance progress 0..1 — uChan0.z multiplies beam intensity.
+       Slot 1: ray rotation phase (radians, slot defaults 0..2π) —
+               controller-mapped via uChan1.z. Wire Timer→Controller.
        Slot 4: intensity multiplier on final alpha. */
     uniform vec4 uChan0;
     uniform vec4 uChan1;
     uniform vec4 uChan4;
 
-    /* Pivot point in pixel space — the rotational centre the beams fan
-       around. The Effect runtime always supplies this: when no "pivot"
-       input is wired it falls back to the contour's AABB centre (canvas
-       centre if no contour either). Wire a Contour Pivot node into
-       "effect.pivot" to drive it explicitly. */
+    /* Pivot in pixel space. Effect runtime falls back to contour AABB
+       centre (or canvas centre) when no 'pivot' input is wired. */
     uniform vec2  uPivot;
-    /* SDF wired through generic texture channel 0 (manifest labels it). */
+    // SDF wired through generic texture channel 0.
     uniform sampler2D uTxcn0;
 
     uniform float uEdgeFeatherPx;
@@ -41,10 +36,9 @@ export default `
     const float EPS_ATTEN = 1e-3;
     const float INF_F     = 1e9;
 
-    /* See pipeline/passes/sdf-pure.ts for the format. RGB packs a
-       signed normalised distance in [-1, +1] biased to [0, 1];
-       A=1 always. Return signed pixels — negative inside,
-       positive outside. */
+    /* SDF format (pipeline/passes/sdf-pure.ts): RGB carries 24-bit biased
+       distance in [-1,+1]→[0,1]; A=1 always. Returns signed pixels —
+       negative inside, positive outside. */
     float unpackSignedFloat24(vec3 rgb, float maxD){
         float n = (rgb.r * 255.0) * 65536.0 +
         (rgb.g * 255.0) *   256.0 +
@@ -73,9 +67,7 @@ export default `
 
         float sdist = signedDistancePx(vUV);
 
-        /* Appearance multiplier = slot 0 mapped value, used as-is. The
-           upstream Envelope / Interpolator easing decides the curve —
-           the shader no longer applies a cubic Bezier intro of its own. */
+        // Appearance multiplier = slot-0 mapped value; easing is upstream.
         float ax = uResolution.y / uResolution.x;
         vec2  va = vec2((p.x - ctr.x) * ax, (p.y - ctr.y));
         float theta = atan(va.x, va.y);
@@ -85,9 +77,7 @@ export default `
         float f = max(0.0001, uEdgeFeatherPx);
         float startRamp   = smoothstep(0.0, f, d);
         float radialAtten = exp(-uRayFalloff * d);
-        /* Rotation phase = controller-mapped slot-1 value (radians). Wire
-           Timer (looped) → AnimationController; tune Timer.durationMs
-           for the sweep period. */
+        // Rotation phase = slot-1 mapped value (radians); Timer.durationMs sets the period.
         float phase = uChan1.z + TWO_PI * clamp(uRayPhaseOffsetFrac, 0.0, 1.0);
         float beam  = rayAngular(theta, uRayDensity, phase, uJoinSoftness) * uChan0.z;
         float m = uRayStrength * startRamp * radialAtten * beam;
