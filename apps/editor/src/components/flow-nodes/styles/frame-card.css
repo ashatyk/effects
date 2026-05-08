@@ -1,0 +1,78 @@
+/* `!important` defends against RF's `elevateNodesOnSelect`, which would bump
+   the frame on top when selected — frames must stay painted BEHIND nodes. */
+.react-flow__node-frame {
+    z-index: -1 !important;
+}
+
+.pn-frame {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    border: 2px solid var(--frame-border, rgba(255, 255, 255, 0.18));
+    border-radius: 8px;
+    background: var(--frame-body-bg, rgba(120, 144, 160, 0.18));
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+        0 1px 3px rgba(0, 0, 0, 0.30);
+    overflow: hidden;
+    /* Body region overrides this back to `none` so clicks fall through to
+       overlapping nodes; only the header stays interactive. */
+    pointer-events: auto;
+    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.pn-frame.selected,
+.react-flow__node-frame.selected .pn-frame {
+    border-color: var(--frame-border-selected, rgba(255, 255, 255, 0.45));
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+        0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.pn-frame-header {
+    flex: 0 0 auto;
+    height: var(--frame-header-h, 28px);
+    box-sizing: border-box;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    background: var(--frame-header-bg, rgba(120, 144, 160, 0.55));
+    color: #f5f5f5;
+    font-size: 11px;
+    font-weight: 700;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+    cursor: move;
+    pointer-events: auto;
+    user-select: none;
+}
+
+.pn-frame-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pn-frame-title-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.18);
+    color: #ffffff;
+    border: none;
+    outline: 1px solid rgba(255, 255, 255, 0.45);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font: inherit;
+    font-size: 11px;
+}
+
+.pn-frame-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    /* Clicks pass through to processor nodes on top; the header alone keeps
+       the frame draggable / selectable / resizable. */
+    pointer-events: none;
+}
