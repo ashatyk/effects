@@ -1,10 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { useStore, type ReactFlowState } from '@xyflow/react'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import TextField from '@mui/material/TextField'
 import { useSetParam } from '../hooks/useSetParam'
 import { useNodeOutputs } from '../hooks/useNodeOutputs'
+import { useUpstreamSourceId } from '../hooks/useUpstreamSourceId'
 import { ANIMATION_CHANNEL_COUNT, type SlotDef } from '@effects/runtime/pipeline/types'
 import { effects } from '@effects/runtime'
 import { COL_MUTED, COL_SECONDARY } from '@effects/ui/widgets/constants'
@@ -13,13 +13,8 @@ import type { NodeSettingsProps } from './types'
 /* Slot labels come from the upstream Config (same trick as the in-graph view's
    `signal_N` relabel) so the row reads `0  primary phase  0.0  1.0`. */
 
-function selectUpstreamConfigId(nodeId: string) {
-    return (s: ReactFlowState) =>
-        s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
-}
-
 function useUpstreamSlots(nodeId: string): Map<number, SlotDef> {
-    const upstreamId = useStore(useMemo(() => selectUpstreamConfigId(nodeId), [nodeId]))
+    const upstreamId = useUpstreamSourceId(nodeId, 'config')
     const upstreamOutputs = useNodeOutputs(upstreamId)
 
     return useMemo(() => {

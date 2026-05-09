@@ -1,21 +1,18 @@
 import { memo, useMemo } from 'react'
-import { useStore, type NodeProps, type ReactFlowState } from '@xyflow/react'
+import type { NodeProps } from '@xyflow/react'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { effectDef } from '@effects/runtime/node-engine/processors/effect'
 import { useNodeOutputs } from '../hooks/useNodeOutputs'
+import { useUpstreamSourceId } from '../hooks/useUpstreamSourceId'
 import { effects } from '@effects/runtime'
 import type { TextureSlotDef } from '@effects/runtime/pipeline/types'
 import type { PipelineNodeData } from '../types'
 
 // One-hop upstream Config lookup → manifest texture-slot labels. Reactive on edge changes
-// (useStore on edges) and Config dropdown changes (useNodeOutputs on __effectName).
-function selectUpstreamConfigId(nodeId: string) {
-    return (s: ReactFlowState) =>
-        s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
-}
-
+// and Config dropdown changes (`__effectName` flips). `useUpstreamSourceId` resolves through
+// Clone (ref) wrappers so connecting via a clone behaves identically to the direct edge.
 function useUpstreamTextureSlots(nodeId: string): Map<number, TextureSlotDef> {
-    const upstreamId = useStore(useMemo(() => selectUpstreamConfigId(nodeId), [nodeId]))
+    const upstreamId = useUpstreamSourceId(nodeId, 'config')
     const upstreamOutputs = useNodeOutputs(upstreamId)
 
     return useMemo(() => {

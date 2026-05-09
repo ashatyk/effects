@@ -1,19 +1,15 @@
 import { memo, useMemo } from 'react'
-import { useStore, type NodeProps, type ReactFlowState } from '@xyflow/react'
+import type { NodeProps } from '@xyflow/react'
 import { BaseNodeShell } from '../BaseNodeShell'
 import { useNodeOutputs } from '../hooks/useNodeOutputs'
+import { useUpstreamSourceId } from '../hooks/useUpstreamSourceId'
 import { animationControllerDef } from '@effects/runtime/node-engine/processors/animation-controller'
 import type { SlotDef } from '@effects/runtime/pipeline/types'
 import { effects } from '@effects/runtime'
 import type { PipelineNodeData } from '../types'
 
-function selectUpstreamConfigId(nodeId: string) {
-    return (s: ReactFlowState) =>
-        s.edges.find(e => e.target === nodeId && e.targetHandle === 'config')?.source ?? ''
-}
-
 function useUpstreamSlots(nodeId: string): Map<number, SlotDef> {
-    const upstreamId = useStore(useMemo(() => selectUpstreamConfigId(nodeId), [nodeId]))
+    const upstreamId = useUpstreamSourceId(nodeId, 'config')
     const upstreamOutputs = useNodeOutputs(upstreamId)
 
     return useMemo(() => {
